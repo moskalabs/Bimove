@@ -11,7 +11,7 @@ import {
 import { exportPng, exportSvg } from '../lib/exportPng'
 import { saveProject, openProject } from '../lib/project'
 import { exportDxf } from '../lib/dxf'
-import { getDefaultWallThickness, setDefaultWallThickness } from '../lib/settings'
+import { getDefaultWallThickness, setDefaultWallThickness, getWallHeightMm, setWallHeightMm } from '../lib/settings'
 
 type SelInfo = {
   id: TLShapeId
@@ -74,6 +74,9 @@ export function RBar() {
 
       {/* 기본 벽 두께 설정 */}
       <WallDefaultSection scale={scale} />
+
+      {/* 3D 벽 높이 */}
+      <WallHeightSection />
 
       {/* 내보내기 */}
       <ExportSection />
@@ -287,6 +290,37 @@ function GridSection() {
         >
           {GRID_SIZES.map(s => <option key={s} value={s}>{s} px</option>)}
         </select>
+      </div>
+    </section>
+  )
+}
+
+// ---------- 3D wall height ----------
+
+function WallHeightSection() {
+  const [mm, setMm] = useState(getWallHeightMm)
+  const [draft, setDraft] = useState<string | null>(null)
+  const commit = () => {
+    if (draft === null) return
+    const v = parseFloat(draft)
+    if (!isNaN(v) && v > 0) { setWallHeightMm(v); setMm(v) }
+    setDraft(null)
+  }
+  return (
+    <section className="rbar-section">
+      <h3>벽 높이 (3D)</h3>
+      <div className="rbar-row">
+        <span>높이</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <input
+            className="prop-input"
+            value={draft ?? String(mm)}
+            onChange={e => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setDraft(null) }}
+          />
+          <span style={{ fontSize: 11, color: '#999' }}>mm</span>
+        </div>
       </div>
     </section>
   )

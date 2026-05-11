@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, lazy, Suspense } from 'react'
 import { Tldraw } from 'tldraw'
 import type { Editor } from 'tldraw'
 import 'tldraw/tldraw.css'
@@ -7,6 +7,7 @@ import { RBar } from './components/RBar'
 import { ToolOverlay } from './components/ToolOverlay'
 import { RoomOverlay } from './components/RoomOverlay'
 import { ChatPanel } from './components/ChatPanel'
+const Viewer3D = lazy(() => import('./components/Viewer3D').then(m => ({ default: m.Viewer3D })))
 import { WallShapeUtil } from './shapes/WallShape'
 import { DoorShapeUtil } from './shapes/DoorShape'
 import { WindowShapeUtil } from './shapes/WindowShape'
@@ -27,6 +28,7 @@ const TOOLS = [WallTool, DoorTool, WindowTool, BlockTool, CommentTool]
 
 function App() {
   const [editor, setEditor] = useState<Editor | null>(null)
+  const [show3D, setShow3D] = useState(false)
 
   const handleMount = (ed: Editor) => {
     ed.updateInstanceState({ isGridMode: true })
@@ -93,6 +95,27 @@ function App() {
         </main>
         <RBar />
         <ChatPanel />
+        <button
+          onClick={() => setShow3D(true)}
+          style={{
+            position: 'fixed', bottom: 20, right: 76, zIndex: 500,
+            height: 46, padding: '0 16px', borderRadius: 23,
+            background: '#fff', border: '1.5px solid #e0e0e0',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)', cursor: 'pointer',
+            fontSize: 14, fontWeight: 600, color: '#444',
+          }}
+          title="3D 미리보기"
+        >🧱 3D</button>
+        {show3D && (
+          <Suspense fallback={
+            <div style={{ position: 'fixed', inset: 0, zIndex: 600, background: '#1e2228',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontSize: 15 }}>
+              3D 엔진 로딩 중…
+            </div>
+          }>
+            <Viewer3D onClose={() => setShow3D(false)} />
+          </Suspense>
+        )}
       </div>
     </EditorContext.Provider>
   )
