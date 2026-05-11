@@ -23,6 +23,7 @@ function App() {
           shapeUtils={SHAPE_UTILS}
           tools={TOOLS}
           onMount={handleMount}
+          hideUi
         />
       </main>
       <RBar />
