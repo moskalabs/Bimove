@@ -9,6 +9,7 @@ import {
   type ScaleConfig,
 } from '../lib/scaleConfig'
 import { exportPng, exportSvg } from '../lib/exportPng'
+import { saveProject, openProject } from '../lib/project'
 import { getDefaultWallThickness, setDefaultWallThickness } from '../lib/settings'
 
 type SelInfo = {
@@ -63,6 +64,9 @@ export function RBar() {
           </select>
         </div>
       </section>
+
+      {/* 프로젝트 저장/열기 */}
+      <ProjectSection />
 
       {/* 그리드 크기 설정 */}
       <GridSection />
@@ -292,6 +296,32 @@ function WallDefaultSection({ scale }: { scale: ScaleConfig }) {
           />
           <span style={{ fontSize: 11, color: '#999' }}>{dispUnit}</span>
         </div>
+      </div>
+    </section>
+  )
+}
+
+// ---------- project save / open ----------
+
+function ProjectSection() {
+  const editor = useEditor()
+  const [projectName, setProjectName] = useState('untitled')
+
+  return (
+    <section className="rbar-section">
+      <h3>프로젝트</h3>
+      <div className="rbar-row">
+        <span>이름</span>
+        <input
+          className="prop-input"
+          style={{ flex: 1, minWidth: 0 }}
+          value={projectName}
+          onChange={e => setProjectName(e.target.value)}
+        />
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+        <button className="export-btn" onClick={() => editor && saveProject(editor, projectName)}>저장</button>
+        <button className="export-btn" onClick={() => editor && openProject(editor)}>열기</button>
       </div>
     </section>
   )

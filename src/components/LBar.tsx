@@ -3,6 +3,7 @@ import { LayersPanel } from './panels/LayersPanel'
 import { BlocksPanel } from './panels/BlocksPanel'
 import { BOQPanel } from './panels/BOQPanel'
 import { useEditor } from '../context/EditorContext'
+import { uploadImage } from '../lib/project'
 
 const DRAW_TOOLS = [
   { id: 'select', icon: '↖', label: '선택' },
@@ -63,6 +64,19 @@ export function LBar() {
               {t.icon}
             </button>
           ))}
+        </div>
+
+        <div className="lbar-divider" />
+
+        {/* 이미지 업로드 */}
+        <div className="lbar-section">
+          <button
+            className="lbar-icon"
+            title="이미지 업로드 (트레이싱)"
+            onClick={() => editor && uploadImage(editor)}
+          >
+            🖼
+          </button>
         </div>
 
         <div className="lbar-divider" />
