@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { type TLShapeId } from 'tldraw'
+import { type TLShapeId, createShapeId } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
+import { detectWalls } from '../lib/detectWalls'
 import {
   getScaleConfig,
   setScaleConfig,
@@ -92,6 +93,10 @@ export function RBar() {
 
 function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleConfig }) {
   const editor = useEditor()
+
+  if (sel.type === 'image') {
+    return <ImageDetectSection sel={sel} />
+  }
 
   if (sel.type === 'wall') {
     const p = sel.props as { x2: number; y2: number; thickness: number }
@@ -291,6 +296,67 @@ function GridSection() {
           {GRID_SIZES.map(s => <option key={s} value={s}>{s} px</option>)}
         </select>
       </div>
+    </section>
+  )
+}
+
+// ---------- image → auto wall detection ----------
+
+function ImageDetectSection({ sel }: { sel: NonNullable<SelInfo> }) {
+  const editor = useEditor()
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const run = async () => {
+    if (!editor || busy) return
+    const assetId = (sel.props as { assetId?: string }).assetId
+    if (!assetId) { setMsg('이미지 데이터를 찾을 수 없습니다.'); return }
+    const asset = editor.getAsset(assetId as never) as { props?: { src?: string } } | undefined
+    const src = asset?.props?.src
+    if (!src) { setMsg('이미지 소스를 읽을 수 없습니다.'); return }
+
+    const shape = editor.getShape(sel.id)
+    if (!shape) return
+    const { x: ox, y: oy } = shape
+    const { w: sw, h: sh } = shape.props as { w: number; h: number }
+
+    setBusy(true)
+    setMsg('OpenCV 로딩 및 분석 중… (처음엔 다소 걸려요)')
+    try {
+      const { lines, width, height } = await detectWalls(src)
+      if (lines.length === 0) { setMsg('선분을 찾지 못했습니다. 더 선명한 도면을 써보세요.'); return }
+      const kx = sw / width, ky = sh / height
+      const thickness = getDefaultWallThickness()
+      const shapes = lines.map((ln) => {
+        const x1 = ox + ln.x1 * kx, y1 = oy + ln.y1 * ky
+        const x2 = ox + ln.x2 * kx, y2 = oy + ln.y2 * ky
+        return {
+          id: createShapeId(),
+          type: 'wall' as const,
+          x: x1, y: y1,
+          props: { x2: x2 - x1, y2: y2 - y1, thickness },
+        }
+      })
+      editor.createShapes(shapes as never)
+      editor.setSelectedShapes(shapes.map(s => s.id))
+      setMsg(`${shapes.length}개의 벽을 생성했습니다.`)
+    } catch (e) {
+      setMsg('분석 중 오류: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="rbar-section">
+      <h3>도면 이미지</h3>
+      <div style={{ fontSize: 11, color: '#888', marginBottom: 8, lineHeight: 1.5 }}>
+        업로드한 도면에서 벽 선을 자동으로 추출합니다.
+      </div>
+      <button className="export-btn" disabled={busy} onClick={run} style={{ width: '100%' }}>
+        {busy ? '분석 중…' : '✦ 벽 자동 인식'}
+      </button>
+      {msg && <div style={{ fontSize: 11, color: busy ? '#1a73e8' : '#666', marginTop: 8, lineHeight: 1.5 }}>{msg}</div>}
     </section>
   )
 }
