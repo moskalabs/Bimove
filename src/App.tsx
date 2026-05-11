@@ -4,6 +4,7 @@ import type { Editor } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { LBar } from './components/LBar'
 import { RBar } from './components/RBar'
+import { ToolOverlay } from './components/ToolOverlay'
 import { WallShapeUtil } from './shapes/WallShape'
 import { WallTool } from './tools/WallTool'
 import { EditorContext } from './context/EditorContext'
@@ -25,6 +26,7 @@ function App() {
       <div className="bimove-layout">
         <LBar />
         <main className="canvas-area">
+          <ToolOverlay />
           <Tldraw
             shapeUtils={SHAPE_UTILS}
             tools={TOOLS}
