@@ -6,6 +6,7 @@ import { LBar } from './components/LBar'
 import { RBar } from './components/RBar'
 import { ToolOverlay } from './components/ToolOverlay'
 import { RoomOverlay } from './components/RoomOverlay'
+import { ChatPanel } from './components/ChatPanel'
 import { WallShapeUtil } from './shapes/WallShape'
 import { DoorShapeUtil } from './shapes/DoorShape'
 import { WindowShapeUtil } from './shapes/WindowShape'
@@ -91,6 +92,7 @@ function App() {
           <RoomOverlay />
         </main>
         <RBar />
+        <ChatPanel />
       </div>
     </EditorContext.Provider>
   )
