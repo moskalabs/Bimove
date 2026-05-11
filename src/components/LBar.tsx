@@ -9,6 +9,7 @@ const DRAW_TOOLS = [
   { id: 'wall', icon: '▬', label: '벽' },
   { id: 'door', icon: '🚪', label: '문' },
   { id: 'window', icon: '🪟', label: '창문' },
+  { id: 'text', icon: '𝖳', label: '텍스트' },
 ] as const
 
 const PANELS = [
