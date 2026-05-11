@@ -1,28 +1,70 @@
-import { StateNode, createShapeId, type TLPointerEventInfo } from 'tldraw'
+import { StateNode, createShapeId, type TLPointerEventInfo, type TLShapeId } from 'tldraw'
 import { snapToWallLine } from '../lib/snap'
+
+const DEFAULT_THICKNESS = 20
+const DEFAULT_WIDTH = 800  // 800mm standard door
 
 export class DoorTool extends StateNode {
   static override id = 'door'
   static override isLockable = false
 
-  onPointerDown = (_info: TLPointerEventInfo) => {
-    const snap = snapToWallLine(this.editor, this.editor.inputs.currentPagePoint)
-    if (!snap) return
+  private previewId: TLShapeId | null = null
 
+  override onEnter = () => {
+    const pt = this.editor.inputs.currentPagePoint
     const id = createShapeId()
     this.editor.createShape({
       id,
       type: 'door' as never,
-      x: snap.x,
-      y: snap.y,
-      rotation: snap.angle,
-      props: { width: 80, thickness: snap.thickness, swing: 1 },
+      x: pt.x, y: pt.y,
+      opacity: 0.45,
+      props: { width: DEFAULT_WIDTH, thickness: DEFAULT_THICKNESS, swing: 1 },
+    })
+    this.previewId = id
+  }
+
+  onPointerMove = (_info: TLPointerEventInfo) => {
+    if (!this.previewId) return
+    const pt = this.editor.inputs.currentPagePoint
+    const snap = snapToWallLine(this.editor, pt)
+    this.editor.updateShape({
+      id: this.previewId,
+      type: 'door' as never,
+      x: snap?.x ?? pt.x,
+      y: snap?.y ?? pt.y,
+      rotation: snap?.angle ?? 0,
+      props: { thickness: snap?.thickness ?? DEFAULT_THICKNESS },
     })
   }
 
-  onCancel = () => {
+  onPointerDown = (_info: TLPointerEventInfo) => {
+    if (!this.previewId) return
+    const pt = this.editor.inputs.currentPagePoint
+    const snap = snapToWallLine(this.editor, pt)
+
+    this.editor.updateShape({
+      id: this.previewId,
+      type: 'door' as never,
+      x: snap?.x ?? pt.x,
+      y: snap?.y ?? pt.y,
+      rotation: snap?.angle ?? 0,
+      opacity: 1,
+      meta: snap ? { wallId: snap.wallId } : {},
+      props: { thickness: snap?.thickness ?? DEFAULT_THICKNESS },
+    })
+    this.editor.setSelectedShapes([this.previewId])
+    this.previewId = null
     this.editor.setCurrentTool('select')
   }
+
+  override onExit = () => {
+    if (this.previewId) {
+      this.editor.deleteShape(this.previewId)
+      this.previewId = null
+    }
+  }
+
+  onCancel = () => this.editor.setCurrentTool('select')
 
   onKeyDown = (info: { key: string }) => {
     if (info.key === 'Escape') this.onCancel()
