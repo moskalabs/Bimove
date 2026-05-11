@@ -7,6 +7,68 @@ const MAX_SEGMENTS = 3000
 
 type Seg = { x1: number; y1: number; x2: number; y2: number }
 
+// ---------------------------------------------------------------- export ----
+
+const TEXT_SIZE_PX: Record<string, number> = { s: 18, m: 24, l: 36, xl: 56 }
+
+/**
+ * Export the current page to a minimal DXF R12 (AutoCAD 2000-compatible) file.
+ * Walls/doors/windows become LINE entities (centre-line for walls, the opening
+ * span for doors/windows) on dedicated layers; text shapes become TEXT
+ * entities. Canvas px are converted back to drawing mm and the Y axis is
+ * flipped so the file opens upright in CAD software.
+ */
+export function exportDxf(editor: Editor, filename = 'untitled') {
+  const k = getScaleConfig(editor).pxPerMm || 1
+  const mm = (px: number) => px / k
+  const lines: string[] = []
+  const put = (...pairs: [number | string, number | string][]) => {
+    for (const [code, val] of pairs) { lines.push(String(code)); lines.push(String(val)) }
+  }
+  const lineEntity = (layer: string, x1: number, y1: number, x2: number, y2: number) => {
+    put(['0', 'LINE'], ['8', layer],
+      ['10', mm(x1).toFixed(3)], ['20', (-mm(y1)).toFixed(3)], ['30', '0.0'],
+      ['11', mm(x2).toFixed(3)], ['21', (-mm(y2)).toFixed(3)], ['31', '0.0'])
+  }
+
+  put(['0', 'SECTION'], ['2', 'HEADER'], ['9', '$ACADVER'], ['1', 'AC1009'],
+    ['9', '$INSUNITS'], ['70', '4'], ['0', 'ENDSEC'])
+  put(['0', 'SECTION'], ['2', 'ENTITIES'])
+
+  for (const s of editor.getCurrentPageShapes()) {
+    if (s.type === 'wall') {
+      const p = s.props as { x2: number; y2: number }
+      lineEntity('WALL', s.x, s.y, s.x + p.x2, s.y + p.y2)
+    } else if (s.type === 'door' || s.type === 'window') {
+      const p = s.props as { width: number }
+      const hw = p.width / 2
+      const a = (s as { rotation?: number }).rotation ?? 0
+      const cos = Math.cos(a), sin = Math.sin(a)
+      lineEntity(s.type === 'door' ? 'DOOR' : 'WINDOW',
+        s.x - hw * cos, s.y - hw * sin, s.x + hw * cos, s.y + hw * sin)
+    } else if (s.type === 'text') {
+      const p = s.props as { text?: string; size?: string }
+      const txt = (p.text ?? '').replace(/\n/g, ' ').trim()
+      if (!txt) continue
+      const h = mm(TEXT_SIZE_PX[p.size ?? 'm'] ?? 24)
+      put(['0', 'TEXT'], ['8', 'TEXT'],
+        ['10', mm(s.x).toFixed(3)], ['20', (-mm(s.y)).toFixed(3)], ['30', '0.0'],
+        ['40', h.toFixed(3)], ['1', txt])
+    }
+  }
+
+  put(['0', 'ENDSEC'], ['0', 'EOF'])
+
+  const blob = new Blob([lines.join('\n')], { type: 'application/dxf' })
+  const a = document.createElement('a')
+  a.download = `${filename}.dxf`
+  a.href = URL.createObjectURL(blob)
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+}
+
+// ---------------------------------------------------------------- import ----
+
 /**
  * Import a DXF file and turn its LINE / POLYLINE geometry into editable wall
  * shapes. DXF coordinates are real-world units (mm by default); we convert via

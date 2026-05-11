@@ -4,7 +4,7 @@ import { BlocksPanel } from './panels/BlocksPanel'
 import { BOQPanel } from './panels/BOQPanel'
 import { useEditor } from '../context/EditorContext'
 import { uploadImage } from '../lib/project'
-import { importDxf } from '../lib/dxfImport'
+import { importDxf } from '../lib/dxf'
 
 const DRAW_TOOLS = [
   { id: 'select', icon: '↖', label: '선택' },

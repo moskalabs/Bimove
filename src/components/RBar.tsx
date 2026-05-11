@@ -10,6 +10,7 @@ import {
 } from '../lib/scaleConfig'
 import { exportPng, exportSvg } from '../lib/exportPng'
 import { saveProject, openProject } from '../lib/project'
+import { exportDxf } from '../lib/dxf'
 import { getDefaultWallThickness, setDefaultWallThickness } from '../lib/settings'
 
 type SelInfo = {
@@ -322,6 +323,7 @@ function ProjectSection() {
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
         <button className="export-btn" onClick={() => editor && saveProject(editor, projectName)}>저장</button>
         <button className="export-btn" onClick={() => editor && openProject(editor)}>열기</button>
+        <button className="export-btn" onClick={() => editor && exportDxf(editor, projectName)}>DXF</button>
       </div>
     </section>
   )
