@@ -56,6 +56,7 @@ export function RoomOverlay() {
               position: 'absolute',
               left: r.cx,
               top: r.cy,
+              zIndex: 300,
               transform: 'translate(-50%, -50%)',
               background: 'rgba(26,115,232,0.08)',
               border: '1px dashed rgba(26,115,232,0.4)',

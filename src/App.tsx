@@ -48,13 +48,13 @@ function App() {
         <LBar />
         <main className="canvas-area">
           <ToolOverlay />
-          <RoomOverlay />
           <Tldraw
             shapeUtils={SHAPE_UTILS}
             tools={TOOLS}
             onMount={handleMount}
             hideUi
           />
+          <RoomOverlay />
         </main>
         <RBar />
       </div>
