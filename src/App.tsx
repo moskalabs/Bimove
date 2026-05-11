@@ -49,13 +49,22 @@ function App() {
   useEffect(() => {
     if (!editor) return
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'z' && (e.ctrlKey || e.metaKey)) {
+      const mod = e.ctrlKey || e.metaKey
+      if (e.key === 'z' && mod) {
         e.preventDefault()
-        if (e.shiftKey) editor.redo()
-        else editor.undo()
-      } else if (e.key === 'y' && (e.ctrlKey || e.metaKey)) {
+        if (e.shiftKey) editor.redo(); else editor.undo()
+      } else if (e.key === 'y' && mod) {
+        e.preventDefault(); editor.redo()
+      } else if (e.key === 'd' && mod) {
         e.preventDefault()
-        editor.redo()
+        const ids = editor.getSelectedShapeIds()
+        if (ids.length) editor.duplicateShapes(ids, { x: 20, y: 20 })
+      } else if (e.key === 'a' && mod) {
+        e.preventDefault()
+        editor.selectAll()
+      } else if (e.key === 'Escape') {
+        editor.setCurrentTool('select')
+        editor.selectNone()
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         const ids = editor.getSelectedShapeIds()
         if (ids.length) { e.preventDefault(); editor.deleteShapes(ids) }
