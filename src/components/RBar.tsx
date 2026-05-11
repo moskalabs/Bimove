@@ -64,6 +64,9 @@ export function RBar() {
         </div>
       </section>
 
+      {/* 그리드 크기 설정 */}
+      <GridSection />
+
       {/* 기본 벽 두께 설정 */}
       <WallDefaultSection scale={scale} />
 
@@ -132,6 +135,27 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
     )
   }
 
+  if (sel.type === 'window') {
+    const p = sel.props as { width: number; thickness: number }
+    const wMm = p.width / scale.pxPerMm
+    const tMm = p.thickness / scale.pxPerMm
+    const setW = (mm: number) => {
+      if (!editor || mm < 1) return
+      editor.updateShape({ id: sel.id, type: 'window' as never, props: { width: mm * scale.pxPerMm } })
+    }
+    const setT = (mm: number) => {
+      if (!editor || mm < 1) return
+      editor.updateShape({ id: sel.id, type: 'window' as never, props: { thickness: mm * scale.pxPerMm } })
+    }
+    return (
+      <section className="rbar-section">
+        <h3>창문</h3>
+        <PropField label="너비" value={wMm} unit={scale.unit} onCommit={setW} />
+        <PropField label="두께" value={tMm} unit={scale.unit} onCommit={setT} />
+      </section>
+    )
+  }
+
   if (sel.type === 'door') {
     const p = sel.props as { width: number; thickness: number; swing: number }
     const wMm = p.width / scale.pxPerMm
@@ -184,6 +208,45 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
     <section className="rbar-section">
       <h3>선택됨</h3>
       <div className="rbar-row"><span>유형</span><span>{sel.type}</span></div>
+    </section>
+  )
+}
+
+// ---------- grid size ----------
+
+const GRID_SIZES = [5, 10, 20, 50, 100, 200, 500]
+
+function GridSection() {
+  const editor = useEditor()
+  const [gridPx, setGridPx] = useState(20)
+
+  useEffect(() => {
+    if (!editor) return
+    const unsub = editor.store.listen(() => {
+      const g = (editor.getInstanceState() as { gridSize?: number }).gridSize
+      if (g) setGridPx(g)
+    })
+    return unsub
+  }, [editor])
+
+  const setGrid = (px: number) => {
+    if (!editor) return
+    editor.updateInstanceState({ gridSize: px } as never)
+    setGridPx(px)
+  }
+
+  return (
+    <section className="rbar-section">
+      <h3>그리드</h3>
+      <div style={{ padding: '4px 0 8px' }}>
+        <select
+          value={gridPx}
+          onChange={e => setGrid(Number(e.target.value))}
+          style={{ width: '100%', fontSize: 12, padding: '3px 6px', border: '1px solid #e0e0e0', borderRadius: 4 }}
+        >
+          {GRID_SIZES.map(s => <option key={s} value={s}>{s} px</option>)}
+        </select>
+      </div>
     </section>
   )
 }

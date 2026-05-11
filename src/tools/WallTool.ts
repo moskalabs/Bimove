@@ -21,25 +21,31 @@ export class WallTool extends StateNode {
     return { x: point.x, y: point.y }
   }
 
+  private startWallAt(point: { x: number; y: number }) {
+    const id = createShapeId()
+    this.editor.createShape({
+      id,
+      type: 'wall' as never,
+      x: point.x,
+      y: point.y,
+      props: { x2: 0, y2: 0, thickness: getDefaultWallThickness() },
+    })
+    this.previewId = id
+    this.startPoint = { x: point.x, y: point.y }
+    drawingState.drawingId = id
+  }
+
   onPointerDown = (_info: TLPointerEventInfo) => {
     const point = this.resolvePoint()
 
     if (!this.previewId) {
-      const id = createShapeId()
-      this.editor.createShape({
-        id,
-        type: 'wall' as never,
-        x: point.x,
-        y: point.y,
-        props: { x2: 0, y2: 0, thickness: getDefaultWallThickness() },
-      })
-      this.previewId = id
-      this.startPoint = { x: point.x, y: point.y }
-      drawingState.drawingId = id
+      this.startWallAt(point)
     } else {
+      // Finish current wall, immediately start next from endpoint (continuous mode)
+      drawingState.drawingId = null
       this.previewId = null
       this.startPoint = null
-      drawingState.drawingId = null
+      this.startWallAt(point)
     }
   }
 
