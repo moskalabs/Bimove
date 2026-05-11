@@ -9,14 +9,16 @@ import { RoomOverlay } from './components/RoomOverlay'
 import { WallShapeUtil } from './shapes/WallShape'
 import { DoorShapeUtil } from './shapes/DoorShape'
 import { WindowShapeUtil } from './shapes/WindowShape'
+import { BlockShapeUtil } from './shapes/BlockShape'
 import { WallTool } from './tools/WallTool'
 import { DoorTool } from './tools/DoorTool'
 import { WindowTool } from './tools/WindowTool'
+import { BlockTool } from './tools/BlockTool'
 import { EditorContext } from './context/EditorContext'
 import './App.css'
 
-const SHAPE_UTILS = [WallShapeUtil, DoorShapeUtil, WindowShapeUtil]
-const TOOLS = [WallTool, DoorTool, WindowTool]
+const SHAPE_UTILS = [WallShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil]
+const TOOLS = [WallTool, DoorTool, WindowTool, BlockTool]
 
 function App() {
   const [editor, setEditor] = useState<Editor | null>(null)
