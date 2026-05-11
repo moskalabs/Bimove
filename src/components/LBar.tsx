@@ -13,6 +13,7 @@ const DRAW_TOOLS = [
   { id: 'door', icon: '🚪', label: '문' },
   { id: 'window', icon: '🪟', label: '창문' },
   { id: 'text', icon: '𝖳', label: '텍스트' },
+  { id: 'comment', icon: '💬', label: '코멘트' },
 ] as const
 
 const PANELS = [

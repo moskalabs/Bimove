@@ -10,17 +10,19 @@ import { WallShapeUtil } from './shapes/WallShape'
 import { DoorShapeUtil } from './shapes/DoorShape'
 import { WindowShapeUtil } from './shapes/WindowShape'
 import { BlockShapeUtil } from './shapes/BlockShape'
+import { CommentShapeUtil } from './shapes/CommentShape'
 import { WallTool } from './tools/WallTool'
 import { DoorTool } from './tools/DoorTool'
 import { WindowTool } from './tools/WindowTool'
 import { BlockTool } from './tools/BlockTool'
+import { CommentTool } from './tools/CommentTool'
 import { EditorContext } from './context/EditorContext'
 import './App.css'
 
 const STORAGE_KEY = 'bimove_snapshot_v1'
 
-const SHAPE_UTILS = [WallShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil]
-const TOOLS = [WallTool, DoorTool, WindowTool, BlockTool]
+const SHAPE_UTILS = [WallShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil, CommentShapeUtil]
+const TOOLS = [WallTool, DoorTool, WindowTool, BlockTool, CommentTool]
 
 function App() {
   const [editor, setEditor] = useState<Editor | null>(null)

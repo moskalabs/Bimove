@@ -209,6 +209,42 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
     )
   }
 
+  if (sel.type === 'comment') {
+    const p = sel.props as { text: string; resolved: boolean; author: string }
+    const update = (patch: Partial<typeof p>) =>
+      editor?.updateShape({ id: sel.id, type: 'comment' as never, props: patch })
+    return (
+      <section className="rbar-section">
+        <h3>코멘트</h3>
+        <div style={{ padding: '4px 0 6px' }}>
+          <textarea
+            style={{ width: '100%', minHeight: 80, fontSize: 12, padding: '6px 8px',
+              border: '1px solid #e0e0e0', borderRadius: 4, resize: 'vertical', fontFamily: 'inherit' }}
+            value={p.text}
+            placeholder="코멘트 입력..."
+            onChange={e => update({ text: e.target.value })}
+          />
+        </div>
+        <div className="rbar-row">
+          <span>작성자</span>
+          <input className="prop-input" style={{ flex: 1, minWidth: 0 }}
+            value={p.author} placeholder="이름"
+            onChange={e => update({ author: e.target.value })} />
+        </div>
+        <div className="rbar-row">
+          <span>상태</span>
+          <button
+            className={`export-btn${p.resolved ? ' active' : ''}`}
+            style={{ background: p.resolved ? '#4caf50' : undefined, color: p.resolved ? '#fff' : undefined }}
+            onClick={() => update({ resolved: !p.resolved })}
+          >
+            {p.resolved ? '✓ 해결됨' : '미해결'}
+          </button>
+        </div>
+      </section>
+    )
+  }
+
   return (
     <section className="rbar-section">
       <h3>선택됨</h3>
