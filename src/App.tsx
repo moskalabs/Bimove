@@ -38,6 +38,9 @@ function App() {
       } else if (e.key === 'y' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
         editor.redo()
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        const ids = editor.getSelectedShapeIds()
+        if (ids.length) { e.preventDefault(); editor.deleteShapes(ids) }
       }
     }
     window.addEventListener('keydown', handleKeyDown)
