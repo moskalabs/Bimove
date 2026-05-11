@@ -17,6 +17,8 @@ import { BlockTool } from './tools/BlockTool'
 import { EditorContext } from './context/EditorContext'
 import './App.css'
 
+const STORAGE_KEY = 'bimove_snapshot_v1'
+
 const SHAPE_UTILS = [WallShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil]
 const TOOLS = [WallTool, DoorTool, WindowTool, BlockTool]
 
@@ -25,8 +27,24 @@ function App() {
 
   const handleMount = (ed: Editor) => {
     ed.updateInstanceState({ isGridMode: true })
+    const saved = localStorage.getItem(STORAGE_KEY)
+    if (saved) {
+      try { ed.loadSnapshot(JSON.parse(saved)) } catch { /* ignore corrupt saves */ }
+    }
     setEditor(ed)
   }
+
+  useEffect(() => {
+    if (!editor) return
+    let timer = 0
+    const unsub = editor.store.listen(() => {
+      clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(editor.getSnapshot())) } catch { /* storage full */ }
+      }, 1500)
+    })
+    return () => { unsub(); clearTimeout(timer) }
+  }, [editor])
 
   useEffect(() => {
     if (!editor) return

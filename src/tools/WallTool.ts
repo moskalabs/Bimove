@@ -1,6 +1,7 @@
 import { StateNode, createShapeId, type TLPointerEventInfo, type TLShapeId } from 'tldraw'
 import { snapToWallEndpoint, snapAngle } from '../lib/snap'
 import { drawingState } from '../lib/drawingState'
+import { getDefaultWallThickness } from '../lib/settings'
 
 export class WallTool extends StateNode {
   static override id = 'wall'
@@ -30,7 +31,7 @@ export class WallTool extends StateNode {
         type: 'wall' as never,
         x: point.x,
         y: point.y,
-        props: { x2: 0, y2: 0, thickness: 20 },
+        props: { x2: 0, y2: 0, thickness: getDefaultWallThickness() },
       })
       this.previewId = id
       this.startPoint = { x: point.x, y: point.y }

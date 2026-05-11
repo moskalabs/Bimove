@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { LayersPanel } from './panels/LayersPanel'
 import { BlocksPanel } from './panels/BlocksPanel'
+import { BOQPanel } from './panels/BOQPanel'
 import { useEditor } from '../context/EditorContext'
 
 const DRAW_TOOLS = [
@@ -82,7 +83,8 @@ export function LBar() {
 
       {activePanel === 'layers' && <LayersPanel />}
       {activePanel === 'blocks' && <BlocksPanel />}
-      {activePanel && !['layers', 'blocks'].includes(activePanel) && (
+      {activePanel === 'table' && <BOQPanel />}
+      {activePanel && !['layers', 'blocks', 'table'].includes(activePanel) && (
         <div className="lbar-panel">
           <div className="lbar-panel-header">{PANELS.find(p => p.id === activePanel)?.label}</div>
           <div className="lbar-panel-body" style={{ color: '#999', fontSize: 13, padding: 16 }}>

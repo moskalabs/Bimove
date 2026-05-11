@@ -40,6 +40,60 @@ const g = (...kids: ReactNode[]) => h('g', {}, ...kids)
 // ---- block definitions -----------------------------------------------------
 
 export const BLOCKS: BlockDef[] = [
+  // ---------------- 구조 ----------------
+  {
+    id: 'column_square', name: '정사각 기둥', category: '구조', wmm: 300, hmm: 300,
+    draw: () => g(
+      rect(0, 0, 300, 300, { fill: '#555', stroke: '#222', strokeWidth: 12 }),
+      line(0, 0, 300, 300), line(300, 0, 0, 300),
+    ),
+  },
+  {
+    id: 'column_round', name: '원형 기둥', category: '구조', wmm: 300, hmm: 300,
+    draw: () => g(
+      h('circle', { cx: 150, cy: 150, r: 150, fill: '#555', stroke: '#222', strokeWidth: 12 }),
+      circle(150, 150, 80, { fill: 'none', stroke: '#888', strokeWidth: 10 }),
+    ),
+  },
+  {
+    id: 'stairs_straight', name: '직선 계단', category: '구조', wmm: 1000, hmm: 2400,
+    draw: () => {
+      const steps = 12
+      const stepH = 2400 / steps
+      return g(
+        rect(0, 0, 1000, 2400),
+        ...Array.from({ length: steps - 1 }, (_, i) =>
+          line(0, stepH * (i + 1), 1000, stepH * (i + 1)),
+        ),
+        h('path', { d: 'M500 200 L500 2200 M400 2100 L500 2200 L600 2100', stroke: '#1a73e8', strokeWidth: 14, fill: 'none' }),
+      )
+    },
+  },
+  {
+    id: 'stairs_l', name: 'L형 계단', category: '구조', wmm: 2400, hmm: 2400,
+    draw: () => {
+      const s = 200  // step size
+      const n = 6
+      return g(
+        rect(0, 1400, 1000, 1000),
+        rect(0, 0, 1000, 1400),
+        rect(1000, 0, 1400, 1000),
+        ...Array.from({ length: n - 1 }, (_, i) => line(0, 1400 + s * (i + 1), 1000, 1400 + s * (i + 1))),
+        ...Array.from({ length: n - 1 }, (_, i) => line(0, s * (i + 1), 1000, s * (i + 1))),
+        ...Array.from({ length: n - 1 }, (_, i) => line(1000 + s * (i + 1), 0, 1000 + s * (i + 1), 1000)),
+        h('path', { d: 'M500 2200 L500 1500 L1200 500', stroke: '#1a73e8', strokeWidth: 14, fill: 'none', strokeDasharray: '40 20' }),
+      )
+    },
+  },
+  {
+    id: 'elevator', name: '엘리베이터', category: '구조', wmm: 2000, hmm: 2000,
+    draw: () => g(
+      rect(0, 0, 2000, 2000),
+      line(0, 0, 2000, 2000), line(2000, 0, 0, 2000),
+      rect(800, 1800, 400, 160, { stroke: THIN, strokeWidth: 10 }),
+    ),
+  },
+
   // ---------------- 가구 ----------------
   {
     id: 'bed_single', name: '싱글 침대', category: '가구', wmm: 1000, hmm: 2000,

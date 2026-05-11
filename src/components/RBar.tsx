@@ -8,6 +8,8 @@ import {
   type ScaleUnit,
   type ScaleConfig,
 } from '../lib/scaleConfig'
+import { exportPng, exportSvg } from '../lib/exportPng'
+import { getDefaultWallThickness, setDefaultWallThickness } from '../lib/settings'
 
 type SelInfo = {
   id: TLShapeId
@@ -62,14 +64,15 @@ export function RBar() {
         </div>
       </section>
 
+      {/* 기본 벽 두께 설정 */}
+      <WallDefaultSection scale={scale} />
+
+      {/* 내보내기 */}
+      <ExportSection />
+
       {sel ? (
         <PropsPanel sel={sel} scale={scale} />
-      ) : (
-        <section className="rbar-section">
-          <h3>프로젝트</h3>
-          <div className="rbar-row"><span>파일명</span><span>Drawing 1</span></div>
-        </section>
-      )}
+      ) : null}
     </aside>
   )
 }
@@ -181,6 +184,82 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
     <section className="rbar-section">
       <h3>선택됨</h3>
       <div className="rbar-row"><span>유형</span><span>{sel.type}</span></div>
+    </section>
+  )
+}
+
+// ---------- wall default thickness ----------
+
+function WallDefaultSection({ scale }: { scale: ScaleConfig }) {
+  const [thickPx, setThickPx] = useState(getDefaultWallThickness)
+  const thickMm = thickPx / scale.pxPerMm
+  const dispUnit = scale.unit
+  const dispVal = scale.unit === 'm' ? thickMm / 1000 : scale.unit === 'cm' ? thickMm / 10 : thickMm
+  const [draft, setDraft] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const commit = () => {
+    if (draft === null) return
+    const raw = parseFloat(draft)
+    if (!isNaN(raw) && raw > 0) {
+      const mm = scale.unit === 'm' ? raw * 1000 : scale.unit === 'cm' ? raw * 10 : raw
+      const px = mm * scale.pxPerMm
+      setDefaultWallThickness(px)
+      setThickPx(px)
+    }
+    setDraft(null)
+  }
+
+  return (
+    <section className="rbar-section">
+      <h3>벽 기본 두께</h3>
+      <div className="rbar-row">
+        <span>두께</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <input
+            ref={inputRef}
+            className="prop-input"
+            value={draft ?? dispVal.toFixed(dispUnit === 'm' ? 3 : 1)}
+            onChange={e => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { commit(); inputRef.current?.blur() }
+              if (e.key === 'Escape') setDraft(null)
+            }}
+          />
+          <span style={{ fontSize: 11, color: '#999' }}>{dispUnit}</span>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ---------- export ----------
+
+function ExportSection() {
+  const editor = useEditor()
+  const [loading, setLoading] = useState(false)
+
+  const run = async (fn: () => Promise<void>) => {
+    setLoading(true)
+    try { await fn() } finally { setLoading(false) }
+  }
+
+  return (
+    <section className="rbar-section">
+      <h3>내보내기</h3>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <button
+          className="export-btn"
+          disabled={loading}
+          onClick={() => editor && run(() => exportPng(editor))}
+        >PNG</button>
+        <button
+          className="export-btn"
+          disabled={loading}
+          onClick={() => editor && run(() => exportSvg(editor))}
+        >SVG</button>
+      </div>
     </section>
   )
 }
