@@ -4,6 +4,7 @@ import { BlocksPanel } from './panels/BlocksPanel'
 import { BOQPanel } from './panels/BOQPanel'
 import { useEditor } from '../context/EditorContext'
 import { uploadImage } from '../lib/project'
+import { importDxf } from '../lib/dxfImport'
 
 const DRAW_TOOLS = [
   { id: 'select', icon: '↖', label: '선택' },
@@ -68,11 +69,18 @@ export function LBar() {
 
         <div className="lbar-divider" />
 
-        {/* 이미지 업로드 */}
+        {/* 도면 가져오기 */}
         <div className="lbar-section">
           <button
             className="lbar-icon"
-            title="이미지 업로드 (트레이싱)"
+            title="DXF 도면 불러오기 (벽으로 변환)"
+            onClick={() => editor && importDxf(editor)}
+          >
+            📐
+          </button>
+          <button
+            className="lbar-icon"
+            title="이미지 업로드 (트레이싱용 배경)"
             onClick={() => editor && uploadImage(editor)}
           >
             🖼
