@@ -1,4 +1,6 @@
 import { StateNode, createShapeId, type TLPointerEventInfo, type TLShapeId } from 'tldraw'
+import { snapToWallEndpoint, snapAngle } from '../lib/snap'
+import { drawingState } from '../lib/drawingState'
 
 export class WallTool extends StateNode {
   static override id = 'wall'
@@ -7,11 +9,21 @@ export class WallTool extends StateNode {
   private startPoint: { x: number; y: number } | null = null
   private previewId: TLShapeId | null = null
 
-  override onPointerDown(_info: TLPointerEventInfo) {
+  private resolvePoint(): { x: number; y: number } {
     const point = this.editor.inputs.currentPagePoint
+    const snapped = snapToWallEndpoint(this.editor, point, this.previewId ?? undefined)
+    if (snapped) return { x: snapped.x, y: snapped.y }
+    if (this.startPoint && this.editor.inputs.shiftKey) {
+      const v = snapAngle(point.x - this.startPoint.x, point.y - this.startPoint.y)
+      return { x: this.startPoint.x + v.x, y: this.startPoint.y + v.y }
+    }
+    return { x: point.x, y: point.y }
+  }
+
+  onPointerDown = (_info: TLPointerEventInfo) => {
+    const point = this.resolvePoint()
 
     if (!this.previewId) {
-      // 첫 클릭: 빈 wall shape 생성 (미리보기 시작)
       const id = createShapeId()
       this.editor.createShape({
         id,
@@ -22,17 +34,17 @@ export class WallTool extends StateNode {
       })
       this.previewId = id
       this.startPoint = { x: point.x, y: point.y }
+      drawingState.drawingId = id
     } else {
-      // 두 번째 클릭: 확정
       this.previewId = null
       this.startPoint = null
-      this.editor.setCurrentTool('select')
+      drawingState.drawingId = null
     }
   }
 
-  override onPointerMove(_info: TLPointerEventInfo) {
+  onPointerMove = (_info: TLPointerEventInfo) => {
     if (!this.previewId || !this.startPoint) return
-    const point = this.editor.inputs.currentPagePoint
+    const point = this.resolvePoint()
     this.editor.updateShape({
       id: this.previewId,
       type: 'wall' as never,
@@ -43,16 +55,17 @@ export class WallTool extends StateNode {
     })
   }
 
-  override onCancel() {
+  onCancel = () => {
     if (this.previewId) {
       this.editor.deleteShape(this.previewId)
       this.previewId = null
     }
     this.startPoint = null
+    drawingState.drawingId = null
     this.editor.setCurrentTool('select')
   }
 
-  override onKeyDown(info: { key: string }) {
+  onKeyDown = (info: { key: string }) => {
     if (info.key === 'Escape') this.onCancel()
   }
 }

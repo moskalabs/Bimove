@@ -7,6 +7,8 @@ const DRAW_TOOLS = [
   { id: 'select', icon: '↖', label: '선택' },
   { id: 'hand', icon: '✋', label: '이동' },
   { id: 'wall', icon: '▬', label: '벽' },
+  { id: 'door', icon: '🚪', label: '문' },
+  { id: 'window', icon: '🪟', label: '창문' },
 ] as const
 
 const PANELS = [

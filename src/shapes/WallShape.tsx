@@ -7,6 +7,7 @@ import {
   type TLResizeInfo,
   Vec,
 } from 'tldraw'
+import { getScaleConfig, formatLength } from '../lib/scaleConfig'
 
 export type WallShapeProps = {
   x2: number
@@ -15,12 +16,6 @@ export type WallShapeProps = {
 }
 
 export type WallShape = TLBaseShape<'wall', WallShapeProps>
-
-declare module '@tldraw/tlschema' {
-  interface TLGlobalShapePropsMap {
-    wall: WallShapeProps
-  }
-}
 
 export class WallShapeUtil extends ShapeUtil<WallShape> {
   static override type = 'wall' as const
@@ -35,9 +30,9 @@ export class WallShapeUtil extends ShapeUtil<WallShape> {
     return { x2: 200, y2: 0, thickness: 20 }
   }
 
-  override canEdit() { return false }
-  override canResize() { return false }
-  override isAspectRatioLocked() { return false }
+  canEdit = () => false
+  canResize = () => false
+  isAspectRatioLocked = () => false
 
   private getCorners(shape: WallShape): Vec[] {
     const { x2, y2, thickness } = shape.props
@@ -58,28 +53,68 @@ export class WallShapeUtil extends ShapeUtil<WallShape> {
     return new Polygon2d({ points: this.getCorners(shape), isFilled: true })
   }
 
-  override getIndicatorPath(shape: WallShape): Path2D | undefined {
+  indicator(shape: WallShape) {
     const corners = this.getCorners(shape)
-    const path = new Path2D()
-    path.moveTo(corners[0].x, corners[0].y)
-    for (let i = 1; i < corners.length; i++) {
-      path.lineTo(corners[i].x, corners[i].y)
-    }
-    path.closePath()
-    return path
+    const d = `M${corners[0].x},${corners[0].y} L${corners[1].x},${corners[1].y} L${corners[2].x},${corners[2].y} L${corners[3].x},${corners[3].y} Z`
+    return <path d={d} />
   }
 
   override component(shape: WallShape) {
+    const { x2, y2, thickness } = shape.props
     const corners = this.getCorners(shape)
     const d = `M${corners[0].x},${corners[0].y} L${corners[1].x},${corners[1].y} L${corners[2].x},${corners[2].y} L${corners[3].x},${corners[3].y} Z`
+
+    const len = Math.sqrt(x2 * x2 + y2 * y2)
+    if (len < 4) return <SVGContainer><path d={d} fill="#555" stroke="#222" strokeWidth={1} /></SVGContainer>
+
+    // 치수선: 벽과 평행, 벽 바깥쪽으로 offset
+    const nx = -y2 / len, ny = x2 / len
+    const off = thickness / 2 + 14  // 벽 중심에서 치수선까지 거리
+    const ex = 6  // 연장선 길이
+
+    const d1 = { x: nx * off, y: ny * off }                      // 시작 치수 기준점
+    const d2 = { x: x2 + nx * off, y: y2 + ny * off }            // 끝 치수 기준점
+    const angle = Math.atan2(y2, x2) * 180 / Math.PI
+    const mid = { x: (d1.x + d2.x) / 2, y: (d1.y + d2.y) / 2 }
+
+    // 화살표 머리 (치수선 양 끝)
+    const arrowSize = 5
+    const ux = x2 / len, uy = y2 / len  // 벽 방향 단위벡터
+    const arrow1 = `M${d1.x + ux * arrowSize},${d1.y + uy * arrowSize} L${d1.x},${d1.y} L${d1.x + nx * arrowSize / 2},${d1.y + ny * arrowSize / 2}`
+    const arrow2 = `M${d2.x - ux * arrowSize},${d2.y - uy * arrowSize} L${d2.x},${d2.y} L${d2.x + nx * arrowSize / 2},${d2.y + ny * arrowSize / 2}`
+
     return (
       <SVGContainer>
-        <path d={d} fill="#888" stroke="#333" strokeWidth={1} />
+        {/* 벽 본체 */}
+        <path d={d} fill="#555" stroke="#222" strokeWidth={1} />
+
+        {/* 치수선 */}
+        <line x1={d1.x} y1={d1.y} x2={d2.x} y2={d2.y} stroke="#1a73e8" strokeWidth={0.8} />
+
+        {/* 연장선 */}
+        <line x1={nx * (thickness / 2)} y1={ny * (thickness / 2)} x2={d1.x + nx * ex} y2={d1.y + ny * ex} stroke="#1a73e8" strokeWidth={0.8} />
+        <line x1={x2 + nx * (thickness / 2)} y1={y2 + ny * (thickness / 2)} x2={d2.x + nx * ex} y2={d2.y + ny * ex} stroke="#1a73e8" strokeWidth={0.8} />
+
+        {/* 화살표 */}
+        <path d={arrow1} stroke="#1a73e8" strokeWidth={0.8} fill="none" />
+        <path d={arrow2} stroke="#1a73e8" strokeWidth={0.8} fill="none" />
+
+        {/* 길이 텍스트 */}
+        <text
+          x={mid.x}
+          y={mid.y}
+          fontSize={10}
+          fill="#1a73e8"
+          textAnchor="middle"
+          dominantBaseline="middle"
+          transform={`rotate(${angle > 90 || angle < -90 ? angle + 180 : angle}, ${mid.x}, ${mid.y})`}
+          style={{ userSelect: 'none', pointerEvents: 'none', fontFamily: 'monospace' }}
+        >
+          {formatLength(len, getScaleConfig(this.editor))}
+        </text>
       </SVGContainer>
     )
   }
 
-  override onResize(shape: WallShape, _info: TLResizeInfo<WallShape>) {
-    return shape
-  }
+  onResize = (shape: WallShape, _info: TLResizeInfo<WallShape>) => shape
 }
