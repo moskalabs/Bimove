@@ -1,9 +1,15 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { LayersPanel } from './panels/LayersPanel'
 import { BlocksPanel } from './panels/BlocksPanel'
+import { useEditor } from '../context/EditorContext'
+
+const DRAW_TOOLS = [
+  { id: 'select', icon: '↖', label: '선택' },
+  { id: 'hand', icon: '✋', label: '이동' },
+  { id: 'wall', icon: '▬', label: '벽' },
+] as const
 
 const PANELS = [
-  { id: 'menu', icon: '☰', label: '메뉴' },
   { id: 'layers', icon: '⊞', label: '도면층' },
   { id: 'blocks', icon: '⬜', label: '블록' },
   { id: 'materials', icon: '◨', label: '재질' },
@@ -14,26 +20,61 @@ const PANELS = [
 ] as const
 
 type PanelId = typeof PANELS[number]['id']
+type ToolId = typeof DRAW_TOOLS[number]['id']
 
 export function LBar() {
+  const editor = useEditor()
   const [activePanel, setActivePanel] = useState<PanelId | null>(null)
+  const [activeTool, setActiveTool] = useState<ToolId>('select')
 
-  const toggle = (id: PanelId) =>
+  useEffect(() => {
+    if (!editor) return
+    const unsub = editor.store.listen(() => {
+      const current = editor.getCurrentToolId()
+      const match = DRAW_TOOLS.find(t => t.id === current)
+      if (match) setActiveTool(match.id)
+    })
+    return unsub
+  }, [editor])
+
+  const selectTool = (id: ToolId) => {
+    editor?.setCurrentTool(id)
+    setActiveTool(id)
+  }
+
+  const togglePanel = (id: PanelId) =>
     setActivePanel(prev => prev === id ? null : id)
 
   return (
     <>
       <aside className="lbar">
-        {PANELS.map(p => (
-          <button
-            key={p.id}
-            className={`lbar-icon${activePanel === p.id ? ' active' : ''}`}
-            title={p.label}
-            onClick={() => toggle(p.id)}
-          >
-            {p.icon}
-          </button>
-        ))}
+        <div className="lbar-section">
+          {DRAW_TOOLS.map(t => (
+            <button
+              key={t.id}
+              className={`lbar-icon${activeTool === t.id ? ' active' : ''}`}
+              title={t.label}
+              onClick={() => selectTool(t.id)}
+            >
+              {t.icon}
+            </button>
+          ))}
+        </div>
+
+        <div className="lbar-divider" />
+
+        <div className="lbar-section">
+          {PANELS.map(p => (
+            <button
+              key={p.id}
+              className={`lbar-icon${activePanel === p.id ? ' active' : ''}`}
+              title={p.label}
+              onClick={() => togglePanel(p.id)}
+            >
+              {p.icon}
+            </button>
+          ))}
+        </div>
       </aside>
 
       {activePanel === 'layers' && <LayersPanel />}
