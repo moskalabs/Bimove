@@ -1,0 +1,13 @@
+cargo:rerun-if-env-changed=TAURI_CONFIG
+cargo:rustc-check-cfg=cfg(desktop)
+cargo:rustc-cfg=desktop
+cargo:rustc-check-cfg=cfg(mobile)
+cargo:rerun-if-changed=/Users/mac/Documents/code/bimove/src-tauri/tauri.conf.json
+cargo:rustc-env=TAURI_ANDROID_PACKAGE_NAME_APP_NAME=bimove
+cargo:rustc-env=TAURI_ANDROID_PACKAGE_NAME_PREFIX=com_moskalabs
+cargo:rustc-check-cfg=cfg(dev)
+cargo:rustc-cfg=dev
+cargo:PERMISSION_FILES_PATH=/Users/mac/Documents/code/bimove/src-tauri/target/debug/build/bimove-f31e154966ce1b15/out/app-manifest/__app__-permission-files
+cargo:rerun-if-changed=capabilities
+cargo:rerun-if-env-changed=REMOVE_UNUSED_COMMANDS
+cargo:rustc-env=TAURI_ENV_TARGET_TRIPLE=x86_64-apple-darwin

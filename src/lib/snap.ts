@@ -22,15 +22,16 @@ export function snapToWallEndpoint(
   for (const shape of editor.getCurrentPageShapes()) {
     if (shape.type !== 'wall' || shape.id === excludeId) continue
     const props = shape.props as { x2: number; y2: number }
-    const ends = [
+    const candidates = [
       { x: shape.x, y: shape.y },
       { x: shape.x + props.x2, y: shape.y + props.y2 },
+      { x: shape.x + props.x2 / 2, y: shape.y + props.y2 / 2 },
     ]
-    for (const end of ends) {
-      const d = Math.hypot(end.x - point.x, end.y - point.y)
+    for (const pt of candidates) {
+      const d = Math.hypot(pt.x - point.x, pt.y - point.y)
       if (d < bestDist) {
         bestDist = d
-        best = { x: end.x, y: end.y, sourceId: shape.id }
+        best = { x: pt.x, y: pt.y, sourceId: shape.id }
       }
     }
   }

@@ -14,6 +14,7 @@ const DRAW_TOOLS = [
   { id: 'window', icon: '🪟', label: '창문' },
   { id: 'text', icon: '𝖳', label: '텍스트' },
   { id: 'comment', icon: '💬', label: '코멘트' },
+  { id: 'dimension', icon: '↔', label: '치수' },
 ] as const
 
 const PANELS = [
@@ -85,6 +86,26 @@ export function LBar() {
             onClick={() => editor && uploadImage(editor)}
           >
             🖼
+          </button>
+        </div>
+
+        <div className="lbar-divider" />
+
+        {/* 뷰 유틸리티 */}
+        <div className="lbar-section">
+          <button
+            className="lbar-icon"
+            title="도면에 맞게 보기"
+            onClick={() => editor?.zoomToFit({ animation: { duration: 200 } })}
+          >
+            ⊡
+          </button>
+          <button
+            className="lbar-icon"
+            title="100% 보기"
+            onClick={() => editor?.resetZoom()}
+          >
+            ⊘
           </button>
         </div>
 

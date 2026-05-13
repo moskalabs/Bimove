@@ -1,0 +1,11 @@
+/Users/mac/Documents/code/bimove/src-tauri/target/debug/deps/serde_untagged-58d5fd18be7cec12.d: /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/lib.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/any.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/error.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/int.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/map.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/seed.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/seq.rs
+
+/Users/mac/Documents/code/bimove/src-tauri/target/debug/deps/libserde_untagged-58d5fd18be7cec12.rmeta: /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/lib.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/any.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/error.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/int.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/map.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/seed.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/seq.rs
+
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/lib.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/any.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/error.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/int.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/map.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/seed.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-untagged-0.1.9/src/seq.rs:

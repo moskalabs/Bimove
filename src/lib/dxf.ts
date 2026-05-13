@@ -1,7 +1,7 @@
 import DxfParser from 'dxf-parser'
 import { createShapeId, type Editor } from 'tldraw'
 import { getScaleConfig } from './scaleConfig'
-import { getDefaultWallThickness } from './settings'
+import { getDefaultWallThicknessMm } from './settings'
 
 const MAX_SEGMENTS = 3000
 
@@ -100,7 +100,7 @@ export function importDxf(editor: Editor) {
     const unit = (dxf.header?.['$INSUNITS'] as number | undefined) ?? 4
     const toMm = unit === 1 ? 25.4 : unit === 2 ? 304.8 : unit === 5 ? 10 : unit === 6 ? 1000 : 1
     const k = getScaleConfig(editor).pxPerMm * toMm
-    const thickness = getDefaultWallThickness()
+    const thickness = getDefaultWallThicknessMm() * getScaleConfig(editor).pxPerMm
 
     const segs: Seg[] = []
     for (const ent of dxf.entities) {

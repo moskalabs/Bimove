@@ -1,0 +1,11 @@
+/Users/mac/Documents/code/bimove/src-tauri/target/debug/deps/cargo_metadata-a8317a1f9877b7d6.d: /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/lib.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/dependency.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/diagnostic.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/errors.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/messages.rs
+
+/Users/mac/Documents/code/bimove/src-tauri/target/debug/deps/libcargo_metadata-a8317a1f9877b7d6.rlib: /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/lib.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/dependency.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/diagnostic.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/errors.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/messages.rs
+
+/Users/mac/Documents/code/bimove/src-tauri/target/debug/deps/libcargo_metadata-a8317a1f9877b7d6.rmeta: /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/lib.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/dependency.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/diagnostic.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/errors.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/messages.rs
+
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/lib.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/dependency.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/diagnostic.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/errors.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo_metadata-0.19.2/src/messages.rs:

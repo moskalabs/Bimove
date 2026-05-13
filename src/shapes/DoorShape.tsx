@@ -3,7 +3,8 @@ import { Polygon2d, ShapeUtil, SVGContainer, T, type TLBaseShape, Vec } from 'tl
 export type DoorShapeProps = {
   width: number
   thickness: number
-  swing: number  // 1 = +y side, -1 = -y side
+  swing: number   // 1 = +y side, -1 = -y side
+  flipped: boolean  // mirrors hinge side left↔right
 }
 
 export type DoorShape = TLBaseShape<'door', DoorShapeProps>
@@ -14,10 +15,11 @@ export class DoorShapeUtil extends ShapeUtil<DoorShape> {
     width: T.number,
     thickness: T.number,
     swing: T.number,
+    flipped: T.boolean,
   }
 
   override getDefaultProps(): DoorShapeProps {
-    return { width: 80, thickness: 20, swing: 1 }
+    return { width: 80, thickness: 20, swing: 1, flipped: false }
   }
 
   canEdit = () => false
@@ -40,10 +42,13 @@ export class DoorShapeUtil extends ShapeUtil<DoorShape> {
   }
 
   override component(shape: DoorShape) {
-    const { width, thickness, swing } = shape.props
+    const { width, thickness, swing, flipped } = shape.props
     const hw = width / 2, ht = thickness / 2
     const sw = swing  // 1 or -1
-    const sweepFlag = sw > 0 ? 1 : 0
+    const f = flipped ? -1 : 1  // horizontal mirror factor
+    const hingeX = -hw * f
+    const freeX = hw * f
+    const sweepFlag = (sw > 0 ? 1 : 0) ^ (flipped ? 1 : 0)
 
     return (
       <SVGContainer>
@@ -55,11 +60,11 @@ export class DoorShapeUtil extends ShapeUtil<DoorShape> {
         <line x1={hw} y1={-ht} x2={hw} y2={ht} stroke="#222" strokeWidth={2} />
 
         {/* 문짝 (경첩쪽 고정) */}
-        <line x1={-hw} y1={0} x2={-hw} y2={sw * width} stroke="#444" strokeWidth={1} />
+        <line x1={hingeX} y1={0} x2={hingeX} y2={sw * width} stroke="#444" strokeWidth={1} />
 
         {/* 스윙 호 (점선) */}
         <path
-          d={`M${-hw},${sw * width} A${width},${width} 0 0,${sweepFlag} ${hw},0`}
+          d={`M${hingeX},${sw * width} A${width},${width} 0 0,${sweepFlag} ${freeX},0`}
           stroke="#666"
           strokeWidth={0.8}
           strokeDasharray="3,2"

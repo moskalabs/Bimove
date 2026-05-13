@@ -246,6 +246,124 @@ export const BLOCKS: BlockDef[] = [
       line(0, 80, 2400, 80, { strokeDasharray: '20 20' }),
     ),
   },
+  {
+    id: 'dishwasher', name: '식기세척기', category: '주방', wmm: 600, hmm: 600,
+    draw: () => g(
+      rect(0, 0, 600, 600, { rx: 20 }),
+      rect(80, 80, 440, 440, { rx: 20, stroke: THIN, strokeWidth: 10 }),
+      circle(300, 300, 60),
+      line(120, 300, 180, 300), line(420, 300, 480, 300),
+    ),
+  },
+  {
+    id: 'microwave', name: '전자레인지', category: '주방', wmm: 500, hmm: 350,
+    draw: () => g(
+      rect(0, 0, 500, 350, { rx: 12 }),
+      rect(30, 40, 300, 270, { rx: 8, stroke: THIN, strokeWidth: 10 }),
+      rect(360, 80, 100, 190, { rx: 8, stroke: THIN, strokeWidth: 10 }),
+      circle(410, 140, 22), circle(410, 230, 22),
+    ),
+  },
+
+  // ---------------- 사무실 ----------------
+  {
+    id: 'desk_office', name: '사무용 책상', category: '사무실', wmm: 1400, hmm: 700,
+    draw: () => g(
+      rect(0, 0, 1400, 700),
+      rect(0, 0, 400, 700, { stroke: THIN, strokeWidth: 10 }),          // pedestal
+      line(400, 0, 400, 700),
+    ),
+  },
+  {
+    id: 'chair_office', name: '사무 의자', category: '사무실', wmm: 500, hmm: 500,
+    draw: () => g(
+      circle(250, 250, 250, { fill: 'none' }),
+      rect(120, 80, 260, 260, { rx: 30 }),                               // seat
+      h('path', { d: 'M120 60 Q250 -40 380 60', stroke: STROKE, strokeWidth: 12, fill: 'none' }), // backrest arc
+      circle(250, 250, 30, { fill: '#ccc', stroke: THIN }),              // center hub
+    ),
+  },
+  {
+    id: 'meeting_table', name: '회의 테이블', category: '사무실', wmm: 3000, hmm: 1200,
+    draw: () => g(
+      rect(0, 0, 3000, 1200, { rx: 40 }),
+      ...Array.from({ length: 3 }, (_, i) =>
+        rect(200 + i * 900, -420, 450, 380, { rx: 30, stroke: THIN, strokeWidth: 10 }),
+      ),
+      ...Array.from({ length: 3 }, (_, i) =>
+        rect(200 + i * 900, 1240, 450, 380, { rx: 30, stroke: THIN, strokeWidth: 10 }),
+      ),
+    ),
+  },
+  {
+    id: 'printer', name: '복합기', category: '사무실', wmm: 600, hmm: 500,
+    draw: () => g(
+      rect(0, 0, 600, 500, { rx: 16 }),
+      rect(50, 50, 500, 200, { rx: 8, stroke: THIN, strokeWidth: 10 }),  // scanner bed
+      rect(100, 290, 400, 140, { rx: 6, stroke: THIN, strokeWidth: 10 }), // paper tray
+      line(50, 280, 550, 280),
+    ),
+  },
+
+  // ---------------- 세탁실 ----------------
+  {
+    id: 'washer', name: '세탁기', category: '세탁실', wmm: 600, hmm: 600,
+    draw: () => g(
+      rect(0, 0, 600, 600, { rx: 16 }),
+      circle(300, 340, 200, { fill: 'none' }),
+      circle(300, 340, 130, { fill: 'none', stroke: THIN, strokeWidth: 10 }),
+      rect(80, 60, 180, 100, { rx: 8, stroke: THIN, strokeWidth: 10 }),  // control panel
+    ),
+  },
+  {
+    id: 'dryer', name: '건조기', category: '세탁실', wmm: 600, hmm: 600,
+    draw: () => g(
+      rect(0, 0, 600, 600, { rx: 16 }),
+      circle(300, 340, 200, { fill: 'none' }),
+      circle(300, 340, 130, { fill: 'none', stroke: THIN, strokeWidth: 10 }),
+      rect(320, 60, 180, 100, { rx: 8, stroke: THIN, strokeWidth: 10 }), // control panel
+      h('path', { d: 'M250 340 L320 300 L320 380 Z', fill: STROKE }),    // direction arrow
+    ),
+  },
+
+  // ---------------- 기타 ----------------
+  {
+    id: 'north_arrow', name: '북 방위', category: '기타', wmm: 200, hmm: 240,
+    draw: () => {
+      const cx = 100, cy = 130
+      return g(
+        circle(cx, cy, 90),
+        // 북쪽 (채워진 검정)
+        h('path', { d: `M${cx} ${cy - 90} L${cx + 22} ${cy} L${cx} ${cy - 28} Z`, fill: '#333', stroke: '#222', strokeWidth: 7 }),
+        // 남쪽 (비어있는)
+        h('path', { d: `M${cx} ${cy + 90} L${cx + 22} ${cy} L${cx} ${cy + 28} Z`, fill: '#fff', stroke: '#222', strokeWidth: 7 }),
+        // 서쪽
+        h('path', { d: `M${cx} ${cy - 90} L${cx - 22} ${cy} L${cx} ${cy - 28} Z`, fill: '#888', stroke: '#222', strokeWidth: 7 }),
+        h('path', { d: `M${cx} ${cy + 90} L${cx - 22} ${cy} L${cx} ${cy + 28} Z`, fill: '#ccc', stroke: '#222', strokeWidth: 7 }),
+        h('text', { x: cx, y: 22, fontSize: 36, textAnchor: 'middle', dominantBaseline: 'middle', fill: '#333', fontWeight: 'bold', fontFamily: 'sans-serif' }, 'N'),
+      )
+    },
+  },
+  {
+    id: 'scale_bar', name: '스케일 바', category: '기타', wmm: 1000, hmm: 100,
+    draw: () => g(
+      line(0, 50, 1000, 50, { stroke: STROKE, strokeWidth: 12 }),
+      line(0, 20, 0, 80, { stroke: STROKE, strokeWidth: 12 }),
+      line(500, 30, 500, 70, { stroke: STROKE, strokeWidth: 10 }),
+      line(1000, 20, 1000, 80, { stroke: STROKE, strokeWidth: 12 }),
+      h('rect', { x: 0, y: 38, width: 500, height: 24, fill: '#333' }),
+      h('rect', { x: 500, y: 38, width: 500, height: 24, fill: '#fff', stroke: '#333', strokeWidth: 10 }),
+    ),
+  },
+  {
+    id: 'revision_cloud', name: '수정 기호', category: '기타', wmm: 600, hmm: 400,
+    draw: () => g(
+      h('path', {
+        d: 'M50 350 Q0 300 50 250 Q100 200 150 250 Q200 300 250 250 Q300 200 350 250 Q400 300 450 250 Q500 200 550 250 Q600 300 550 350 Q500 400 450 350 Q400 300 350 350 Q300 400 250 350 Q200 300 150 350 Q100 400 50 350 Z',
+        fill: 'none', stroke: '#e74c3c', strokeWidth: 12,
+      }),
+    ),
+  },
 ]
 
 export const BLOCK_CATEGORIES = Array.from(new Set(BLOCKS.map((b) => b.category)))

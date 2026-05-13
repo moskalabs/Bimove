@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { type TLShapeId, createShapeId } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
 import { detectWalls } from '../lib/detectWalls'
@@ -9,10 +9,18 @@ import {
   type ScaleUnit,
   type ScaleConfig,
 } from '../lib/scaleConfig'
-import { exportPng, exportSvg } from '../lib/exportPng'
+import { exportPng, exportSvg, printPdf } from '../lib/exportPng'
 import { saveProject, openProject } from '../lib/project'
 import { exportDxf } from '../lib/dxf'
-import { getDefaultWallThickness, setDefaultWallThickness, getWallHeightMm, setWallHeightMm } from '../lib/settings'
+import {
+  getDefaultWallThicknessMm, setDefaultWallThicknessMm,
+  getWallHeightMm, setWallHeightMm,
+  getShowWallLengths, setShowWallLengths,
+  getShowRoomAreas, setShowRoomAreas,
+  getRoomNames,
+} from '../lib/settings'
+import { detectRooms } from '../lib/roomDetection'
+import { formatArea } from './RoomOverlay'
 
 type SelInfo = {
   id: TLShapeId
@@ -42,6 +50,8 @@ export function RBar() {
 
   const handleUnit = (unit: ScaleUnit) => { if (editor) setScaleConfig(editor, { unit }) }
   const handlePreset = (pxPerMm: number) => { if (editor) setScaleConfig(editor, { pxPerMm }) }
+
+  const selectedShapes = editor?.getSelectedShapes() ?? []
 
   return (
     <aside className="rbar">
@@ -79,9 +89,16 @@ export function RBar() {
       {/* 3D 벽 높이 */}
       <WallHeightSection />
 
+      {/* 표시 설정 */}
+      <DisplaySection scale={scale} />
+
+      {/* 방 면적 요약 */}
+      <RoomAreaSection scale={scale} />
+
       {/* 내보내기 */}
       <ExportSection />
 
+      {selectedShapes.length > 1 && <AlignPanel />}
       {sel ? (
         <PropsPanel sel={sel} scale={scale} />
       ) : null}
@@ -93,9 +110,28 @@ export function RBar() {
 
 function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleConfig }) {
   const editor = useEditor()
+  const shape = editor?.getShape(sel.id)
+  const isLocked = shape?.isLocked ?? false
+
+  const lockBtn = (
+    <section className="rbar-section" style={{ paddingTop: 10, paddingBottom: 10 }}>
+      <button
+        className="export-btn"
+        style={isLocked ? { background: '#555', color: '#fff', borderColor: '#555' } : undefined}
+        onClick={() => editor?.updateShape({ id: sel.id, isLocked: !isLocked } as never)}
+      >
+        {isLocked ? '🔓 잠금 해제' : '🔒 잠금'}
+      </button>
+    </section>
+  )
 
   if (sel.type === 'image') {
-    return <ImageDetectSection sel={sel} />
+    return (
+      <>
+        {lockBtn}
+        <ImageDetectSection sel={sel} />
+      </>
+    )
   }
 
   if (sel.type === 'wall') {
@@ -127,6 +163,8 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
 
   if (sel.type === 'block') {
     const p = sel.props as { w: number; h: number; blockId: string }
+    const shape = editor?.getShape(sel.id)
+    const rotDeg = shape ? Math.round((shape.rotation ?? 0) * 180 / Math.PI) : 0
     const wMm = p.w / scale.pxPerMm
     const hMm = p.h / scale.pxPerMm
 
@@ -138,12 +176,17 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
       if (!editor || mm < 1) return
       editor.updateShape({ id: sel.id, type: 'block' as never, props: { h: mm * scale.pxPerMm } })
     }
+    const setRot = (deg: number) => {
+      if (!editor) return
+      editor.updateShape({ id: sel.id, rotation: (deg * Math.PI) / 180 } as never)
+    }
 
     return (
       <section className="rbar-section">
         <h3>블록 ({p.blockId})</h3>
         <PropField label="너비" value={wMm} unit={scale.unit} onCommit={setW} />
         <PropField label="높이" value={hMm} unit={scale.unit} onCommit={setH} />
+        <RotationField value={rotDeg} onCommit={setRot} />
       </section>
     )
   }
@@ -170,7 +213,9 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
   }
 
   if (sel.type === 'door') {
-    const p = sel.props as { width: number; thickness: number; swing: number }
+    const p = sel.props as { width: number; thickness: number; swing: number; flipped?: boolean }
+    const shape = editor?.getShape(sel.id)
+    const rotDeg = shape ? Math.round((shape.rotation ?? 0) * 180 / Math.PI) : 0
     const wMm = p.width / scale.pxPerMm
     const setW = (mm: number) => {
       if (!editor || mm < 1) return
@@ -179,6 +224,14 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
     const setSwing = (v: number) => {
       if (!editor) return
       editor.updateShape({ id: sel.id, type: 'door' as never, props: { swing: v } })
+    }
+    const setRot = (deg: number) => {
+      if (!editor) return
+      editor.updateShape({ id: sel.id, rotation: (deg * Math.PI) / 180 } as never)
+    }
+    const flipDoor = () => {
+      if (!editor) return
+      editor.updateShape({ id: sel.id, type: 'door' as never, props: { flipped: !p.flipped } })
     }
     return (
       <section className="rbar-section">
@@ -190,6 +243,15 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
             <button className={p.swing === 1 ? 'active' : ''} onClick={() => setSwing(1)}>↑</button>
             <button className={p.swing === -1 ? 'active' : ''} onClick={() => setSwing(-1)}>↓</button>
           </div>
+        </div>
+        <RotationField value={rotDeg} onCommit={setRot} />
+        <div className="rbar-row">
+          <span>뒤집기</span>
+          <button className={`export-btn${p.flipped ? ' active' : ''}`}
+            style={p.flipped ? { background: '#555', color: '#fff', borderColor: '#555' } : undefined}
+            onClick={flipDoor}>
+            {p.flipped ? '↔ 뒤집힘' : '↔ 뒤집기'}
+          </button>
         </div>
       </section>
     )
@@ -213,6 +275,28 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
             ))}
           </div>
         </div>
+      </section>
+    )
+  }
+
+  if (sel.type === 'dimension') {
+    const p = sel.props as { x2: number; y2: number; offset: number }
+    const len = Math.sqrt(p.x2 ** 2 + p.y2 ** 2)
+    const lenMm = len / scale.pxPerMm
+    const setOffset = (mm: number) => {
+      if (!editor || mm < 1) return
+      editor.updateShape({ id: sel.id, type: 'dimension' as never, props: { offset: mm * scale.pxPerMm } })
+    }
+    return (
+      <section className="rbar-section">
+        <h3>치수선</h3>
+        <div className="rbar-row">
+          <span>길이</span>
+          <span style={{ color: '#333', fontWeight: 500, fontFamily: 'monospace' }}>
+            {scale.unit === 'm' ? `${(lenMm / 1000).toFixed(2)}m` : scale.unit === 'cm' ? `${(lenMm / 10).toFixed(1)}cm` : `${Math.round(lenMm)}mm`}
+          </span>
+        </div>
+        <PropField label="오프셋" value={p.offset / scale.pxPerMm} unit={scale.unit} onCommit={setOffset} />
       </section>
     )
   }
@@ -261,6 +345,43 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
   )
 }
 
+// ---------- multi-select align ----------
+
+function AlignPanel() {
+  const editor = useEditor()
+  if (!editor) return null
+
+  const ids = editor.getSelectedShapeIds()
+  if (ids.length < 2) return null
+
+  const align = (alignment: 'left' | 'center-horizontal' | 'right' | 'top' | 'center-vertical' | 'bottom') =>
+    editor.alignShapes(ids, alignment)
+  const distribute = (axis: 'horizontal' | 'vertical') =>
+    editor.distributeShapes(ids, axis)
+
+  const btnStyle: React.CSSProperties = {
+    width: 28, height: 28, border: '1px solid #e0e0e0', borderRadius: 4,
+    background: '#fff', cursor: 'pointer', fontSize: 13, display: 'flex',
+    alignItems: 'center', justifyContent: 'center',
+  }
+
+  return (
+    <section className="rbar-section">
+      <h3>정렬 ({ids.length}개 선택)</h3>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+        <button style={btnStyle} title="왼쪽 맞춤" onClick={() => align('left')}>⬛◻◻</button>
+        <button style={btnStyle} title="가운데 맞춤 (수평)" onClick={() => align('center-horizontal')}>◻⬛◻</button>
+        <button style={btnStyle} title="오른쪽 맞춤" onClick={() => align('right')}>◻◻⬛</button>
+        <button style={btnStyle} title="위쪽 맞춤" onClick={() => align('top')}>↑</button>
+        <button style={btnStyle} title="가운데 맞춤 (수직)" onClick={() => align('center-vertical')}>↕</button>
+        <button style={btnStyle} title="아래쪽 맞춤" onClick={() => align('bottom')}>↓</button>
+        <button style={btnStyle} title="수평 간격 균등" onClick={() => distribute('horizontal')}>⇔</button>
+        <button style={btnStyle} title="수직 간격 균등" onClick={() => distribute('vertical')}>⇕</button>
+      </div>
+    </section>
+  )
+}
+
 // ---------- grid size ----------
 
 const GRID_SIZES = [5, 10, 20, 50, 100, 200, 500]
@@ -268,12 +389,15 @@ const GRID_SIZES = [5, 10, 20, 50, 100, 200, 500]
 function GridSection() {
   const editor = useEditor()
   const [gridPx, setGridPx] = useState(20)
+  const [gridOn, setGridOn] = useState(false)
 
   useEffect(() => {
     if (!editor) return
     const unsub = editor.store.listen(() => {
-      const g = (editor.getInstanceState() as { gridSize?: number }).gridSize
+      const state = editor.getInstanceState()
+      const g = (state as { gridSize?: number }).gridSize
       if (g) setGridPx(g)
+      setGridOn(!!(state as { isGridMode?: boolean }).isGridMode)
     })
     return unsub
   }, [editor])
@@ -284,9 +408,26 @@ function GridSection() {
     setGridPx(px)
   }
 
+  const toggleGrid = () => {
+    if (!editor) return
+    const next = !gridOn
+    editor.updateInstanceState({ isGridMode: next } as never)
+    setGridOn(next)
+  }
+
   return (
     <section className="rbar-section">
       <h3>그리드</h3>
+      <div className="rbar-row">
+        <span>표시</span>
+        <button
+          className={`export-btn${gridOn ? ' active' : ''}`}
+          style={gridOn ? { background: '#333', color: '#fff', borderColor: '#333' } : undefined}
+          onClick={toggleGrid}
+        >
+          {gridOn ? '켜짐' : '꺼짐'}
+        </button>
+      </div>
       <div style={{ padding: '4px 0 8px' }}>
         <select
           value={gridPx}
@@ -326,7 +467,7 @@ function ImageDetectSection({ sel }: { sel: NonNullable<SelInfo> }) {
       const { lines, width, height } = await detectWalls(src)
       if (lines.length === 0) { setMsg('선분을 찾지 못했습니다. 더 선명한 도면을 써보세요.'); return }
       const kx = sw / width, ky = sh / height
-      const thickness = getDefaultWallThickness()
+      const thickness = getDefaultWallThicknessMm() * getScaleConfig(editor!).pxPerMm
       const shapes = lines.map((ln) => {
         const x1 = ox + ln.x1 * kx, y1 = oy + ln.y1 * ky
         const x2 = ox + ln.x2 * kx, y2 = oy + ln.y2 * ky
@@ -392,11 +533,107 @@ function WallHeightSection() {
   )
 }
 
+// ---------- display toggles ----------
+
+function DisplaySection({ scale: _scale }: { scale: ScaleConfig }) {
+  const [showLengths, setShowLengths] = useState(getShowWallLengths)
+  const [showAreas, setShowAreas] = useState(getShowRoomAreas)
+
+  const toggle = (kind: 'lengths' | 'areas') => {
+    if (kind === 'lengths') {
+      const next = !showLengths
+      setShowLengths(next)
+      setShowWallLengths(next)
+    } else {
+      const next = !showAreas
+      setShowAreas(next)
+      setShowRoomAreas(next)
+    }
+    window.dispatchEvent(new Event('bimove:settings'))
+  }
+
+  return (
+    <section className="rbar-section">
+      <h3>표시</h3>
+      <div className="rbar-row">
+        <span>벽 길이</span>
+        <button className={`toggle-btn${showLengths ? ' active' : ''}`} onClick={() => toggle('lengths')}>
+          {showLengths ? '켜짐' : '꺼짐'}
+        </button>
+      </div>
+      <div className="rbar-row">
+        <span>방 면적</span>
+        <button className={`toggle-btn${showAreas ? ' active' : ''}`} onClick={() => toggle('areas')}>
+          {showAreas ? '켜짐' : '꺼짐'}
+        </button>
+      </div>
+    </section>
+  )
+}
+
+// ---------- room area summary ----------
+
+function roomKey(cx: number, cy: number): string {
+  return `${Math.round(cx / 50) * 50},${Math.round(cy / 50) * 50}`
+}
+
+function RoomAreaSection({ scale }: { scale: ScaleConfig }) {
+  const editor = useEditor()
+  const [rooms, setRooms] = useState<{ area: number; key: string }[]>([])
+  const [names, setNames] = useState(getRoomNames)
+
+  useEffect(() => {
+    const onSettings = () => setNames(getRoomNames())
+    window.addEventListener('bimove:settings', onSettings)
+    return () => window.removeEventListener('bimove:settings', onSettings)
+  }, [])
+
+  useEffect(() => {
+    if (!editor) return
+    const update = () => {
+      const walls = editor.getCurrentPageShapes()
+        .filter(s => s.type === 'wall')
+        .map(s => {
+          const p = s.props as { x2: number; y2: number }
+          return { x1: s.x, y1: s.y, x2: s.x + p.x2, y2: s.y + p.y2 }
+        })
+      const detected = detectRooms(walls)
+      const k = scale.pxPerMm
+      setRooms(detected.map(r => ({
+        area: r.area / (k * k),
+        key: roomKey(r.centroid.x, r.centroid.y),
+      })))
+    }
+    update()
+    const unsub = editor.store.listen(update)
+    return unsub
+  }, [editor, scale])
+
+  if (rooms.length === 0) return null
+
+  const total = rooms.reduce((s, r) => s + r.area, 0)
+
+  return (
+    <section className="rbar-section">
+      <h3>방 면적</h3>
+      {rooms.map((r, i) => (
+        <div key={r.key} className="rbar-row" style={{ fontSize: 11 }}>
+          <span style={{ color: '#555' }}>{names[r.key] ?? `방 ${i + 1}`}</span>
+          <span style={{ fontFamily: 'monospace', color: '#333' }}>{formatArea(r.area, scale.unit)}</span>
+        </div>
+      ))}
+      <div className="rbar-row" style={{ fontWeight: 600, borderTop: '1px solid #e8e8e8', paddingTop: 5, marginTop: 2 }}>
+        <span>합계</span>
+        <span style={{ fontFamily: 'monospace' }}>{formatArea(total, scale.unit)}</span>
+      </div>
+    </section>
+  )
+}
+
 // ---------- wall default thickness ----------
 
 function WallDefaultSection({ scale }: { scale: ScaleConfig }) {
-  const [thickPx, setThickPx] = useState(getDefaultWallThickness)
-  const thickMm = thickPx / scale.pxPerMm
+  const [thickMm, setThickMm] = useState(getDefaultWallThicknessMm)
   const dispUnit = scale.unit
   const dispVal = scale.unit === 'm' ? thickMm / 1000 : scale.unit === 'cm' ? thickMm / 10 : thickMm
   const [draft, setDraft] = useState<string | null>(null)
@@ -407,9 +644,8 @@ function WallDefaultSection({ scale }: { scale: ScaleConfig }) {
     const raw = parseFloat(draft)
     if (!isNaN(raw) && raw > 0) {
       const mm = scale.unit === 'm' ? raw * 1000 : scale.unit === 'cm' ? raw * 10 : raw
-      const px = mm * scale.pxPerMm
-      setDefaultWallThickness(px)
-      setThickPx(px)
+      setDefaultWallThicknessMm(mm)
+      setThickMm(mm)
     }
     setDraft(null)
   }
@@ -490,8 +726,53 @@ function ExportSection() {
           disabled={loading}
           onClick={() => editor && run(() => exportSvg(editor))}
         >SVG</button>
+        <button
+          className="export-btn"
+          disabled={loading}
+          onClick={() => editor && run(() => printPdf(editor))}
+        >PDF 인쇄</button>
       </div>
     </section>
+  )
+}
+
+// ---------- rotation input ----------
+
+function RotationField({ value, onCommit }: { value: number; onCommit: (deg: number) => void }) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const normalized = ((value % 360) + 360) % 360
+
+  const commit = () => {
+    if (draft === null) return
+    const raw = parseFloat(draft)
+    if (!isNaN(raw)) onCommit(raw)
+    setDraft(null)
+  }
+
+  const snap90 = (deg: number) => onCommit(((Math.round(deg / 90) * 90) % 360 + 360) % 360)
+
+  return (
+    <div className="rbar-row">
+      <span>회전</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+        <input
+          ref={inputRef}
+          className="prop-input"
+          value={draft ?? String(normalized)}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === 'Enter') { commit(); inputRef.current?.blur() } if (e.key === 'Escape') setDraft(null) }}
+        />
+        <span style={{ fontSize: 11, color: '#999' }}>°</span>
+        <button
+          style={{ width: 22, height: 22, border: '1px solid #e0e0e0', borderRadius: 3, background: '#fff', cursor: 'pointer', fontSize: 12 }}
+          title="90° 회전"
+          onClick={() => snap90(normalized + 90)}
+        >↻</button>
+      </div>
+    </div>
   )
 }
 

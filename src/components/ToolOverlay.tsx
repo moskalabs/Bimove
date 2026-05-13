@@ -15,7 +15,8 @@ export function ToolOverlay() {
     if (!editor) return
 
     const update = () => {
-      if (editor.getCurrentToolId() !== 'wall') {
+      const toolId = editor.getCurrentToolId()
+      if (toolId !== 'wall' && toolId !== 'dimension') {
         setStart(null)
         setSnap(null)
         return

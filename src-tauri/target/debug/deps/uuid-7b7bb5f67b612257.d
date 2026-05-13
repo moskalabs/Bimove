@@ -1,0 +1,14 @@
+/Users/mac/Documents/code/bimove/src-tauri/target/debug/deps/uuid-7b7bb5f67b612257.d: /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/lib.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/macros.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/builder.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/error.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/non_nil.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/parser.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/fmt.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/timestamp.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/external.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/external/serde_support.rs
+
+/Users/mac/Documents/code/bimove/src-tauri/target/debug/deps/libuuid-7b7bb5f67b612257.rmeta: /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/lib.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/macros.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/builder.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/error.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/non_nil.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/parser.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/fmt.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/timestamp.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/external.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/external/serde_support.rs
+
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/lib.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/macros.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/builder.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/error.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/non_nil.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/parser.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/fmt.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/timestamp.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/external.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.23.1/src/external/serde_support.rs:

@@ -17,10 +17,12 @@ type Scene = {
   floors: Floor3D[]
   height: number
   empty: boolean
+  camDist: number
+  camY: number
 }
 
 function buildScene(editor: ReturnType<typeof useEditor>): Scene {
-  const empty: Scene = { walls: [], openings: [], floors: [], height: 2.4, empty: true }
+  const empty: Scene = { walls: [], openings: [], floors: [], height: 2.4, empty: true, camDist: 8, camY: 5 }
   if (!editor) return empty
 
   const shapes = editor.getCurrentPageShapes()
@@ -77,7 +79,14 @@ function buildScene(editor: ReturnType<typeof useEditor>): Scene {
     pts: r.vertices.map(v => ({ x: cx(v.x), z: cz(v.y) })),
   }))
 
-  return { walls, openings, floors, height: heightM, empty: false }
+  const sizeX = toM(maxX - minX)
+  const sizeZ = toM(maxY - minY)
+  const footprint = Math.max(sizeX, sizeZ, 0.5)
+  const camDist = Math.max(footprint * 2, heightM * 1.5)
+  // ~22° elevation angle, but always high enough to clear the walls
+  const camY = Math.max(heightM * 1.5, camDist * 0.55)
+
+  return { walls, openings, floors, height: heightM, empty: false, camDist, camY }
 }
 
 function FloorMesh({ pts }: { pts: { x: number; z: number }[] }) {
@@ -129,14 +138,14 @@ export function Viewer3D({ onClose }: { onClose: () => void }) {
           벽을 그리면 3D로 표시됩니다.
         </div>
       ) : (
-        <Canvas shadows camera={{ position: [8, 8, 8], fov: 50 }}>
+        <Canvas shadows camera={{ position: [scene.camDist, scene.camY, scene.camDist], fov: 50 }}>
           <color attach="background" args={['#1e2228']} />
           <ambientLight intensity={0.5} />
-          <directionalLight position={[10, 20, 8]} intensity={1.1} castShadow
+          <directionalLight position={[scene.camDist * 2, scene.camDist * 3, scene.camDist]} intensity={1.1} castShadow
             shadow-mapSize-width={1024} shadow-mapSize-height={1024} />
           <Environment preset="city" />
-          <Grid args={[40, 40]} cellSize={1} cellColor="#3a3f47" sectionSize={5}
-            sectionColor="#4a5058" fadeDistance={40} infiniteGrid position={[0, 0, 0]} />
+          <Grid args={[scene.camDist * 6, scene.camDist * 6]} cellSize={scene.camDist * 0.15} cellColor="#3a3f47"
+            sectionSize={scene.camDist * 0.6} sectionColor="#4a5058" fadeDistance={scene.camDist * 8} infiniteGrid position={[0, 0, 0]} />
 
           {scene.floors.map(f => <FloorMesh key={f.id} pts={f.pts} />)}
 
@@ -161,7 +170,7 @@ export function Viewer3D({ onClose }: { onClose: () => void }) {
             </mesh>
           ))}
 
-          <OrbitControls makeDefault target={[0, 1, 0]} />
+          <OrbitControls makeDefault target={[0, scene.height / 2, 0]} />
         </Canvas>
       )}
     </div>

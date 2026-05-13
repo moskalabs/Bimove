@@ -1,0 +1,11 @@
+/Users/mac/Documents/code/bimove/src-tauri/target/debug/deps/getrandom-8d1b437c69cfa437.d: /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/lib.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/error.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/util.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/../README.md /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends/getentropy.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends/../util_libc.rs
+
+/Users/mac/Documents/code/bimove/src-tauri/target/debug/deps/libgetrandom-8d1b437c69cfa437.rmeta: /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/lib.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/error.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/util.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/../README.md /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends/getentropy.rs /Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends/../util_libc.rs
+
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/lib.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/error.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/util.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/../README.md:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends/getentropy.rs:
+/Users/mac/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/src/backends/../util_libc.rs:
