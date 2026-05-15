@@ -16,9 +16,15 @@ export async function writeTextFile(path: string, content: string): Promise<void
 }
 
 export async function openFileDialog(filters?: { name: string; extensions: string[] }[]): Promise<string | null> {
-  return invoke('open_file_dialog', { filters: filters ?? [] })
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const result = await open({
+    multiple: false,
+    filters: filters ?? [],
+  })
+  return typeof result === 'string' ? result : null
 }
 
 export async function saveFileDialog(defaultPath?: string): Promise<string | null> {
-  return invoke('save_file_dialog', { defaultPath: defaultPath ?? '' })
+  const { save } = await import('@tauri-apps/plugin-dialog')
+  return save({ defaultPath })
 }

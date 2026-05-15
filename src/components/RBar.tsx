@@ -727,8 +727,8 @@ function ProjectSection() {
         />
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-        <button className="export-btn" onClick={() => editor && saveProject(editor, projectName)}>저장</button>
-        <button className="export-btn" onClick={() => editor && openProject(editor)}>열기</button>
+        <button className="export-btn" onClick={() => { if (editor) void saveProject(editor, projectName) }}>저장</button>
+        <button className="export-btn" onClick={() => { if (editor) void openProject(editor) }}>열기</button>
         <button className="export-btn" onClick={() => editor && exportDxf(editor, projectName)}>DXF</button>
       </div>
     </section>
