@@ -258,24 +258,58 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
   }
 
   if (sel.type === 'text') {
-    const p = sel.props as { text: string; size: string }
-    const setSize = (v: string) => {
-      if (!editor) return
-      editor.updateShape({ id: sel.id, type: 'text' as never, props: { size: v } })
-    }
+    const p = sel.props as { text: string; size: string; color: string; textAlign: string }
+    const set = (props: object) => editor?.updateShape({ id: sel.id, type: 'text' as never, props } as never)
+    const TEXT_COLORS = [
+      { id: 'black', label: '검정', hex: '#1d1d1d' },
+      { id: 'grey', label: '회색', hex: '#9a9a9a' },
+      { id: 'blue', label: '파랑', hex: '#1a73e8' },
+      { id: 'red', label: '빨강', hex: '#ea4335' },
+    ]
     return (
-      <section className="rbar-section">
-        <h3>텍스트</h3>
-        <div className="rbar-row"><span>내용</span><span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.text || '(비어있음)'}</span></div>
-        <div className="rbar-row">
-          <span>크기</span>
-          <div className="rbar-toggle">
-            {(['s', 'm', 'l', 'xl'] as const).map(s => (
-              <button key={s} className={p.size === s ? 'active' : ''} onClick={() => setSize(s)}>{s}</button>
-            ))}
+      <>
+        {lockBtn}
+        <section className="rbar-section">
+          <h3>텍스트</h3>
+          <div className="rbar-row">
+            <span>크기</span>
+            <div className="rbar-toggle">
+              {(['s', 'm', 'l', 'xl'] as const).map(s => (
+                <button key={s} className={p.size === s ? 'active' : ''} onClick={() => set({ size: s })}>
+                  {s === 's' ? '소' : s === 'm' ? '중' : s === 'l' ? '대' : '특'}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-      </section>
+          <div className="rbar-row">
+            <span>정렬</span>
+            <div className="rbar-toggle">
+              <button className={p.textAlign === 'start' ? 'active' : ''} onClick={() => set({ textAlign: 'start' })}>←</button>
+              <button className={p.textAlign === 'middle' ? 'active' : ''} onClick={() => set({ textAlign: 'middle' })}>↔</button>
+              <button className={p.textAlign === 'end' ? 'active' : ''} onClick={() => set({ textAlign: 'end' })}>→</button>
+            </div>
+          </div>
+          <div className="rbar-row">
+            <span>색상</span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {TEXT_COLORS.map(c => (
+                <button
+                  key={c.id}
+                  title={c.label}
+                  onClick={() => set({ color: c.id })}
+                  style={{
+                    width: 20, height: 20, borderRadius: 4, border: p.color === c.id ? '2px solid #333' : '1.5px solid #ddd',
+                    background: c.hex, cursor: 'pointer', padding: 0,
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+          <div className="rbar-row" style={{ fontSize: 11, color: '#999' }}>
+            <span>더블클릭으로 내용 편집</span>
+          </div>
+        </section>
+      </>
     )
   }
 

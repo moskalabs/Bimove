@@ -40,12 +40,19 @@ export class BlockTool extends StateNode {
 
   onPointerDown = () => {
     if (!this.previewId) return
-    // Commit the preview shape as a real placement.
     this.editor.updateShape({ id: this.previewId, type: 'block' as never, opacity: 1 })
-    const placed = this.previewId
     this.previewId = null
-    this.editor.setCurrentTool('select')
-    this.editor.setSelectedShapes([placed])
+    // Create next preview immediately for continuous placement
+    const p = this.editor.inputs.currentPagePoint
+    const { w, h } = this.sizePx()
+    const id = createShapeId()
+    this.editor.createShape({
+      id, type: 'block' as never,
+      x: p.x - w / 2, y: p.y - h / 2,
+      opacity: 0.5,
+      props: { w, h, blockId: this.blockId },
+    })
+    this.previewId = id
   }
 
   override onExit = () => {
@@ -56,6 +63,10 @@ export class BlockTool extends StateNode {
   }
 
   onCancel = () => {
+    if (this.previewId) {
+      this.editor.deleteShape(this.previewId)
+      this.previewId = null
+    }
     this.editor.setCurrentTool('select')
   }
 

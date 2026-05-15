@@ -2,6 +2,10 @@ import { useState, useEffect } from 'react'
 import { LayersPanel } from './panels/LayersPanel'
 import { BlocksPanel } from './panels/BlocksPanel'
 import { BOQPanel } from './panels/BOQPanel'
+import { MaterialsPanel } from './panels/MaterialsPanel'
+import { LayoutPanel } from './panels/LayoutPanel'
+import { TracePanel } from './panels/TracePanel'
+import { AIPanel } from './panels/AIPanel'
 import { useEditor } from '../context/EditorContext'
 import { uploadImage } from '../lib/project'
 import { importDxf } from '../lib/dxf'
@@ -128,14 +132,10 @@ export function LBar() {
       {activePanel === 'layers' && <LayersPanel />}
       {activePanel === 'blocks' && <BlocksPanel />}
       {activePanel === 'table' && <BOQPanel />}
-      {activePanel && !['layers', 'blocks', 'table'].includes(activePanel) && (
-        <div className="lbar-panel">
-          <div className="lbar-panel-header">{PANELS.find(p => p.id === activePanel)?.label}</div>
-          <div className="lbar-panel-body" style={{ color: '#999', fontSize: 13, padding: 16 }}>
-            준비 중
-          </div>
-        </div>
-      )}
+      {activePanel === 'materials' && <MaterialsPanel />}
+      {activePanel === 'layout' && <LayoutPanel />}
+      {activePanel === 'trace' && <TracePanel />}
+      {activePanel === 'ai' && <AIPanel />}
     </>
   )
 }

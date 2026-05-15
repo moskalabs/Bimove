@@ -10,11 +10,15 @@ function formatDate(ts: number) {
 function NewProjectCard({ onCreate }: { onCreate: (name: string) => void }) {
   const [active, setActive] = useState(false)
   const [name, setName] = useState('')
+  const [error, setError] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const open = () => { setActive(true); setTimeout(() => inputRef.current?.focus(), 50) }
-  const confirm = () => { if (name.trim()) { onCreate(name); setName(''); setActive(false) } }
-  const cancel = () => { setName(''); setActive(false) }
+  const confirm = () => {
+    if (name.trim()) { onCreate(name); setName(''); setActive(false); setError(false) }
+    else { setError(true); inputRef.current?.focus() }
+  }
+  const cancel = () => { setName(''); setActive(false); setError(false) }
 
   if (!active) return (
     <button onClick={open} style={cardStyle(true)}>
@@ -29,15 +33,19 @@ function NewProjectCard({ onCreate }: { onCreate: (name: string) => void }) {
       <input
         ref={inputRef}
         value={name}
-        onChange={e => setName(e.target.value)}
+        onChange={e => { setName(e.target.value); if (error) setError(false) }}
         onKeyDown={e => { if (e.key === 'Enter') confirm(); if (e.key === 'Escape') cancel() }}
         placeholder="프로젝트 이름"
         style={{
-          width: '100%', border: 'none', borderBottom: '2px solid #3b82f6',
+          width: '100%', border: 'none',
+          borderBottom: `2px solid ${error ? '#ef4444' : '#3b82f6'}`,
           outline: 'none', fontSize: 14, fontWeight: 600, textAlign: 'center',
           background: 'transparent', padding: '2px 0',
         }}
       />
+      {error && (
+        <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4 }}>이름을 입력해주세요</div>
+      )}
       <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
         <button onClick={confirm} style={miniBtn('#3b82f6', '#fff')}>만들기</button>
         <button onClick={cancel} style={miniBtn('#f0f0f0', '#555')}>취소</button>

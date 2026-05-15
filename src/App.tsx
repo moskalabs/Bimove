@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from 'react'
+import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { Tldraw } from 'tldraw'
 import type { Editor, TLEditorSnapshot } from 'tldraw'
 import 'tldraw/tldraw.css'
@@ -28,6 +28,44 @@ import './App.css'
 
 const SHAPE_UTILS = [WallShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil, CommentShapeUtil, DimensionShapeUtil]
 const TOOLS = [WallTool, DoorTool, WindowTool, BlockTool, CommentTool, DimensionTool]
+
+function EmptyCanvasHint({ editor }: { editor: Editor | null }) {
+  const [hasShapes, setHasShapes] = useState(false)
+  const unsubRef = useRef<(() => void) | null>(null)
+
+  useEffect(() => {
+    if (!editor) return
+    const check = () => setHasShapes(editor.getCurrentPageShapes().length > 0)
+    check()
+    unsubRef.current = editor.store.listen(check)
+    return () => { unsubRef.current?.() }
+  }, [editor])
+
+  if (!editor || hasShapes) return null
+
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      pointerEvents: 'none', zIndex: 10,
+    }}>
+      <div style={{
+        background: 'rgba(255,255,255,0.93)', borderRadius: 16,
+        padding: '28px 36px', textAlign: 'center',
+        border: '1.5px dashed #d0d0d0', boxShadow: '0 2px 16px rgba(0,0,0,0.07)',
+      }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>🏗️</div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#222', marginBottom: 8 }}>
+          도면을 시작해보세요
+        </div>
+        <div style={{ fontSize: 12, color: '#888', lineHeight: 1.8 }}>
+          왼쪽 패널에서 <strong style={{ color: '#3b82f6' }}>벽</strong>을 선택하고<br />
+          캔버스를 클릭·드래그해 그려보세요
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function EditorView({ projectId, onBack }: { projectId: string; onBack: () => void }) {
   const [editor, setEditor] = useState<Editor | null>(null)
@@ -96,6 +134,7 @@ function EditorView({ projectId, onBack }: { projectId: string; onBack: () => vo
             onMount={handleMount}
             hideUi
           />
+          <EmptyCanvasHint editor={editor} />
           <RoomOverlay />
           <ScaleRuler />
         </main>
