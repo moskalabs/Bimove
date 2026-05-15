@@ -6,9 +6,8 @@ import { MaterialsPanel } from './panels/MaterialsPanel'
 import { LayoutPanel } from './panels/LayoutPanel'
 import { TracePanel } from './panels/TracePanel'
 import { AIPanel } from './panels/AIPanel'
+import { ImportPanel } from './panels/ImportPanel'
 import { useEditor } from '../context/EditorContext'
-import { uploadImage } from '../lib/project'
-import { importDxf } from '../lib/dxf'
 
 const DRAW_TOOLS = [
   { id: 'select', icon: '↖', label: '선택' },
@@ -27,6 +26,7 @@ const PANELS = [
   { id: 'materials', icon: '◨', label: '재질' },
   { id: 'layout', icon: '⊡', label: '배치' },
   { id: 'table', icon: '≡', label: '테이블' },
+  { id: 'import', icon: '↑', label: '가져오기' },
   { id: 'trace', icon: '✎', label: '트레이스' },
   { id: 'ai', icon: '✦', label: 'AI' },
 ] as const
@@ -75,26 +75,6 @@ export function LBar() {
 
         <div className="lbar-divider" />
 
-        {/* 도면 가져오기 */}
-        <div className="lbar-section">
-          <button
-            className="lbar-icon"
-            title="DXF 도면 불러오기 (벽으로 변환)"
-            onClick={() => editor && importDxf(editor)}
-          >
-            📐
-          </button>
-          <button
-            className="lbar-icon"
-            title="이미지 업로드 (트레이싱용 배경)"
-            onClick={() => editor && uploadImage(editor)}
-          >
-            🖼
-          </button>
-        </div>
-
-        <div className="lbar-divider" />
-
         {/* 뷰 유틸리티 */}
         <div className="lbar-section">
           <button
@@ -134,6 +114,7 @@ export function LBar() {
       {activePanel === 'table' && <BOQPanel />}
       {activePanel === 'materials' && <MaterialsPanel />}
       {activePanel === 'layout' && <LayoutPanel />}
+      {activePanel === 'import' && <ImportPanel />}
       {activePanel === 'trace' && <TracePanel />}
       {activePanel === 'ai' && <AIPanel />}
     </>
