@@ -74,7 +74,7 @@ function WallComponent({ shape }: { shape: WallShape }) {
 
   return (
     <SVGContainer>
-      <path d={d} fill="#555" stroke="#222" strokeWidth={1} />
+      <path d={d} fill={(shape.meta?.fill as string) ?? '#555'} stroke={(shape.meta?.stroke as string) ?? '#222'} strokeWidth={1} />
 
       {showDim && (
         <>

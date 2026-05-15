@@ -19,7 +19,6 @@ export function MaterialsPanel() {
     walls.forEach(s => {
       editor.updateShape({ id: s.id, meta: { fill, stroke } } as never)
     })
-    editor.store.mergeRemoteChanges(() => {})
   }
 
   return (
@@ -54,9 +53,6 @@ export function MaterialsPanel() {
           ))}
         </div>
 
-        <div style={{ fontSize: 10, color: '#bbb', marginTop: 12, lineHeight: 1.5 }}>
-          * 재질은 현재 세션에만 적용됩니다. 전체 재질 시스템은 추후 업데이트 예정.
-        </div>
       </div>
     </div>
   )
