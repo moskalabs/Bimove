@@ -11,49 +11,152 @@ type Seg = { x1: number; y1: number; x2: number; y2: number }
 
 const TEXT_SIZE_PX: Record<string, number> = { s: 18, m: 24, l: 36, xl: 56 }
 
+// DXF layer definitions: [name, color-code, linetype]
+const LAYERS = [
+  ['WALL',      7, 'Continuous'],
+  ['WALL_OUTLINE', 2, 'Continuous'],
+  ['DOOR',      3, 'Continuous'],
+  ['WINDOW',    4, 'Continuous'],
+  ['TEXT',      7, 'Continuous'],
+  ['DIMENSION', 5, 'Continuous'],
+] as const
+
 /**
- * Export the current page to a minimal DXF R12 (AutoCAD 2000-compatible) file.
- * Walls/doors/windows become LINE entities (centre-line for walls, the opening
- * span for doors/windows) on dedicated layers; text shapes become TEXT
- * entities. Canvas px are converted back to drawing mm and the Y axis is
- * flipped so the file opens upright in CAD software.
+ * Export the current page to a DXF 2000 (AC1015) file.
+ * Walls → closed LWPOLYLINE with actual thickness (4 corners).
+ * Doors → opening LINE + swing ARC on DOOR layer.
+ * Windows → opening LINE + end tick marks on WINDOW layer.
+ * Text → TEXT entities. Dimensions → LINE + TEXT.
+ * Canvas px → drawing mm, Y axis flipped for CAD orientation.
  */
 export function exportDxf(editor: Editor, filename = 'untitled') {
   const k = getScaleConfig(editor).pxPerMm || 1
-  const mm = (px: number) => px / k
+  const toMm = (px: number) => px / k
+  const x = (px: number) => toMm(px).toFixed(3)
+  const y = (px: number) => (-toMm(px)).toFixed(3) // Y flip: canvas Y-down → DXF Y-up
   const lines: string[] = []
   const put = (...pairs: [number | string, number | string][]) => {
     for (const [code, val] of pairs) { lines.push(String(code)); lines.push(String(val)) }
   }
-  const lineEntity = (layer: string, x1: number, y1: number, x2: number, y2: number) => {
+
+  const lineEntity = (layer: string, x1: number, y1: number, x2: number, y2: number) =>
     put(['0', 'LINE'], ['8', layer],
-      ['10', mm(x1).toFixed(3)], ['20', (-mm(y1)).toFixed(3)], ['30', '0.0'],
-      ['11', mm(x2).toFixed(3)], ['21', (-mm(y2)).toFixed(3)], ['31', '0.0'])
+      ['10', x(x1)], ['20', y(y1)], ['30', '0.0'],
+      ['11', x(x2)], ['21', y(y2)], ['31', '0.0'])
+
+  // Closed LWPOLYLINE (AC1015+)
+  const lwPolyline = (layer: string, pts: [number, number][]) => {
+    put(['0', 'LWPOLYLINE'], ['8', layer], ['90', String(pts.length)], ['70', '1'])
+    for (const [px, py] of pts) put(['10', x(px)], ['20', y(py)])
   }
 
-  put(['0', 'SECTION'], ['2', 'HEADER'], ['9', '$ACADVER'], ['1', 'AC1009'],
-    ['9', '$INSUNITS'], ['70', '4'], ['0', 'ENDSEC'])
+  // ARC entity — angles in DXF are CCW from positive X (Y-up), so negate canvas angles
+  const arcEntity = (layer: string, cx: number, cy: number, r: number, startDeg: number, endDeg: number) =>
+    put(['0', 'ARC'], ['8', layer],
+      ['10', x(cx)], ['20', y(cy)], ['30', '0.0'],
+      ['40', toMm(r).toFixed(3)],
+      ['50', startDeg.toFixed(2)], ['51', endDeg.toFixed(2)])
+
+  // ---- HEADER ----
+  put(['0', 'SECTION'], ['2', 'HEADER'],
+    ['9', '$ACADVER'], ['1', 'AC1015'],
+    ['9', '$INSUNITS'], ['70', '4'],
+    ['0', 'ENDSEC'])
+
+  // ---- TABLES (layer definitions) ----
+  put(['0', 'SECTION'], ['2', 'TABLES'],
+    ['0', 'TABLE'], ['2', 'LAYER'], ['70', String(LAYERS.length)])
+  for (const [name, color, ltype] of LAYERS) {
+    put(['0', 'LAYER'], ['2', name], ['70', '0'], ['62', String(color)], ['6', ltype])
+  }
+  put(['0', 'ENDTAB'], ['0', 'ENDSEC'])
+
+  // ---- ENTITIES ----
   put(['0', 'SECTION'], ['2', 'ENTITIES'])
 
   for (const s of editor.getCurrentPageShapes()) {
     if (s.type === 'wall') {
-      const p = s.props as { x2: number; y2: number }
-      lineEntity('WALL', s.x, s.y, s.x + p.x2, s.y + p.y2)
-    } else if (s.type === 'door' || s.type === 'window') {
-      const p = s.props as { width: number }
-      const hw = p.width / 2
+      const p = s.props as { x2: number; y2: number; thickness: number }
+      const len = Math.hypot(p.x2, p.y2)
+      if (len < 1) continue
+      const nx = -p.y2 / len, ny = p.x2 / len
+      const h = p.thickness / 2
+      // 4 corners of the wall outline in page px
+      lwPolyline('WALL', [
+        [s.x + nx * h,          s.y + ny * h],
+        [s.x + p.x2 + nx * h,  s.y + p.y2 + ny * h],
+        [s.x + p.x2 - nx * h,  s.y + p.y2 - ny * h],
+        [s.x - nx * h,          s.y - ny * h],
+      ])
+    } else if (s.type === 'door') {
+      const p = s.props as { width: number; swing?: number; flipped?: boolean }
       const a = (s as { rotation?: number }).rotation ?? 0
       const cos = Math.cos(a), sin = Math.sin(a)
-      lineEntity(s.type === 'door' ? 'DOOR' : 'WINDOW',
-        s.x - hw * cos, s.y - hw * sin, s.x + hw * cos, s.y + hw * sin)
+      const hw = p.width / 2
+
+      // Opening LINE (full width)
+      lineEntity('DOOR', s.x - hw * cos, s.y - hw * sin, s.x + hw * cos, s.y + hw * sin)
+
+      // Swing ARC: hinge at one end, radius = door width, 90° sweep
+      // flipped → hinge at +end; otherwise at −end
+      const [hx, hy] = p.flipped
+        ? [s.x + hw * cos, s.y + hw * sin]
+        : [s.x - hw * cos, s.y - hw * sin]
+
+      // Door direction angle in DXF coords (Y flipped → negate sin)
+      const doorAngleDXF = Math.atan2(-sin, cos) * 180 / Math.PI
+      const baseDeg = ((p.flipped ? doorAngleDXF + 180 : doorAngleDXF) + 360) % 360
+      const swing = p.swing ?? 1
+      // In DXF (Y-up), canvas "up" swing (neg Y) maps to CCW
+      const sweepDeg = swing * (p.flipped ? -90 : 90)
+      const endDeg = (baseDeg + sweepDeg + 360) % 360
+      arcEntity('DOOR', hx, hy, p.width, baseDeg, endDeg)
+    } else if (s.type === 'window') {
+      const p = s.props as { width: number; thickness: number }
+      const a = (s as { rotation?: number }).rotation ?? 0
+      const cos = Math.cos(a), sin = Math.sin(a)
+      const hw = p.width / 2
+      const hn = -sin, hny = cos // normal to window direction (perpendicular)
+      const ht = p.thickness / 2
+
+      // Centre span
+      lineEntity('WINDOW', s.x - hw * cos, s.y - hw * sin, s.x + hw * cos, s.y + hw * sin)
+      // Tick marks at each end showing thickness
+      lineEntity('WINDOW',
+        s.x - hw * cos + hn * ht, s.y - hw * sin + hny * ht,
+        s.x - hw * cos - hn * ht, s.y - hw * sin - hny * ht)
+      lineEntity('WINDOW',
+        s.x + hw * cos + hn * ht, s.y + hw * sin + hny * ht,
+        s.x + hw * cos - hn * ht, s.y + hw * sin - hny * ht)
     } else if (s.type === 'text') {
       const p = s.props as { text?: string; size?: string }
       const txt = (p.text ?? '').replace(/\n/g, ' ').trim()
       if (!txt) continue
-      const h = mm(TEXT_SIZE_PX[p.size ?? 'm'] ?? 24)
+      const h = toMm(TEXT_SIZE_PX[p.size ?? 'm'] ?? 24)
       put(['0', 'TEXT'], ['8', 'TEXT'],
-        ['10', mm(s.x).toFixed(3)], ['20', (-mm(s.y)).toFixed(3)], ['30', '0.0'],
+        ['10', x(s.x)], ['20', y(s.y)], ['30', '0.0'],
         ['40', h.toFixed(3)], ['1', txt])
+    } else if (s.type === 'dimension') {
+      const p = s.props as { x2: number; y2: number; offset: number }
+      const len = Math.hypot(p.x2, p.y2)
+      if (len < 1) continue
+      const nx = -p.y2 / len, ny = p.x2 / len
+      const off = p.offset
+      const d1x = s.x + nx * off, d1y = s.y + ny * off
+      const d2x = s.x + p.x2 + nx * off, d2y = s.y + p.y2 + ny * off
+      // dimension bar line
+      lineEntity('DIMENSION', d1x, d1y, d2x, d2y)
+      // extension lines
+      lineEntity('DIMENSION', s.x, s.y, d1x, d1y)
+      lineEntity('DIMENSION', s.x + p.x2, s.y + p.y2, d2x, d2y)
+      // label at midpoint
+      const lenMm = len / k
+      const label = lenMm >= 1000 ? `${(lenMm / 1000).toFixed(2)}m`
+        : lenMm >= 100 ? `${(lenMm / 10).toFixed(1)}cm`
+        : `${Math.round(lenMm)}mm`
+      put(['0', 'TEXT'], ['8', 'DIMENSION'],
+        ['10', x((d1x + d2x) / 2)], ['20', y((d1y + d2y) / 2)], ['30', '0.0'],
+        ['40', toMm(10).toFixed(3)], ['1', label])
     }
   }
 
