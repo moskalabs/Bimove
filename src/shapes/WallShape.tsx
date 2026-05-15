@@ -10,6 +10,7 @@ import {
   type TLShapePartial,
   Vec,
   useEditor,
+  type Editor,
 } from 'tldraw'
 import type { IndexKey } from '@tldraw/editor'
 import { useEffect, useState } from 'react'
@@ -39,6 +40,75 @@ function getCorners(shape: WallShape): Vec[] {
   ]
 }
 
+/**
+ * For two walls meeting at a point, compute how far to extend wall-1's end
+ * so the outer corner gap is filled. Uses miter-join geometry:
+ * extension = half_thickness_2 / tan(angle/2)
+ */
+function miterExtension(
+  d1x: number, d1y: number, // wall-1 dir pointing AWAY from junction (unit)
+  d2x: number, d2y: number, // wall-2 dir pointing AWAY from junction (unit)
+  h2: number,               // half-thickness of wall-2
+): number {
+  const sinT = Math.abs(d1x * d2y - d1y * d2x)
+  if (sinT < 0.05) return 0 // nearly parallel — no gap to fill
+  const cosT = d1x * d2x + d1y * d2y
+  const tanHalf = sinT / (1 + Math.max(cosT, -0.9))
+  return Math.min(h2 / Math.max(tanHalf, 0.05), h2 * 8) // cap extreme angles
+}
+
+const JOIN_SNAP_R = 8 // page-unit radius for endpoint matching
+
+function computeJoinedCorners(editor: Editor, shape: WallShape): Vec[] {
+  const { x2, y2, thickness } = shape.props
+  const len = Math.sqrt(x2 * x2 + y2 * y2)
+  if (len < 1) return getCorners(shape)
+
+  const ux = x2 / len, uy = y2 / len
+  const nx = -uy, ny = ux
+  const half = thickness / 2
+  const snapR = Math.max(JOIN_SNAP_R, half * 0.5)
+
+  const sx = shape.x, sy = shape.y
+  const ex = shape.x + x2, ey = shape.y + y2
+
+  let startExt = 0
+  let endExt = 0
+
+  for (const w of editor.getCurrentPageShapes()) {
+    if (w.type !== 'wall' || w.id === shape.id) continue
+    const wp = w.props as WallShapeProps
+    const wlen = Math.hypot(wp.x2, wp.y2)
+    if (wlen < 1) continue
+    const wux = wp.x2 / wlen, wuy = wp.y2 / wlen
+    const wh = wp.thickness / 2
+
+    const dSS = Math.hypot(w.x - sx, w.y - sy)
+    const dSE = Math.hypot(w.x + wp.x2 - sx, w.y + wp.y2 - sy)
+    const dES = Math.hypot(w.x - ex, w.y - ey)
+    const dEE = Math.hypot(w.x + wp.x2 - ex, w.y + wp.y2 - ey)
+
+    // Connection at our START — extend backward (−dir)
+    if (dSS < snapR)
+      startExt = Math.max(startExt, miterExtension(ux, uy, wux, wuy, wh))
+    else if (dSE < snapR)
+      startExt = Math.max(startExt, miterExtension(ux, uy, -wux, -wuy, wh))
+
+    // Connection at our END — extend forward (+dir)
+    if (dES < snapR)
+      endExt = Math.max(endExt, miterExtension(-ux, -uy, wux, wuy, wh))
+    else if (dEE < snapR)
+      endExt = Math.max(endExt, miterExtension(-ux, -uy, -wux, -wuy, wh))
+  }
+
+  return [
+    new Vec(nx * half - ux * startExt, ny * half - uy * startExt),
+    new Vec(x2 + nx * half + ux * endExt, y2 + ny * half + uy * endExt),
+    new Vec(x2 - nx * half + ux * endExt, y2 - ny * half + uy * endExt),
+    new Vec(-nx * half - ux * startExt, -ny * half - uy * startExt),
+  ]
+}
+
 function WallComponent({ shape }: { shape: WallShape }) {
   const editor = useEditor()
   const [showDim, setShowDim] = useState(getShowWallLengths)
@@ -50,12 +120,18 @@ function WallComponent({ shape }: { shape: WallShape }) {
   }, [])
 
   const { x2, y2, thickness } = shape.props
-  const corners = getCorners(shape)
-  const d = `M${corners[0].x},${corners[0].y} L${corners[1].x},${corners[1].y} L${corners[2].x},${corners[2].y} L${corners[3].x},${corners[3].y} Z`
   const len = Math.sqrt(x2 * x2 + y2 * y2)
 
+  // tldraw wraps shape components in a reactive context, so reading
+  // editor.getCurrentPageShapes() here auto-subscribes to shape changes.
+  const corners = computeJoinedCorners(editor, shape)
+  const d = `M${corners[0].x},${corners[0].y} L${corners[1].x},${corners[1].y} L${corners[2].x},${corners[2].y} L${corners[3].x},${corners[3].y} Z`
+
+  const fill = (shape.meta?.fill as string) ?? '#555'
+  const stroke = (shape.meta?.stroke as string) ?? '#222'
+
   if (len < 4) {
-    return <SVGContainer><path d={d} fill="#555" stroke="#222" strokeWidth={1} /></SVGContainer>
+    return <SVGContainer><path d={d} fill={fill} stroke={stroke} strokeWidth={1} /></SVGContainer>
   }
 
   const nx = -y2 / len, ny = x2 / len
@@ -74,7 +150,7 @@ function WallComponent({ shape }: { shape: WallShape }) {
 
   return (
     <SVGContainer>
-      <path d={d} fill={(shape.meta?.fill as string) ?? '#555'} stroke={(shape.meta?.stroke as string) ?? '#222'} strokeWidth={1} />
+      <path d={d} fill={fill} stroke={stroke} strokeWidth={1} />
 
       {showDim && (
         <>
