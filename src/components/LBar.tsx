@@ -75,6 +75,19 @@ export function LBar() {
 
         <div className="lbar-divider" />
 
+        {/* 편집 액션 */}
+        <div className="lbar-section">
+          <button className="lbar-icon" title="실행 취소 (Ctrl+Z)" onClick={() => editor?.undo()}>↩</button>
+          <button className="lbar-icon" title="다시 실행 (Ctrl+Y)" onClick={() => editor?.redo()}>↪</button>
+          <button
+            className="lbar-icon"
+            title="선택 삭제 (Delete)"
+            onClick={() => { const ids = editor?.getSelectedShapeIds() ?? []; if (ids.length) editor?.deleteShapes(ids) }}
+          >🗑</button>
+        </div>
+
+        <div className="lbar-divider" />
+
         {/* 뷰 유틸리티 */}
         <div className="lbar-section">
           <button

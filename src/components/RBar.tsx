@@ -153,11 +153,14 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
     }
 
     return (
-      <section className="rbar-section">
-        <h3>벽</h3>
-        <PropField label="길이" value={lenMm} unit={scale.unit} onCommit={setLength} />
-        <PropField label="두께" value={thickMm} unit={scale.unit} onCommit={setThickness} />
-      </section>
+      <>
+        {lockBtn}
+        <section className="rbar-section">
+          <h3>벽</h3>
+          <PropField label="길이" value={lenMm} unit={scale.unit} onCommit={setLength} />
+          <PropField label="두께" value={thickMm} unit={scale.unit} onCommit={setThickness} />
+        </section>
+      </>
     )
   }
 
@@ -182,12 +185,15 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
     }
 
     return (
-      <section className="rbar-section">
-        <h3>블록 ({p.blockId})</h3>
-        <PropField label="너비" value={wMm} unit={scale.unit} onCommit={setW} />
-        <PropField label="높이" value={hMm} unit={scale.unit} onCommit={setH} />
-        <RotationField value={rotDeg} onCommit={setRot} />
-      </section>
+      <>
+        {lockBtn}
+        <section className="rbar-section">
+          <h3>블록 ({p.blockId})</h3>
+          <PropField label="너비" value={wMm} unit={scale.unit} onCommit={setW} />
+          <PropField label="높이" value={hMm} unit={scale.unit} onCommit={setH} />
+          <RotationField value={rotDeg} onCommit={setRot} />
+        </section>
+      </>
     )
   }
 
@@ -204,11 +210,14 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
       editor.updateShape({ id: sel.id, type: 'window' as never, props: { thickness: mm * scale.pxPerMm } })
     }
     return (
-      <section className="rbar-section">
-        <h3>창문</h3>
-        <PropField label="너비" value={wMm} unit={scale.unit} onCommit={setW} />
-        <PropField label="두께" value={tMm} unit={scale.unit} onCommit={setT} />
-      </section>
+      <>
+        {lockBtn}
+        <section className="rbar-section">
+          <h3>창문</h3>
+          <PropField label="너비" value={wMm} unit={scale.unit} onCommit={setW} />
+          <PropField label="두께" value={tMm} unit={scale.unit} onCommit={setT} />
+        </section>
+      </>
     )
   }
 
@@ -234,26 +243,29 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
       editor.updateShape({ id: sel.id, type: 'door' as never, props: { flipped: !p.flipped } })
     }
     return (
-      <section className="rbar-section">
-        <h3>문</h3>
-        <PropField label="너비" value={wMm} unit={scale.unit} onCommit={setW} />
-        <div className="rbar-row">
-          <span>열림방향</span>
-          <div className="rbar-toggle">
-            <button className={p.swing === 1 ? 'active' : ''} onClick={() => setSwing(1)}>↑</button>
-            <button className={p.swing === -1 ? 'active' : ''} onClick={() => setSwing(-1)}>↓</button>
+      <>
+        {lockBtn}
+        <section className="rbar-section">
+          <h3>문</h3>
+          <PropField label="너비" value={wMm} unit={scale.unit} onCommit={setW} />
+          <div className="rbar-row">
+            <span>열림방향</span>
+            <div className="rbar-toggle">
+              <button className={p.swing === 1 ? 'active' : ''} onClick={() => setSwing(1)}>↑</button>
+              <button className={p.swing === -1 ? 'active' : ''} onClick={() => setSwing(-1)}>↓</button>
+            </div>
           </div>
-        </div>
-        <RotationField value={rotDeg} onCommit={setRot} />
-        <div className="rbar-row">
-          <span>뒤집기</span>
-          <button className={`export-btn${p.flipped ? ' active' : ''}`}
-            style={p.flipped ? { background: '#555', color: '#fff', borderColor: '#555' } : undefined}
-            onClick={flipDoor}>
-            {p.flipped ? '↔ 뒤집힘' : '↔ 뒤집기'}
-          </button>
-        </div>
-      </section>
+          <RotationField value={rotDeg} onCommit={setRot} />
+          <div className="rbar-row">
+            <span>뒤집기</span>
+            <button className={`export-btn${p.flipped ? ' active' : ''}`}
+              style={p.flipped ? { background: '#555', color: '#fff', borderColor: '#555' } : undefined}
+              onClick={flipDoor}>
+              {p.flipped ? '↔ 뒤집힘' : '↔ 뒤집기'}
+            </button>
+          </div>
+        </section>
+      </>
     )
   }
 
@@ -322,16 +334,19 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
       editor.updateShape({ id: sel.id, type: 'dimension' as never, props: { offset: mm * scale.pxPerMm } })
     }
     return (
-      <section className="rbar-section">
-        <h3>치수선</h3>
-        <div className="rbar-row">
-          <span>길이</span>
-          <span style={{ color: '#333', fontWeight: 500, fontFamily: 'monospace' }}>
-            {scale.unit === 'm' ? `${(lenMm / 1000).toFixed(2)}m` : scale.unit === 'cm' ? `${(lenMm / 10).toFixed(1)}cm` : `${Math.round(lenMm)}mm`}
-          </span>
-        </div>
-        <PropField label="오프셋" value={p.offset / scale.pxPerMm} unit={scale.unit} onCommit={setOffset} />
-      </section>
+      <>
+        {lockBtn}
+        <section className="rbar-section">
+          <h3>치수선</h3>
+          <div className="rbar-row">
+            <span>길이</span>
+            <span style={{ color: '#333', fontWeight: 500, fontFamily: 'monospace' }}>
+              {scale.unit === 'm' ? `${(lenMm / 1000).toFixed(2)}m` : scale.unit === 'cm' ? `${(lenMm / 10).toFixed(1)}cm` : `${Math.round(lenMm)}mm`}
+            </span>
+          </div>
+          <PropField label="오프셋" value={p.offset / scale.pxPerMm} unit={scale.unit} onCommit={setOffset} />
+        </section>
+      </>
     )
   }
 
@@ -340,34 +355,37 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
     const update = (patch: Partial<typeof p>) =>
       editor?.updateShape({ id: sel.id, type: 'comment' as never, props: patch })
     return (
-      <section className="rbar-section">
-        <h3>코멘트</h3>
-        <div style={{ padding: '4px 0 6px' }}>
-          <textarea
-            style={{ width: '100%', minHeight: 80, fontSize: 12, padding: '6px 8px',
-              border: '1px solid #e0e0e0', borderRadius: 4, resize: 'vertical', fontFamily: 'inherit' }}
-            value={p.text}
-            placeholder="코멘트 입력..."
-            onChange={e => update({ text: e.target.value })}
-          />
-        </div>
-        <div className="rbar-row">
-          <span>작성자</span>
-          <input className="prop-input" style={{ flex: 1, minWidth: 0 }}
-            value={p.author} placeholder="이름"
-            onChange={e => update({ author: e.target.value })} />
-        </div>
-        <div className="rbar-row">
-          <span>상태</span>
-          <button
-            className={`export-btn${p.resolved ? ' active' : ''}`}
-            style={{ background: p.resolved ? '#4caf50' : undefined, color: p.resolved ? '#fff' : undefined }}
-            onClick={() => update({ resolved: !p.resolved })}
-          >
-            {p.resolved ? '✓ 해결됨' : '미해결'}
-          </button>
-        </div>
-      </section>
+      <>
+        {lockBtn}
+        <section className="rbar-section">
+          <h3>코멘트</h3>
+          <div style={{ padding: '4px 0 6px' }}>
+            <textarea
+              style={{ width: '100%', minHeight: 80, fontSize: 12, padding: '6px 8px',
+                border: '1px solid #e0e0e0', borderRadius: 4, resize: 'vertical', fontFamily: 'inherit' }}
+              value={p.text}
+              placeholder="코멘트 입력..."
+              onChange={e => update({ text: e.target.value })}
+            />
+          </div>
+          <div className="rbar-row">
+            <span>작성자</span>
+            <input className="prop-input" style={{ flex: 1, minWidth: 0 }}
+              value={p.author} placeholder="이름"
+              onChange={e => update({ author: e.target.value })} />
+          </div>
+          <div className="rbar-row">
+            <span>상태</span>
+            <button
+              className={`export-btn${p.resolved ? ' active' : ''}`}
+              style={{ background: p.resolved ? '#4caf50' : undefined, color: p.resolved ? '#fff' : undefined }}
+              onClick={() => update({ resolved: !p.resolved })}
+            >
+              {p.resolved ? '✓ 해결됨' : '미해결'}
+            </button>
+          </div>
+        </section>
+      </>
     )
   }
 
