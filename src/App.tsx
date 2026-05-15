@@ -23,7 +23,7 @@ import { BlockTool } from './tools/BlockTool'
 import { CommentTool } from './tools/CommentTool'
 import { DimensionTool } from './tools/DimensionTool'
 import { EditorContext } from './context/EditorContext'
-import { loadSnapshot, saveSnapshot, touchProject, getProjects } from './lib/projectStore'
+import { loadSnapshot, saveSnapshot, saveThumbnail, touchProject, getProjects } from './lib/projectStore'
 import './App.css'
 
 const SHAPE_UTILS = [WallShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil, CommentShapeUtil, DimensionShapeUtil]
@@ -87,9 +87,20 @@ function EditorView({ projectId, onBack }: { projectId: string; onBack: () => vo
     let timer = 0
     const unsub = editor.store.listen(() => {
       clearTimeout(timer)
-      timer = window.setTimeout(() => {
+      timer = window.setTimeout(async () => {
         saveSnapshot(projectId, editor.getSnapshot())
         touchProject(projectId)
+        const shapes = editor.getCurrentPageShapes()
+        if (shapes.length > 0) {
+          try {
+            const result = await (editor as unknown as { getSvgString: (shapes: unknown[], opts: unknown) => Promise<{ svg: string; width: number; height: number } | undefined> })
+              .getSvgString(shapes, { padding: 16, background: true })
+            if (result?.svg) {
+              const dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(result.svg)))
+              saveThumbnail(projectId, dataUrl)
+            }
+          } catch { /* ignore thumbnail errors */ }
+        }
       }, 1500)
     })
     return () => { unsub(); clearTimeout(timer) }

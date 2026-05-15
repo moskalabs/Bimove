@@ -3,6 +3,7 @@ export type Project = {
   name: string
   createdAt: number
   updatedAt: number
+  thumbnail?: string
 }
 
 const LIST_KEY = 'bimove_projects_v1'
@@ -55,6 +56,12 @@ export function loadSnapshot(id: string): object | null {
 
 export function saveSnapshot(id: string, snapshot: object) {
   try { localStorage.setItem(snapshotKey(id), JSON.stringify(snapshot)) } catch { /* storage full */ }
+}
+
+export function saveThumbnail(id: string, dataUrl: string) {
+  const projects = getProjects()
+  const updated = projects.map(p => p.id === id ? { ...p, thumbnail: dataUrl } : p)
+  saveProjectList(updated)
 }
 
 /** One-time migration: moves old single-project data into project list. */

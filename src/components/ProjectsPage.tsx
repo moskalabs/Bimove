@@ -91,13 +91,16 @@ function ProjectCard({ project, onOpen, onDelete, onRename }: {
         position: 'relative',
       }}
     >
-      {/* thumbnail placeholder */}
+      {/* thumbnail */}
       <div style={{
         width: '100%', height: 90, borderRadius: 8, background: '#f5f5f5',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        marginBottom: 10, fontSize: 32,
+        marginBottom: 10, overflow: 'hidden',
       }}>
-        🏗️
+        {project.thumbnail
+          ? <img src={project.thumbnail} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+          : <span style={{ fontSize: 28, opacity: 0.4 }}>🏗️</span>
+        }
       </div>
 
       {editing ? (
