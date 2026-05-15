@@ -3,13 +3,16 @@ import type { TLShapeId } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
 import { snapToWallEndpoint } from '../lib/snap'
 import { drawingState } from '../lib/drawingState'
+import { getScaleConfig } from '../lib/scaleConfig'
 
 type Pt = { x: number; y: number }
+type LenInfo = { x: number; y: number; text: string }
 
 export function ToolOverlay() {
   const editor = useEditor()
   const [start, setStart] = useState<Pt | null>(null)
   const [snap, setSnap] = useState<Pt | null>(null)
+  const [lenInfo, setLenInfo] = useState<LenInfo | null>(null)
 
   useEffect(() => {
     if (!editor) return
@@ -19,16 +22,39 @@ export function ToolOverlay() {
       if (toolId !== 'wall' && toolId !== 'dimension') {
         setStart(null)
         setSnap(null)
+        setLenInfo(null)
         return
       }
 
-      // 시작점 dot: WallTool이 기록한 drawingId로 찾음
       const drawingId = drawingState.drawingId
       if (drawingId) {
         const shape = editor.getShape(drawingId as TLShapeId)
         setStart(shape ? editor.pageToViewport({ x: shape.x, y: shape.y }) : null)
+
+        // 길이·각도 툴팁
+        if (shape && toolId === 'wall') {
+          const p = shape.props as { x2: number; y2: number }
+          const lenPx = Math.hypot(p.x2, p.y2)
+          if (lenPx > 5) {
+            const scale = getScaleConfig(editor)
+            const lenMm = lenPx / scale.pxPerMm
+            const formatted = scale.unit === 'm'
+              ? `${(lenMm / 1000).toFixed(2)}m`
+              : scale.unit === 'cm'
+              ? `${(lenMm / 10).toFixed(1)}cm`
+              : `${Math.round(lenMm)}mm`
+            const angleDeg = Math.round(Math.atan2(p.y2, p.x2) * 180 / Math.PI)
+            const cursor = editor.pageToViewport(editor.inputs.currentPagePoint)
+            setLenInfo({ x: cursor.x, y: cursor.y, text: `${formatted}  ${angleDeg}°` })
+          } else {
+            setLenInfo(null)
+          }
+        } else {
+          setLenInfo(null)
+        }
       } else {
         setStart(null)
+        setLenInfo(null)
       }
 
       // 스냅 가능한 끝점 링
@@ -57,6 +83,17 @@ export function ToolOverlay() {
           border: '2px solid #00b341', background: 'rgba(0,179,65,0.15)',
           pointerEvents: 'none', zIndex: 101,
         }} />
+      )}
+      {lenInfo && (
+        <div style={{
+          position: 'absolute', left: lenInfo.x + 16, top: lenInfo.y + 16,
+          background: 'rgba(0,0,0,0.72)', color: '#fff',
+          padding: '3px 8px', borderRadius: 4, fontSize: 11,
+          fontFamily: 'monospace', pointerEvents: 'none', zIndex: 200,
+          whiteSpace: 'nowrap', letterSpacing: '0.03em',
+        }}>
+          {lenInfo.text}
+        </div>
       )}
     </>
   )

@@ -88,17 +88,34 @@ function computeJoinedCorners(editor: Editor, shape: WallShape): Vec[] {
     const dES = Math.hypot(w.x - ex, w.y - ey)
     const dEE = Math.hypot(w.x + wp.x2 - ex, w.y + wp.y2 - ey)
 
-    // Connection at our START — extend backward (−dir)
+    // Corner miter: connection at our START — extend backward (−dir)
     if (dSS < snapR)
       startExt = Math.max(startExt, miterExtension(ux, uy, wux, wuy, wh))
     else if (dSE < snapR)
       startExt = Math.max(startExt, miterExtension(ux, uy, -wux, -wuy, wh))
 
-    // Connection at our END — extend forward (+dir)
+    // Corner miter: connection at our END — extend forward (+dir)
     if (dES < snapR)
       endExt = Math.max(endExt, miterExtension(-ux, -uy, wux, wuy, wh))
     else if (dEE < snapR)
       endExt = Math.max(endExt, miterExtension(-ux, -uy, -wux, -wuy, wh))
+
+    // T-junction: our endpoint near their BODY (not their endpoint)
+    const sinAngle = Math.abs(ux * wuy - uy * wux)
+    if (sinAngle > 0.05) {
+      const tExt = Math.min(wh / sinAngle, wh * 8)
+      const projectOntoW = (px: number, py: number) => {
+        const t = (px - w.x) * wux + (py - w.y) * wuy
+        const projX = w.x + t * wux, projY = w.y + t * wuy
+        return { t, perpDist: Math.hypot(px - projX, py - projY), onBody: t > snapR && t < wlen - snapR }
+      }
+      const sp = projectOntoW(sx, sy)
+      if (sp.onBody && sp.perpDist < snapR && dSS >= snapR && dSE >= snapR)
+        startExt = Math.max(startExt, tExt)
+      const ep = projectOntoW(ex, ey)
+      if (ep.onBody && ep.perpDist < snapR && dES >= snapR && dEE >= snapR)
+        endExt = Math.max(endExt, tExt)
+    }
   }
 
   return [
