@@ -23,7 +23,9 @@ import { BlockTool } from './tools/BlockTool'
 import { CommentTool } from './tools/CommentTool'
 import { DimensionTool } from './tools/DimensionTool'
 import { EditorContext } from './context/EditorContext'
+import { ProjectContext } from './context/ProjectContext'
 import { loadSnapshot, saveSnapshot, saveThumbnail, touchProject, getProjects } from './lib/projectStore'
+import { saveVersion } from './lib/versions'
 import './App.css'
 
 const SHAPE_UTILS = [WallShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil, CommentShapeUtil, DimensionShapeUtil]
@@ -85,7 +87,9 @@ function EditorView({ projectId, onBack }: { projectId: string; onBack: () => vo
   useEffect(() => {
     if (!editor) return
     let timer = 0
+    let dirtySinceAuto = false
     const unsub = editor.store.listen(() => {
+      dirtySinceAuto = true
       clearTimeout(timer)
       timer = window.setTimeout(async () => {
         saveSnapshot(projectId, editor.getSnapshot())
@@ -103,7 +107,24 @@ function EditorView({ projectId, onBack }: { projectId: string; onBack: () => vo
         }
       }, 1500)
     })
-    return () => { unsub(); clearTimeout(timer) }
+
+    // 5분마다 자동 버전 저장 (변경 있을 때만)
+    const AUTO_VERSION_MS = 5 * 60 * 1000
+    const autoVersionTimer = window.setInterval(() => {
+      if (!dirtySinceAuto) return
+      try {
+        saveVersion(projectId, editor.store.getStoreSnapshot(), '자동저장')
+        dirtySinceAuto = false
+      } catch (err) {
+        console.warn('[auto-version] failed', err)
+      }
+    }, AUTO_VERSION_MS)
+
+    return () => {
+      unsub()
+      clearTimeout(timer)
+      clearInterval(autoVersionTimer)
+    }
   }, [editor, projectId])
 
   useEffect(() => {
@@ -133,6 +154,7 @@ function EditorView({ projectId, onBack }: { projectId: string; onBack: () => vo
   }, [editor])
 
   return (
+    <ProjectContext.Provider value={projectId}>
     <EditorContext.Provider value={editor}>
       <div className="bimove-layout">
         <LBar />
@@ -191,6 +213,7 @@ function EditorView({ projectId, onBack }: { projectId: string; onBack: () => vo
         )}
       </div>
     </EditorContext.Provider>
+    </ProjectContext.Provider>
   )
 }
 

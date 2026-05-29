@@ -18,5 +18,16 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
+      // React 19 strict — cascading render 경고 (실제 위험 적음)
+      'react-hooks/set-state-in-effect': 'warn',
+      // Fast refresh dev 편의 (빌드 무관)
+      'react-refresh/only-export-components': 'warn',
+    },
   },
 ])

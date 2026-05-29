@@ -9,6 +9,9 @@ export function AIPanel() {
   const editor = useEditor()
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [snapAngle, setSnapAngle] = useState(5)
+  const [minLineLen, setMinLineLen] = useState(40)
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   const imageShapes = editor?.getCurrentPageShapes().filter(s => s.type === 'image') ?? []
 
@@ -27,7 +30,10 @@ export function AIPanel() {
     setBusy(true)
     setMsg('OpenCV 분석 중… (처음엔 다소 걸려요)')
     try {
-      const { lines, width, height } = await detectWalls(src)
+      const { lines, width, height } = await detectWalls(src, {
+        snapAngleDeg: snapAngle,
+        minLineLenPx: minLineLen,
+      })
       if (lines.length === 0) { setMsg('선분을 찾지 못했습니다. 더 선명한 도면을 써보세요.'); return }
       const kx = sw / width, ky = sh / height
       const thickness = getDefaultWallThicknessMm() * getScaleConfig(editor).pxPerMm
@@ -79,6 +85,40 @@ export function AIPanel() {
             {msg}
           </div>
         )}
+
+        {/* 고급 옵션 */}
+        <div style={{ marginTop: 16, borderTop: '1px solid #eee', paddingTop: 10 }}>
+          <button
+            onClick={() => setShowAdvanced(v => !v)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#666', padding: 0 }}
+          >{showAdvanced ? '▼' : '▶'} 인식 옵션</button>
+          {showAdvanced && (
+            <div style={{ marginTop: 8, fontSize: 11 }}>
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ display: 'block', color: '#666', marginBottom: 2 }}>
+                  직각 정렬 (±°): <strong>{snapAngle}°</strong>
+                </label>
+                <input
+                  type="range" min={0} max={15} value={snapAngle}
+                  onChange={e => setSnapAngle(Number(e.target.value))}
+                  style={{ width: '100%' }}
+                />
+                <div style={{ fontSize: 10, color: '#aaa' }}>0=비활성, 1~15=수평/수직 보정 강도</div>
+              </div>
+              <div>
+                <label style={{ display: 'block', color: '#666', marginBottom: 2 }}>
+                  최소 선 길이: <strong>{minLineLen}px</strong>
+                </label>
+                <input
+                  type="range" min={0} max={200} step={10} value={minLineLen}
+                  onChange={e => setMinLineLen(Number(e.target.value))}
+                  style={{ width: '100%' }}
+                />
+                <div style={{ fontSize: 10, color: '#aaa' }}>짧은 노이즈 선 제거</div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

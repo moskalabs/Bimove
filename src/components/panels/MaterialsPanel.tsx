@@ -1,23 +1,33 @@
+import { useState } from 'react'
 import { useEditor } from '../../context/EditorContext'
-
-const WALL_COLORS: { label: string; fill: string; stroke: string }[] = [
-  { label: '기본 (회색)', fill: '#555', stroke: '#222' },
-  { label: '콘크리트', fill: '#8a8a8a', stroke: '#555' },
-  { label: '벽돌', fill: '#b5651d', stroke: '#7a3e0a' },
-  { label: '나무', fill: '#c8a96e', stroke: '#8b6327' },
-  { label: '유리', fill: '#a8d8ea', stroke: '#4fa3c8' },
-  { label: '흰 벽', fill: '#f0f0f0', stroke: '#999' },
-]
+import { loadMaterialPresets } from '../../lib/materialPresets'
+import { exportLibrary, downloadLibrary, pickAndImportLibrary, applyLibrary } from '../../lib/library'
 
 export function MaterialsPanel() {
   const editor = useEditor()
   const selected = editor?.getSelectedShapes() ?? []
   const walls = selected.filter(s => s.type === 'wall')
+  const [presets, setPresets] = useState(() => loadMaterialPresets())
 
-  const applyColor = (fill: string, stroke: string) => {
+  const applyColor = (fill: string, stroke: string, materialId?: string, pattern?: string) => {
     if (!editor || walls.length === 0) return
     walls.forEach(s => {
-      editor.updateShape({ id: s.id, meta: { fill, stroke } } as never)
+      editor.updateShape({ id: s.id, meta: { ...s.meta, fill, stroke, materialId, pattern } } as never)
+    })
+  }
+
+  const handleExport = () => {
+    const name = prompt('라이브러리 이름?', '회사 표준 자재') ?? '라이브러리'
+    const company = prompt('회사명? (선택)', '') ?? undefined
+    const note = prompt('메모? (선택)', '') ?? undefined
+    downloadLibrary(exportLibrary(name, { company: company || undefined, note: note || undefined }))
+  }
+  const handleImport = () => {
+    pickAndImportLibrary(file => {
+      if (!confirm(`'${file.name}' 라이브러리를 적용할까요? (현재 단가/재질 덮어쓰기)\n회사: ${file.company ?? '-'}`)) return
+      applyLibrary(file)
+      setPresets(loadMaterialPresets())
+      alert('라이브러리가 적용됐어. 다른 패널은 새로고침 후 반영.')
     })
   }
 
@@ -36,10 +46,10 @@ export function MaterialsPanel() {
         )}
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-          {WALL_COLORS.map(c => (
+          {presets.map(c => (
             <button
-              key={c.label}
-              onClick={() => applyColor(c.fill, c.stroke)}
+              key={c.id ?? c.label}
+              onClick={() => applyColor(c.fill, c.stroke, c.id, c.pattern)}
               disabled={walls.length === 0}
               style={{
                 padding: '8px 6px', borderRadius: 8, border: `2px solid ${c.stroke}`,
@@ -51,6 +61,17 @@ export function MaterialsPanel() {
               {c.label}
             </button>
           ))}
+        </div>
+
+        <div style={{ borderTop: '1px solid #eee', marginTop: 16, paddingTop: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#555', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>📦 라이브러리</div>
+          <div style={{ fontSize: 10, color: '#888', marginBottom: 8, lineHeight: 1.6 }}>
+            단가 + 재질을 JSON으로 export/import. 회사별 표준 공유에 활용.
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className="export-btn" style={{ flex: 1 }} onClick={handleExport}>⬇ Export</button>
+            <button className="export-btn" style={{ flex: 1 }} onClick={handleImport}>⬆ Import</button>
+          </div>
         </div>
 
       </div>

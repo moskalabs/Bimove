@@ -34,6 +34,7 @@ export function ChatPanel() {
 
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setUnread(0)
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
       setTimeout(() => inputRef.current?.focus(), 80)
@@ -41,6 +42,7 @@ export function ChatPanel() {
   }, [open, messages.length])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!open && messages.length > 0) setUnread(u => u + 1)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages.length])

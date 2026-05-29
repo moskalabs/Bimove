@@ -43,7 +43,7 @@ export function ScaleRuler() {
 
   return (
     <div style={{
-      position: 'absolute', bottom: 20, left: 20, zIndex: 400,
+      position: 'absolute', bottom: 24, left: 20, zIndex: 400,
       background: 'rgba(255,255,255,0.88)', borderRadius: 6,
       padding: '6px 8px 4px',
       pointerEvents: 'none', userSelect: 'none',

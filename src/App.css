@@ -339,3 +339,13 @@
   color: #fff;
   border-color: #333;
 }
+
+/* tldraw hideUi가 일부 페이지 메뉴 노출하는 케이스 — 강제 숨김 */
+.tlui-page-menu,
+.tlui-page-menu__wrapper,
+.tlui-layout__bottom,
+.tlui-layout__bottom__main,
+.tlui-helper-buttons,
+.tl-shape-indicator + .tlui-page-menu {
+  display: none !important;
+}

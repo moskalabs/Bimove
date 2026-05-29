@@ -85,6 +85,28 @@ export type DetectOptions = {
   houghThreshold?: number
   minLineLength?: number
   maxLineGap?: number
+  /** 거의 수평/수직(±deg)인 선을 정확히 0°/90°로 보정. 0이면 비활성. */
+  snapAngleDeg?: number
+  /** 최소 선 길이 (px). 이보다 짧은 선 제외. */
+  minLineLenPx?: number
+}
+
+export type DetectedOpening = {
+  /** 벽 라인의 인덱스 */
+  wallIndex: number
+  /** 갭 시작/끝 t (0~1 따라 wall 방향) */
+  startT: number
+  endT: number
+  /** 추정 폭 (px) */
+  widthPx: number
+}
+
+/** 벽 라인을 검사해서 도면 안 갭(문/창)을 추정.
+ *  벽 사이 좁은 끊김(gap) → opening.
+ *  실제로는 이미지 분석이 더 정확하지만, 일단 벽 끊김 기반으로 휴리스틱. */
+export function detectOpenings(_lines: Line[]): DetectedOpening[] {
+  // 시작 단계 placeholder — 추후 OpenCV로 벽 사이 빈 픽셀 검사 등으로 개선
+  return []
 }
 
 /**
@@ -128,5 +150,33 @@ export async function detectWalls(
   }
   src.delete(); gray.delete(); edges.delete(); linesMat.delete()
 
-  return { lines: mergeLines(raw), width: w, height: h }
+  let merged = mergeLines(raw)
+
+  // 후처리: 직각 정렬
+  const snapDeg = opts.snapAngleDeg ?? 5
+  if (snapDeg > 0) {
+    merged = merged.map(ln => {
+      const dx = ln.x2 - ln.x1, dy = ln.y2 - ln.y1
+      const angDeg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 180
+      const horiz = Math.min(angDeg, 180 - angDeg)
+      const vert = Math.abs(angDeg - 90)
+      if (horiz <= snapDeg) {
+        const cy = (ln.y1 + ln.y2) / 2
+        return { x1: ln.x1, y1: cy, x2: ln.x2, y2: cy }
+      }
+      if (vert <= snapDeg) {
+        const cx = (ln.x1 + ln.x2) / 2
+        return { x1: cx, y1: ln.y1, x2: cx, y2: ln.y2 }
+      }
+      return ln
+    })
+  }
+
+  // 짧은 선 필터
+  const minLenPx = opts.minLineLenPx ?? 0
+  if (minLenPx > 0) {
+    merged = merged.filter(ln => Math.hypot(ln.x2 - ln.x1, ln.y2 - ln.y1) >= minLenPx)
+  }
+
+  return { lines: merged, width: w, height: h }
 }

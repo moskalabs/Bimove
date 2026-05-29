@@ -3,6 +3,8 @@ import { LayersPanel } from './panels/LayersPanel'
 import { BlocksPanel } from './panels/BlocksPanel'
 import { BOQPanel } from './panels/BOQPanel'
 import { MaterialsPanel } from './panels/MaterialsPanel'
+import { PropertiesPanel } from './panels/PropertiesPanel'
+import { CommentsPanel } from './panels/CommentsPanel'
 import { LayoutPanel } from './panels/LayoutPanel'
 import { TracePanel } from './panels/TracePanel'
 import { AIPanel } from './panels/AIPanel'
@@ -23,6 +25,8 @@ const DRAW_TOOLS = [
 const PANELS = [
   { id: 'layers', icon: '⊞', label: '도면층' },
   { id: 'blocks', icon: '⬜', label: '블록' },
+  { id: 'properties', icon: '⚙', label: '속성' },
+  { id: 'comments', icon: '💬', label: '코멘트' },
   { id: 'materials', icon: '◨', label: '재질' },
   { id: 'layout', icon: '⊡', label: '배치' },
   { id: 'table', icon: '≡', label: '테이블' },
@@ -126,6 +130,8 @@ export function LBar() {
       {activePanel === 'blocks' && <BlocksPanel />}
       {activePanel === 'table' && <BOQPanel />}
       {activePanel === 'materials' && <MaterialsPanel />}
+      {activePanel === 'properties' && <PropertiesPanel />}
+      {activePanel === 'comments' && <CommentsPanel />}
       {activePanel === 'layout' && <LayoutPanel />}
       {activePanel === 'import' && <ImportPanel />}
       {activePanel === 'trace' && <TracePanel />}

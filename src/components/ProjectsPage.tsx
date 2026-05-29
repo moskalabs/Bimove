@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import type { Project } from '../lib/projectStore'
-import { getProjects, createProject, deleteProject, renameProject, migrateOldData } from '../lib/projectStore'
+import { getProjects, createProject, deleteProject, renameProject, migrateOldData, saveSnapshot } from '../lib/projectStore'
+import { readShareFromHash, clearShareHash } from '../lib/shareLink'
 
 function formatDate(ts: number) {
   const d = new Date(ts)
@@ -176,8 +177,19 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
 
   useEffect(() => {
     migrateOldData()
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setProjects(getProjects())
-  }, [])
+    // 공유 링크로 들어왔으면 새 프로젝트로 임포트
+    void (async () => {
+      const shared = await readShareFromHash()
+      if (!shared) return
+      const p = createProject(shared.name + ' (공유받음)')
+      saveSnapshot(p.id, shared.snapshot)
+      clearShareHash()
+      setProjects(getProjects())
+      onOpen(p.id)
+    })()
+  }, [onOpen])
 
   const refresh = () => setProjects(getProjects())
 

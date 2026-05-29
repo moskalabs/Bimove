@@ -1,6 +1,7 @@
 import { useEditor } from '../../context/EditorContext'
 import { uploadImage } from '../../lib/project'
 import { importDxf } from '../../lib/dxf'
+import { importPdf } from '../../lib/pdfImport'
 
 export function ImportPanel() {
   const editor = useEditor()
@@ -25,6 +26,25 @@ export function ImportPanel() {
             File → Export → 2D Graphic →<br />
             파일 형식을 <strong style={{ color: '#3b82f6' }}>AutoCAD DXF (.dxf)</strong> 로<br />
             저장 후 불러오세요.
+          </div>
+        </div>
+
+        <div style={{ borderTop: '1px solid #eee' }} />
+
+        {/* PDF */}
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#555', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>PDF 도면</div>
+          <button
+            className="export-btn"
+            style={{ width: '100%', marginBottom: 8 }}
+            onClick={() => editor && importPdf(editor)}
+          >
+            📄 PDF 불러오기
+          </button>
+          <div style={{ fontSize: 11, color: '#888', lineHeight: 1.7, background: '#f8f8f8', borderRadius: 6, padding: '8px 10px' }}>
+            PDF 첫 페이지를 고해상도 이미지로 렌더해서 배경으로 배치.<br />
+            위에 벽을 따라 그리세요.<br />
+            <span style={{ color: '#aaa' }}>※ 다중 페이지는 첫 페이지만 (추후 옵션 추가)</span>
           </div>
         </div>
 

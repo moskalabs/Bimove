@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useEffect } from 'react'
 import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls, Grid, Environment, Html } from '@react-three/drei'
 import * as THREE from 'three'
@@ -246,21 +246,24 @@ function RoomMesh({ pts, y, opacity = 1 }: { pts: { x: number; z: number }[]; y:
 
 function SceneExporter({ exportRef }: { exportRef: React.MutableRefObject<(() => void) | null> }) {
   const { scene } = useThree()
-  exportRef.current = () => {
-    const exporter = new GLTFExporter()
-    exporter.parse(
-      scene,
-      (result) => {
-        const blob = new Blob([result as ArrayBuffer], { type: 'model/gltf-binary' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url; a.download = 'model.glb'; a.click()
-        setTimeout(() => URL.revokeObjectURL(url), 5000)
-      },
-      (err) => console.error('GLTF export error:', err),
-      { binary: true },
-    )
-  }
+  useEffect(() => {
+    exportRef.current = () => {
+      const exporter = new GLTFExporter()
+      exporter.parse(
+        scene,
+        (result) => {
+          const blob = new Blob([result as ArrayBuffer], { type: 'model/gltf-binary' })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url; a.download = 'model.glb'; a.click()
+          setTimeout(() => URL.revokeObjectURL(url), 5000)
+        },
+        (err) => console.error('GLTF export error:', err),
+        { binary: true },
+      )
+    }
+    return () => { exportRef.current = null }
+  }, [scene, exportRef])
   return null
 }
 

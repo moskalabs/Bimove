@@ -4,13 +4,19 @@ import { getScaleConfig, setScaleConfig, SCALE_PRESETS, type ScaleUnit } from '.
 
 export function LayoutPanel() {
   const editor = useEditor()
-  const [grid, setGrid] = useState(false)
+  const [grid, setGrid] = useState(() => editor ? editor.getInstanceState().isGridMode : false)
   const [scale, setScale] = useState(() => editor ? getScaleConfig(editor) : null)
 
   useEffect(() => {
     if (!editor) return
-    setGrid(editor.getInstanceState().isGridMode)
-    setScale(getScaleConfig(editor))
+    // 외부 변경 추적 (다른 컴포넌트가 isGridMode 변경 시)
+    const unsub = editor.store.listen(() => {
+      const nextGrid = editor.getInstanceState().isGridMode
+      setGrid(prev => prev === nextGrid ? prev : nextGrid)
+      const nextScale = getScaleConfig(editor)
+      setScale(prev => prev?.pxPerMm === nextScale.pxPerMm && prev?.unit === nextScale.unit ? prev : nextScale)
+    })
+    return unsub
   }, [editor])
 
   const toggleGrid = () => {

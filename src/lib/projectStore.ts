@@ -33,6 +33,11 @@ export function createProject(name: string): Project {
 export function deleteProject(id: string) {
   saveProjectList(getProjects().filter(p => p.id !== id))
   localStorage.removeItem(snapshotKey(id))
+  // 버전 히스토리도 함께 정리
+  try {
+    const versionsKey = `bimove_versions_${id}`
+    localStorage.removeItem(versionsKey)
+  } catch { /* ignore */ }
 }
 
 export function renameProject(id: string, name: string) {

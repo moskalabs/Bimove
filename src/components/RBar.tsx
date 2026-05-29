@@ -10,6 +10,10 @@ import {
   type ScaleConfig,
 } from '../lib/scaleConfig'
 import { exportPng, exportSvg, printPdf } from '../lib/exportPng'
+import { createShareLink, copyToClipboard } from '../lib/shareLink'
+import { saveVersion } from '../lib/versions'
+import { useProjectId } from '../context/ProjectContext'
+import { VersionHistoryPanel } from './VersionHistoryPanel'
 import { saveProject, openProject } from '../lib/project'
 import { exportDxf } from '../lib/dxf'
 import {
@@ -20,7 +24,7 @@ import {
   getRoomNames,
 } from '../lib/settings'
 import { detectRooms } from '../lib/roomDetection'
-import { formatArea } from './RoomOverlay'
+import { formatArea } from '../lib/formatArea'
 
 type SelInfo = {
   id: TLShapeId
@@ -730,7 +734,9 @@ function WallDefaultSection({ scale }: { scale: ScaleConfig }) {
 
 function ProjectSection() {
   const editor = useEditor()
+  const projectId = useProjectId()
   const [projectName, setProjectName] = useState('untitled')
+  const [showHistory, setShowHistory] = useState(false)
 
   return (
     <section className="rbar-section">
@@ -745,10 +751,32 @@ function ProjectSection() {
         />
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-        <button className="export-btn" onClick={() => { if (editor) void saveProject(editor, projectName) }}>저장</button>
+        <button className="export-btn" onClick={() => {
+          if (!editor) return
+          void saveProject(editor, projectName)
+          if (projectId) {
+            const label = prompt('이 버전에 이름을 붙일래? (선택)') ?? undefined
+            saveVersion(projectId, editor.store.getStoreSnapshot(), label || undefined)
+          }
+        }}>저장</button>
         <button className="export-btn" onClick={() => { if (editor) void openProject(editor) }}>열기</button>
         <button className="export-btn" onClick={() => editor && exportDxf(editor, projectName)}>DXF</button>
+        <button className="export-btn" onClick={async () => {
+          if (!editor) return
+          try {
+            const snapshot = editor.store.getStoreSnapshot()
+            const url = await createShareLink(projectName, snapshot)
+            const ok = await copyToClipboard(url)
+            alert(ok ? '공유 링크가 클립보드에 복사됐어!' : '공유 링크:\n' + url)
+          } catch (err) {
+            alert('공유 링크 생성 실패: ' + String(err))
+          }
+        }}>🔗 공유</button>
+        <button className="export-btn" disabled={!projectId} onClick={() => setShowHistory(true)}>📜 히스토리</button>
       </div>
+      {showHistory && projectId && (
+        <VersionHistoryPanel editor={editor} projectId={projectId} onClose={() => setShowHistory(false)} />
+      )}
     </section>
   )
 }

@@ -16,6 +16,8 @@ import type { IndexKey } from '@tldraw/editor'
 import { useEffect, useState } from 'react'
 import { getScaleConfig, formatLength } from '../lib/scaleConfig'
 import { getShowWallLengths } from '../lib/settings'
+import { renderPatternDef } from '../lib/wallPatterns'
+import type { PatternId } from '../lib/materialPresets'
 
 export type WallShapeProps = {
   x2: number
@@ -126,6 +128,7 @@ function computeJoinedCorners(editor: Editor, shape: WallShape): Vec[] {
   ]
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 function WallComponent({ shape }: { shape: WallShape }) {
   const editor = useEditor()
   const [showDim, setShowDim] = useState(getShowWallLengths)
@@ -146,9 +149,13 @@ function WallComponent({ shape }: { shape: WallShape }) {
 
   const fill = (shape.meta?.fill as string) ?? '#555'
   const stroke = (shape.meta?.stroke as string) ?? '#222'
+  const pattern = (shape.meta?.pattern as string | undefined)
+  const patId = pattern && pattern !== 'none' ? `pat-${pattern}-${shape.id.slice(-6)}` : null
+  const patternDef = patId ? renderPatternDef(pattern as PatternId, patId, stroke) : null
+  const fillAttr = patId ? `url(#${patId})` : fill
 
   if (len < 4) {
-    return <SVGContainer><path d={d} fill={fill} stroke={stroke} strokeWidth={1} /></SVGContainer>
+    return <SVGContainer>{patternDef}<path d={d} fill={fillAttr} stroke={stroke} strokeWidth={1} /></SVGContainer>
   }
 
   const nx = -y2 / len, ny = x2 / len
@@ -167,7 +174,8 @@ function WallComponent({ shape }: { shape: WallShape }) {
 
   return (
     <SVGContainer>
-      <path d={d} fill={fill} stroke={stroke} strokeWidth={1} />
+      {patternDef}
+      <path d={d} fill={fillAttr} stroke={stroke} strokeWidth={1} />
 
       {showDim && (
         <>
