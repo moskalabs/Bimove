@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { Tldraw } from 'tldraw'
 import type { Editor, TLEditorSnapshot } from 'tldraw'
 import 'tldraw/tldraw.css'
+import { TopBar } from './components/TopBar'
 import { LBar } from './components/LBar'
 import { RBar } from './components/RBar'
 import { ToolOverlay } from './components/ToolOverlay'
@@ -157,22 +158,25 @@ function EditorView({ projectId, onBack }: { projectId: string; onBack: () => vo
     <ProjectContext.Provider value={projectId}>
     <EditorContext.Provider value={editor}>
       <div className="bimove-layout">
-        <LBar />
-        <main className="canvas-area">
-          <ToolOverlay />
-          <Tldraw
-            key={projectId}
-            shapeUtils={SHAPE_UTILS}
-            tools={TOOLS}
-            onMount={handleMount}
-            hideUi
-          />
-          <EmptyCanvasHint editor={editor} />
-          <RoomOverlay />
-          <ScaleRuler />
-        </main>
-        <RBar />
-        <ChatPanel />
+        <TopBar />
+        <div className="bimove-body">
+          <LBar />
+          <main className="canvas-area">
+            <ToolOverlay />
+            <Tldraw
+              key={projectId}
+              shapeUtils={SHAPE_UTILS}
+              tools={TOOLS}
+              onMount={handleMount}
+              hideUi
+            />
+            <EmptyCanvasHint editor={editor} />
+            <RoomOverlay />
+            <ScaleRuler />
+          </main>
+          <RBar />
+          <ChatPanel />
+        </div>
 
         {/* back to projects */}
         <button

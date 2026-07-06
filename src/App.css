@@ -6,10 +6,127 @@
 
 .bimove-layout {
   display: flex;
+  flex-direction: column;
   width: 100vw;
   height: 100vh;
   overflow: hidden;
   background: #f5f5f5;
+}
+
+.bimove-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Top Bar ── */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 44px;
+  background: #ffffff;
+  border-bottom: 1px solid #e0e0e0;
+  padding: 0 8px;
+  z-index: 20;
+  flex-shrink: 0;
+}
+
+.topbar-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  height: 36px;
+  border: 1.5px solid #e8e8e8;
+  border-radius: 8px;
+  margin-right: 4px;
+  background: #fafafa;
+}
+
+.topbar-btn {
+  width: 34px;
+  height: 30px;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  color: #555;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s;
+}
+
+.topbar-btn:hover {
+  background: #f0f0f0;
+  color: #222;
+}
+
+.topbar-btn.active {
+  background: #e8f0fe;
+  color: #1a73e8;
+}
+
+.topbar-project-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  position: relative;
+  user-select: none;
+}
+
+.topbar-project-tab:hover {
+  background: #f0f0f0;
+}
+
+.topbar-project-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  min-width: 160px;
+  z-index: 100;
+  overflow: hidden;
+}
+
+.topbar-dropdown-item {
+  padding: 8px 14px;
+  font-size: 13px;
+  color: #444;
+  cursor: pointer;
+}
+
+.topbar-dropdown-item:hover {
+  background: #f5f5f5;
+}
+
+.topbar-dropdown-item.active {
+  background: #e8f0fe;
+  color: #1a73e8;
+  font-weight: 600;
+}
+
+.topbar-dropdown-add {
+  color: #1a73e8;
+  border-top: 1px solid #f0f0f0;
 }
 
 .lbar {
