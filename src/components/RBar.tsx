@@ -1,10 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { type TLShapeId, createShapeId } from 'tldraw'
 import {
-  Lock, Unlock, FlipHorizontal2, RotateCw, Check, Wand2, Link2, History,
+  Lock, Unlock, FlipHorizontal2, RotateCw, Check, Wand2,
+  Link2, History, Play, User, Eye, EyeOff, MoreHorizontal,
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
   AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
+  ChevronUp, ChevronDown,
 } from 'lucide-react'
 import { useEditor } from '../context/EditorContext'
 import { detectWalls } from '../lib/detectWalls'
@@ -40,6 +42,7 @@ type SelInfo = {
   props: Record<string, unknown>
 } | null
 
+/* ── R bar 메인 ── */
 export function RBar() {
   const editor = useEditor()
   const [sel, setSel] = useState<SelInfo>(null)
@@ -63,146 +66,307 @@ export function RBar() {
   }, [editor])
 
   const showWallProps = toolId === 'wall' || sel?.type === 'wall'
-
-  const handleUnit = (unit: ScaleUnit) => { if (editor) setScaleConfig(editor, { unit }) }
-  const handlePreset = (pxPerMm: number) => { if (editor) setScaleConfig(editor, { pxPerMm }) }
-
   const selectedShapes = editor?.getSelectedShapes() ?? []
 
   return (
     <aside className="rbar">
-      <section className="rbar-section">
-        <h3>스케일</h3>
-        <div className="rbar-row">
-          <span>단위</span>
-          <div className="rbar-toggle">
-            {(['mm', 'cm', 'm'] as ScaleUnit[]).map(u => (
-              <button key={u} className={scale.unit === u ? 'active' : ''} onClick={() => handleUnit(u)}>{u}</button>
-            ))}
-          </div>
-        </div>
-        <div style={{ padding: '4px 0 8px' }}>
-          <div style={{ color: '#666', fontSize: 11, marginBottom: 4 }}>배율</div>
-          <select
-            value={scale.pxPerMm}
-            onChange={e => handlePreset(Number(e.target.value))}
-            style={{ width: '100%', fontSize: 12, padding: '3px 6px', border: '1px solid #e0e0e0', borderRadius: 4 }}
-          >
-            {SCALE_PRESETS.map(p => <option key={p.pxPerMm} value={p.pxPerMm}>{p.label}</option>)}
-          </select>
-        </div>
-      </section>
+      {/* ── 섹션 1: 프로젝트 작업 (상단 액션바) ── */}
+      <TopActionBar />
 
-      {/* 프로젝트 저장/열기 */}
-      <ProjectSection />
+      {/* ── 섹션 2: 프로젝트 정보 ── */}
+      <ProjectInfoSection />
 
-      {/* 그리드 크기 설정 */}
-      <GridSection />
+      {/* ── 섹션 3: 모델 페이지 (현재 페이지 속성) ── */}
+      <ModelPageSection scale={scale} />
 
-      {/* 스냅 설정 */}
-      <SnapSection />
+      {/* spacer */}
+      <div style={{ flex: 1 }} />
 
-      {/* 기본 벽 두께 설정 (벽체 작성/선택 시에만) */}
+      {/* ── 선택 상태에 따른 속성 패널 ── */}
       {showWallProps && <WallDefaultSection scale={scale} />}
-
-      {/* 3D 벽 높이 (벽체 작성/선택 시에만) */}
       {showWallProps && <WallHeightSection />}
-
-      {/* 표시 설정 */}
-      <DisplaySection scale={scale} />
-
-      {/* 방 면적 요약 */}
-      <RoomAreaSection scale={scale} />
-
-      {/* 내보내기 메뉴 */}
-      <ExportMenuSection />
-
       {selectedShapes.length > 1 && <AlignPanel />}
-      {sel ? (
-        <PropsPanel sel={sel} scale={scale} />
-      ) : null}
+      {sel && <PropsPanel sel={sel} scale={scale} />}
 
-      {/* 그리는 중 길이·각도 표시 (하단 고정) */}
-      <DistanceReadoutSection toolId={toolId} scale={scale} />
+      {/* ── 섹션 4: 화면 보기 (하단 고정) ── */}
+      <ViewSection toolId={toolId} scale={scale} />
     </aside>
   )
 }
 
-// ---------- ortho snap toggle ----------
+/* ── 상단 액션바: 사용자 아이콘 · 히스토리 · 미리보기 · 공유하기 ── */
+function TopActionBar() {
+  const editor = useEditor()
+  const projectId = useProjectId()
+  const [showHistory, setShowHistory] = useState(false)
 
-function SnapSection() {
-  const [on, setOn] = useState(getSnapEnabled)
+  return (
+    <>
+      {/* 탭 네비게이션 */}
+      <div className="rbar-tabs">
+        <button className="rbar-tab" title="사용자"><User size={14} strokeWidth={1.75} /></button>
+        <button className="rbar-tab" title="히스토리" onClick={() => setShowHistory(true)}>
+          <History size={14} strokeWidth={1.75} />
+        </button>
+        <button className="rbar-tab" title="미리보기"><Play size={14} strokeWidth={1.75} /></button>
+        <button className="rbar-tab" title="공유하기" onClick={async () => {
+          if (!editor) return
+          try {
+            const snapshot = editor.store.getStoreSnapshot()
+            const url = await createShareLink('Drawing', snapshot)
+            const ok = await copyToClipboard(url)
+            alert(ok ? '공유 링크가 클립보드에 복사됐어!' : '공유 링크:\n' + url)
+          } catch (err) {
+            alert('공유 링크 생성 실패: ' + String(err))
+          }
+        }}>공유하기</button>
+      </div>
 
-  const toggle = () => {
-    const next = !on
-    setSnapEnabled(next)
-    setOn(next)
-  }
+      {/* 액션 버튼 행 */}
+      <div className="rbar-action-row">
+        <div className="rbar-avatar">B</div>
+        <button className="rbar-action-btn" title="새로고침" onClick={() => window.location.reload()}>
+          <RotateCw size={16} strokeWidth={1.75} />
+        </button>
+        <button className="rbar-action-btn" title="미리보기">
+          <Play size={16} strokeWidth={1.75} />
+        </button>
+        <button className="rbar-share-btn" onClick={async () => {
+          if (!editor) return
+          try {
+            const snapshot = editor.store.getStoreSnapshot()
+            const url = await createShareLink('Drawing', snapshot)
+            const ok = await copyToClipboard(url)
+            alert(ok ? '공유 링크가 클립보드에 복사됐어!' : '공유 링크:\n' + url)
+          } catch (err) {
+            alert('공유 링크 생성 실패: ' + String(err))
+          }
+        }}>Share</button>
+      </div>
+
+      {showHistory && projectId && (
+        <VersionHistoryPanel editor={editor} projectId={projectId} onClose={() => setShowHistory(false)} />
+      )}
+    </>
+  )
+}
+
+/* ── 프로젝트 정보: 파일명, 프로필 ── */
+function ProjectInfoSection() {
+  const [projectName, setProjectName] = useState('Drawing 1')
 
   return (
     <section className="rbar-section">
-      <h3>스냅</h3>
-      <div className="rbar-row">
-        <span>직교 스냅</span>
-        <button
-          className={`export-btn${on ? ' active' : ''}`}
-          style={on ? { background: '#333', color: '#fff', borderColor: '#333' } : undefined}
-          onClick={toggle}
-        >
-          {on ? '켜짐' : '꺼짐'}
-        </button>
+      <div className="rbar-section-title">▾ 프로젝트</div>
+      <div className="rbar-prop-row">
+        <span className="rbar-prop-label">파일명</span>
+        <input
+          className="rbar-prop-input"
+          value={projectName}
+          onChange={e => setProjectName(e.target.value)}
+        />
+      </div>
+      <div className="rbar-prop-row">
+        <span className="rbar-prop-label">프로필</span>
+        <span className="rbar-prop-value">BuildAI</span>
       </div>
     </section>
   )
 }
 
-// ---------- live length/angle readout while drawing ----------
-
-function DistanceReadoutSection({ toolId, scale }: { toolId: string; scale: ScaleConfig }) {
+/* ── 모델 페이지 속성: 도면층, 스타일, 그리드, 단위 ── */
+function ModelPageSection({ scale }: { scale: ScaleConfig }) {
   const editor = useEditor()
-  const [text, setText] = useState<string | null>(null)
+  const [gridOn, setGridOn] = useState(false)
+  const [darkMode, setDarkMode] = useState(false)
+  const [layer, setLayer] = useState('CO-1')
+
+  useEffect(() => {
+    if (!editor) return
+    const unsub = editor.store.listen(() => {
+      const state = editor.getInstanceState()
+      setGridOn(!!(state as { isGridMode?: boolean }).isGridMode)
+    })
+    return unsub
+  }, [editor])
+
+  const toggleGrid = () => {
+    if (!editor) return
+    const next = !gridOn
+    editor.updateInstanceState({ isGridMode: next } as never)
+    setGridOn(next)
+  }
+
+  const handleUnit = (unit: ScaleUnit) => { if (editor) setScaleConfig(editor, { unit }) }
+
+  const UNIT_OPTIONS: { value: ScaleUnit; label: string }[] = [
+    { value: 'mm', label: 'Millimeters' },
+    { value: 'cm', label: 'Centimeters' },
+    { value: 'm', label: 'Meters' },
+  ]
+
+  return (
+    <section className="rbar-section">
+      <div className="rbar-section-title">▾ 모델 페이지</div>
+
+      {/* 도면층 */}
+      <div className="rbar-prop-row">
+        <span className="rbar-prop-label">도면층</span>
+        <div className="rbar-layer-select">
+          <span className="rbar-layer-dot" style={{ background: '#ea4335' }} />
+          <select
+            className="rbar-select"
+            value={layer}
+            onChange={e => setLayer(e.target.value)}
+          >
+            <option value="CO-1">CO-1</option>
+            <option value="Default">Default</option>
+            <option value="A-Wall">A-Wall</option>
+            <option value="A-Door">A-Door</option>
+          </select>
+        </div>
+      </div>
+
+      {/* 스타일 */}
+      <div className="rbar-prop-row">
+        <span className="rbar-prop-label">스타일</span>
+        <div className="rbar-toggle-group">
+          <button
+            className={`rbar-toggle-btn${!darkMode ? ' active' : ''}`}
+            onClick={() => setDarkMode(false)}
+          >Light</button>
+          <button
+            className={`rbar-toggle-btn${darkMode ? ' active' : ''}`}
+            onClick={() => setDarkMode(true)}
+          >Dark</button>
+        </div>
+      </div>
+
+      {/* 그리드 */}
+      <div className="rbar-prop-row">
+        <span className="rbar-prop-label">그리드</span>
+        <div className="rbar-toggle-group">
+          <button
+            className={`rbar-toggle-btn${gridOn ? ' active' : ''}`}
+            onClick={() => { if (!gridOn) toggleGrid() }}
+          >Show</button>
+          <button
+            className={`rbar-toggle-btn${!gridOn ? ' active' : ''}`}
+            onClick={() => { if (gridOn) toggleGrid() }}
+          >Hide</button>
+        </div>
+      </div>
+
+      {/* 단위 */}
+      <div className="rbar-prop-row">
+        <span className="rbar-prop-label">단 위</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1 }}>
+          <select
+            className="rbar-select"
+            style={{ flex: 1 }}
+            value={scale.unit}
+            onChange={e => handleUnit(e.target.value as ScaleUnit)}
+          >
+            {UNIT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          <button className="rbar-more-btn" title="단위 상세 설정">
+            <MoreHorizontal size={14} strokeWidth={1.75} />
+          </button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/* ── 화면 보기 (하단): 거리 표시 + 스냅 ── */
+function ViewSection({ toolId, scale }: { toolId: string; scale: ScaleConfig }) {
+  const editor = useEditor()
+  const [snapEnd, setSnapEnd] = useState(true)
+  const [snapMid, setSnapMid] = useState(true)
+  const [snapOrtho, setSnapOrtho] = useState(getSnapEnabled)
+  const [distText, setDistText] = useState<string | null>(null)
+  const [zoom, setZoom] = useState(100)
 
   useEffect(() => {
     if (!editor) return
     const update = () => {
+      setZoom(Math.round(editor.getZoomLevel() * 100))
+
       const currentToolId = editor.getCurrentToolId()
-      if (currentToolId !== 'wall') { setText(null); return }
+      if (currentToolId !== 'wall') { setDistText(null); return }
       const drawingId = drawingState.drawingId
       const shape = drawingId ? editor.getShape(drawingId as never) : undefined
-      if (!shape) { setText(null); return }
+      if (!shape) { setDistText(null); return }
       const p = shape.props as { x2: number; y2: number }
       const lenPx = Math.hypot(p.x2, p.y2)
-      if (lenPx <= 5) { setText(null); return }
+      if (lenPx <= 5) { setDistText(null); return }
       const lenMm = lenPx / scale.pxPerMm
       const formatted = scale.unit === 'm'
         ? `${(lenMm / 1000).toFixed(2)} m`
         : scale.unit === 'cm'
         ? `${(lenMm / 10).toFixed(1)} cm`
         : `${Math.round(lenMm)} mm`
-      const angleDeg = (Math.atan2(p.y2, p.x2) * 180 / Math.PI).toFixed(1)
-      setText(`${formatted}  ${angleDeg}°`)
+      setDistText(formatted)
     }
     update()
     const unsub = editor.store.listen(update)
     return unsub
   }, [editor, scale])
 
-  if (toolId !== 'wall') return null
+  const zoomIn = () => { if (editor) editor.zoomIn() }
+  const zoomOut = () => { if (editor) editor.zoomOut() }
+
+  const toggleSnap = (kind: 'end' | 'mid' | 'ortho') => {
+    if (kind === 'end') setSnapEnd(!snapEnd)
+    else if (kind === 'mid') setSnapMid(!snapMid)
+    else {
+      const next = !snapOrtho
+      setSnapOrtho(next)
+      setSnapEnabled(next)
+    }
+  }
 
   return (
-    <section className="rbar-section">
-      <h3>길이·각도</h3>
-      <div className="rbar-row">
-        <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: text ? '#1a73e8' : '#bbb' }}>
-          {text ?? '그리는 중 표시됩니다'}
-        </span>
+    <div className="rbar-view-section">
+      {/* 거리 표시 바 */}
+      <div className="rbar-distance-bar">
+        <div className="rbar-distance-icon">
+          <RotateCw size={16} strokeWidth={1.75} />
+        </div>
+        <button className="rbar-zoom-btn" onClick={zoomOut} title="축소">
+          <ChevronDown size={14} strokeWidth={2} />
+        </button>
+        <div className="rbar-distance-value">
+          {distText ?? `${zoom}%`}
+        </div>
+        <button className="rbar-zoom-btn" onClick={zoomIn} title="확대">
+          <ChevronUp size={14} strokeWidth={2} />
+        </button>
       </div>
-    </section>
+
+      {/* 스냅 옵션 */}
+      <div className="rbar-snap-options">
+        <label className="rbar-snap-item">
+          <input type="checkbox" checked={snapEnd} onChange={() => toggleSnap('end')} />
+          <span className="rbar-snap-icon">✓ ↗</span>
+          <span>끝점</span>
+        </label>
+        <label className="rbar-snap-item">
+          <input type="checkbox" checked={snapMid} onChange={() => toggleSnap('mid')} />
+          <span className="rbar-snap-icon">✓ ↗</span>
+          <span>중간점</span>
+        </label>
+        <label className="rbar-snap-item">
+          <input type="checkbox" checked={snapOrtho} onChange={() => toggleSnap('ortho')} />
+          <span className="rbar-snap-icon">✓ ↳</span>
+          <span>직교</span>
+        </label>
+      </div>
+    </div>
   )
 }
 
-// ---------- per-type property editors ----------
-
+/* ── 선택 속성 패널 (기존 유지) ── */
 function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleConfig }) {
   const editor = useEditor()
   const shape = editor?.getShape(sel.id)
@@ -414,9 +578,6 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
               ))}
             </div>
           </div>
-          <div className="rbar-row" style={{ fontSize: 11, color: '#999' }}>
-            <span>더블클릭으로 내용 편집</span>
-          </div>
         </section>
       </>
     )
@@ -494,8 +655,7 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
   )
 }
 
-// ---------- multi-select align ----------
-
+/* ── 정렬 패널 ── */
 function AlignPanel() {
   const editor = useEditor()
   if (!editor) return null
@@ -531,67 +691,7 @@ function AlignPanel() {
   )
 }
 
-// ---------- grid size ----------
-
-const GRID_SIZES = [5, 10, 20, 50, 100, 200, 500]
-
-function GridSection() {
-  const editor = useEditor()
-  const [gridPx, setGridPx] = useState(20)
-  const [gridOn, setGridOn] = useState(false)
-
-  useEffect(() => {
-    if (!editor) return
-    const unsub = editor.store.listen(() => {
-      const state = editor.getInstanceState()
-      const g = (state as { gridSize?: number }).gridSize
-      if (g) setGridPx(g)
-      setGridOn(!!(state as { isGridMode?: boolean }).isGridMode)
-    })
-    return unsub
-  }, [editor])
-
-  const setGrid = (px: number) => {
-    if (!editor) return
-    editor.updateInstanceState({ gridSize: px } as never)
-    setGridPx(px)
-  }
-
-  const toggleGrid = () => {
-    if (!editor) return
-    const next = !gridOn
-    editor.updateInstanceState({ isGridMode: next } as never)
-    setGridOn(next)
-  }
-
-  return (
-    <section className="rbar-section">
-      <h3>그리드</h3>
-      <div className="rbar-row">
-        <span>표시</span>
-        <button
-          className={`export-btn${gridOn ? ' active' : ''}`}
-          style={gridOn ? { background: '#333', color: '#fff', borderColor: '#333' } : undefined}
-          onClick={toggleGrid}
-        >
-          {gridOn ? '켜짐' : '꺼짐'}
-        </button>
-      </div>
-      <div style={{ padding: '4px 0 8px' }}>
-        <select
-          value={gridPx}
-          onChange={e => setGrid(Number(e.target.value))}
-          style={{ width: '100%', fontSize: 12, padding: '3px 6px', border: '1px solid #e0e0e0', borderRadius: 4 }}
-        >
-          {GRID_SIZES.map(s => <option key={s} value={s}>{s} px</option>)}
-        </select>
-      </div>
-    </section>
-  )
-}
-
-// ---------- image → auto wall detection ----------
-
+/* ── 이미지 → 벽 자동 인식 ── */
 function ImageDetectSection({ sel }: { sel: NonNullable<SelInfo> }) {
   const editor = useEditor()
   const [busy, setBusy] = useState(false)
@@ -611,10 +711,10 @@ function ImageDetectSection({ sel }: { sel: NonNullable<SelInfo> }) {
     const { w: sw, h: sh } = shape.props as { w: number; h: number }
 
     setBusy(true)
-    setMsg('OpenCV 로딩 및 분석 중… (처음엔 다소 걸려요)')
+    setMsg('OpenCV 로딩 및 분석 중…')
     try {
       const { lines, width, height } = await detectWalls(src)
-      if (lines.length === 0) { setMsg('선분을 찾지 못했습니다. 더 선명한 도면을 써보세요.'); return }
+      if (lines.length === 0) { setMsg('선분을 찾지 못했습니다.'); return }
       const kx = sw / width, ky = sh / height
       const thickness = getDefaultWallThicknessMm() * getScaleConfig(editor!).pxPerMm
       const shapes = lines.map((ln) => {
@@ -651,136 +751,7 @@ function ImageDetectSection({ sel }: { sel: NonNullable<SelInfo> }) {
   )
 }
 
-// ---------- 3D wall height ----------
-
-function WallHeightSection() {
-  const [mm, setMm] = useState(getWallHeightMm)
-  const [draft, setDraft] = useState<string | null>(null)
-  const commit = () => {
-    if (draft === null) return
-    const v = parseFloat(draft)
-    if (!isNaN(v) && v > 0) { setWallHeightMm(v); setMm(v) }
-    setDraft(null)
-  }
-  return (
-    <section className="rbar-section">
-      <h3>벽 높이 (3D)</h3>
-      <div className="rbar-row">
-        <span>높이</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-          <input
-            className="prop-input"
-            value={draft ?? String(mm)}
-            onChange={e => setDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setDraft(null) }}
-          />
-          <span style={{ fontSize: 11, color: '#999' }}>mm</span>
-        </div>
-      </div>
-    </section>
-  )
-}
-
-// ---------- display toggles ----------
-
-function DisplaySection({ scale: _scale }: { scale: ScaleConfig }) {
-  const [showLengths, setShowLengths] = useState(getShowWallLengths)
-  const [showAreas, setShowAreas] = useState(getShowRoomAreas)
-
-  const toggle = (kind: 'lengths' | 'areas') => {
-    if (kind === 'lengths') {
-      const next = !showLengths
-      setShowLengths(next)
-      setShowWallLengths(next)
-    } else {
-      const next = !showAreas
-      setShowAreas(next)
-      setShowRoomAreas(next)
-    }
-    window.dispatchEvent(new Event('bimove:settings'))
-  }
-
-  return (
-    <section className="rbar-section">
-      <h3>표시</h3>
-      <div className="rbar-row">
-        <span>벽 길이</span>
-        <button className={`toggle-btn${showLengths ? ' active' : ''}`} onClick={() => toggle('lengths')}>
-          {showLengths ? '켜짐' : '꺼짐'}
-        </button>
-      </div>
-      <div className="rbar-row">
-        <span>방 면적</span>
-        <button className={`toggle-btn${showAreas ? ' active' : ''}`} onClick={() => toggle('areas')}>
-          {showAreas ? '켜짐' : '꺼짐'}
-        </button>
-      </div>
-    </section>
-  )
-}
-
-// ---------- room area summary ----------
-
-function roomKey(cx: number, cy: number): string {
-  return `${Math.round(cx / 50) * 50},${Math.round(cy / 50) * 50}`
-}
-
-function RoomAreaSection({ scale }: { scale: ScaleConfig }) {
-  const editor = useEditor()
-  const [rooms, setRooms] = useState<{ area: number; key: string }[]>([])
-  const [names, setNames] = useState(getRoomNames)
-
-  useEffect(() => {
-    const onSettings = () => setNames(getRoomNames())
-    window.addEventListener('bimove:settings', onSettings)
-    return () => window.removeEventListener('bimove:settings', onSettings)
-  }, [])
-
-  useEffect(() => {
-    if (!editor) return
-    const update = () => {
-      const walls = editor.getCurrentPageShapes()
-        .filter(s => s.type === 'wall')
-        .map(s => {
-          const p = s.props as { x2: number; y2: number }
-          return { x1: s.x, y1: s.y, x2: s.x + p.x2, y2: s.y + p.y2 }
-        })
-      const detected = detectRooms(walls)
-      const k = scale.pxPerMm
-      setRooms(detected.map(r => ({
-        area: r.area / (k * k),
-        key: roomKey(r.centroid.x, r.centroid.y),
-      })))
-    }
-    update()
-    const unsub = editor.store.listen(update)
-    return unsub
-  }, [editor, scale])
-
-  if (rooms.length === 0) return null
-
-  const total = rooms.reduce((s, r) => s + r.area, 0)
-
-  return (
-    <section className="rbar-section">
-      <h3>방 면적</h3>
-      {rooms.map((r, i) => (
-        <div key={r.key} className="rbar-row" style={{ fontSize: 11 }}>
-          <span style={{ color: '#555' }}>{names[r.key] ?? `방 ${i + 1}`}</span>
-          <span style={{ fontFamily: 'monospace', color: '#333' }}>{formatArea(r.area, scale.unit)}</span>
-        </div>
-      ))}
-      <div className="rbar-row" style={{ fontWeight: 600, borderTop: '1px solid #e8e8e8', paddingTop: 5, marginTop: 2 }}>
-        <span>합계</span>
-        <span style={{ fontFamily: 'monospace' }}>{formatArea(total, scale.unit)}</span>
-      </div>
-    </section>
-  )
-}
-
-// ---------- wall default thickness ----------
-
+/* ── 벽 기본 두께 ── */
 function WallDefaultSection({ scale }: { scale: ScaleConfig }) {
   const [thickMm, setThickMm] = useState(getDefaultWallThicknessMm)
   const dispUnit = scale.unit
@@ -823,124 +794,37 @@ function WallDefaultSection({ scale }: { scale: ScaleConfig }) {
   )
 }
 
-// ---------- project save / open ----------
-
-function ProjectSection() {
-  const editor = useEditor()
-  const projectId = useProjectId()
-  const [projectName, setProjectName] = useState('untitled')
-  const [showHistory, setShowHistory] = useState(false)
-
+/* ── 벽 높이 (3D) ── */
+function WallHeightSection() {
+  const [mm, setMm] = useState(getWallHeightMm)
+  const [draft, setDraft] = useState<string | null>(null)
+  const commit = () => {
+    if (draft === null) return
+    const v = parseFloat(draft)
+    if (!isNaN(v) && v > 0) { setWallHeightMm(v); setMm(v) }
+    setDraft(null)
+  }
   return (
     <section className="rbar-section">
-      <h3>프로젝트</h3>
+      <h3>벽 높이 (3D)</h3>
       <div className="rbar-row">
-        <span>이름</span>
-        <input
-          className="prop-input"
-          style={{ flex: 1, minWidth: 0 }}
-          value={projectName}
-          onChange={e => setProjectName(e.target.value)}
-        />
-      </div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-        <button className="export-btn" onClick={() => {
-          if (!editor) return
-          void saveProject(editor, projectName)
-          if (projectId) {
-            const label = prompt('이 버전에 이름을 붙일래? (선택)') ?? undefined
-            saveVersion(projectId, editor.store.getStoreSnapshot(), label || undefined)
-          }
-        }}>저장</button>
-        <button className="export-btn" onClick={() => { if (editor) void openProject(editor) }}>열기</button>
-        <button className="export-btn" onClick={() => editor && exportDxf(editor, projectName)}>DXF</button>
-        <button className="export-btn" onClick={async () => {
-          if (!editor) return
-          try {
-            const snapshot = editor.store.getStoreSnapshot()
-            const url = await createShareLink(projectName, snapshot)
-            const ok = await copyToClipboard(url)
-            alert(ok ? '공유 링크가 클립보드에 복사됐어!' : '공유 링크:\n' + url)
-          } catch (err) {
-            alert('공유 링크 생성 실패: ' + String(err))
-          }
-        }}><span className="icon-label"><Link2 size={14} strokeWidth={1.75} /> 공유</span></button>
-        <button className="export-btn" disabled={!projectId} onClick={() => setShowHistory(true)}><span className="icon-label"><History size={14} strokeWidth={1.75} /> 히스토리</span></button>
-      </div>
-      {showHistory && projectId && (
-        <VersionHistoryPanel editor={editor} projectId={projectId} onClose={() => setShowHistory(false)} />
-      )}
-    </section>
-  )
-}
-
-// ---------- export (menu) ----------
-
-function ExportMenuSection() {
-  const editor = useEditor()
-  const [loading, setLoading] = useState(false)
-  const [open, setOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const onClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false)
-    }
-    window.addEventListener('mousedown', onClick)
-    return () => window.removeEventListener('mousedown', onClick)
-  }, [open])
-
-  const run = async (fn: () => Promise<void>) => {
-    setLoading(true)
-    setOpen(false)
-    try { await fn() } finally { setLoading(false) }
-  }
-
-  const items: { label: string; fn: () => Promise<void> }[] = editor ? [
-    { label: 'PNG로 내보내기', fn: () => exportPng(editor) },
-    { label: 'SVG로 내보내기', fn: () => exportSvg(editor) },
-    { label: 'PDF로 인쇄', fn: () => printPdf(editor) },
-  ] : []
-
-  return (
-    <section className="rbar-section" ref={menuRef} style={{ position: 'relative' }}>
-      <h3>내보내기</h3>
-      <button
-        className="export-btn"
-        disabled={loading}
-        onClick={() => setOpen(v => !v)}
-        style={{ width: '100%' }}
-      >
-        {loading ? '내보내는 중…' : '내보내기 메뉴 ▾'}
-      </button>
-      {open && (
-        <div style={{
-          position: 'absolute', left: 16, right: 16, marginTop: 4,
-          background: '#fff', border: '1px solid #e0e0e0', borderRadius: 6,
-          boxShadow: '0 4px 16px rgba(0,0,0,0.12)', zIndex: 600, overflow: 'hidden',
-        }}>
-          {items.map(item => (
-            <button
-              key={item.label}
-              onClick={() => run(item.fn)}
-              style={{
-                display: 'block', width: '100%', textAlign: 'left',
-                padding: '8px 12px', border: 'none', background: 'transparent',
-                cursor: 'pointer', fontSize: 12, color: '#333',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#f5f5f5')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-            >{item.label}</button>
-          ))}
+        <span>높이</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <input
+            className="prop-input"
+            value={draft ?? String(mm)}
+            onChange={e => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setDraft(null) }}
+          />
+          <span style={{ fontSize: 11, color: '#999' }}>mm</span>
         </div>
-      )}
+      </div>
     </section>
   )
 }
 
-// ---------- rotation input ----------
-
+/* ── 회전 입력 ── */
 function RotationField({ value, onCommit }: { value: number; onCommit: (deg: number) => void }) {
   const [draft, setDraft] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -979,8 +863,7 @@ function RotationField({ value, onCommit }: { value: number; onCommit: (deg: num
   )
 }
 
-// ---------- reusable numeric input ----------
-
+/* ── 숫자 입력 필드 ── */
 function PropField({
   label, value, unit, onCommit,
 }: {
@@ -998,7 +881,6 @@ function PropField({
     if (draft === null) return
     const raw = parseFloat(draft)
     if (!isNaN(raw) && raw > 0) {
-      // convert back to mm then let onCommit handle px
       const mm = unit === 'm' ? raw * 1000 : unit === 'cm' ? raw * 10 : raw
       onCommit(mm)
     }

@@ -269,16 +269,106 @@
 }
 
 .rbar {
-  width: 240px;
+  width: 260px;
   height: 100%;
   background: #ffffff;
   border-left: 1px solid #e0e0e0;
   overflow-y: auto;
   z-index: 10;
+  display: flex;
+  flex-direction: column;
 }
 
+/* ── R-bar 상단 탭 ── */
+.rbar-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border-bottom: 1px solid #f0f0f0;
+  padding: 0;
+}
+
+.rbar-tab {
+  flex: 1;
+  padding: 8px 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  color: #888;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  transition: color 0.12s, background 0.12s;
+}
+
+.rbar-tab:hover {
+  background: #f5f5f5;
+  color: #333;
+}
+
+/* ── R-bar 액션 행 ── */
+.rbar-action-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.rbar-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #1a73e8;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.rbar-action-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #666;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rbar-action-btn:hover {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.rbar-share-btn {
+  margin-left: auto;
+  padding: 6px 16px;
+  border: none;
+  border-radius: 6px;
+  background: #4caf50;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.rbar-share-btn:hover {
+  background: #43a047;
+}
+
+/* ── R-bar 섹션 ── */
 .rbar-section {
-  padding: 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid #f0f0f0;
 }
 
@@ -291,6 +381,136 @@
   margin-bottom: 12px;
 }
 
+.rbar-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+/* ── R-bar 속성 행 ── */
+.rbar-prop-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 13px;
+  gap: 8px;
+}
+
+.rbar-prop-label {
+  color: #888;
+  font-size: 12px;
+  min-width: 48px;
+  flex-shrink: 0;
+}
+
+.rbar-prop-input {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 13px;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  outline: none;
+  background: #fafafa;
+  color: #333;
+}
+
+.rbar-prop-input:focus {
+  border-color: #1a73e8;
+  background: #fff;
+}
+
+.rbar-prop-value {
+  color: #333;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* ── R-bar 레이어 셀렉트 ── */
+.rbar-layer-select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.rbar-layer-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.rbar-select {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 13px;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  outline: none;
+  background: #fff;
+  color: #333;
+  cursor: pointer;
+  appearance: auto;
+}
+
+.rbar-select:focus {
+  border-color: #1a73e8;
+}
+
+/* ── R-bar 토글 그룹 ── */
+.rbar-toggle-group {
+  display: flex;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.rbar-toggle-btn {
+  padding: 4px 14px;
+  font-size: 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #888;
+  transition: background 0.1s, color 0.1s;
+}
+
+.rbar-toggle-btn:not(:last-child) {
+  border-right: 1px solid #e0e0e0;
+}
+
+.rbar-toggle-btn.active {
+  background: #333;
+  color: #fff;
+}
+
+.rbar-toggle-btn:hover:not(.active) {
+  background: #f5f5f5;
+  color: #333;
+}
+
+.rbar-more-btn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  color: #888;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.rbar-more-btn:hover {
+  background: #f5f5f5;
+  color: #333;
+}
+
+/* ── R-bar 기존 호환 ── */
 .rbar-row {
   display: flex;
   justify-content: space-between;
@@ -335,6 +555,94 @@
   padding: 1px 8px;
   border-radius: 3px;
   font-size: 12px;
+}
+
+/* ── R-bar 하단: 화면 보기 ── */
+.rbar-view-section {
+  border-top: 1px solid #e0e0e0;
+  padding: 8px 12px 12px;
+  background: #fafafa;
+}
+
+.rbar-distance-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.rbar-distance-icon {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ea4335;
+}
+
+.rbar-zoom-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #888;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+.rbar-zoom-btn:hover {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.rbar-distance-value {
+  flex: 1;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+  font-family: monospace;
+}
+
+.rbar-snap-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rbar-snap-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #555;
+  cursor: pointer;
+  padding: 3px 8px;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+}
+
+.rbar-snap-item input[type="checkbox"] {
+  display: none;
+}
+
+.rbar-snap-item:has(input:checked) {
+  background: #e8f0fe;
+  border-color: #1a73e8;
+  color: #1a73e8;
+}
+
+.rbar-snap-icon {
+  font-size: 10px;
+  color: #1a73e8;
 }
 
 /* L-bar panel */
