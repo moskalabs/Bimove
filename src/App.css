@@ -49,6 +49,21 @@
   color: #1a73e8;
 }
 
+.lbar-icon-primary {
+  color: #1a73e8;
+}
+
+.lbar-icon-primary.active {
+  background: #1a73e8;
+  color: #fff;
+}
+
+.icon-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .lbar-section {
   display: flex;
   flex-direction: column;

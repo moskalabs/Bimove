@@ -1,5 +1,5 @@
 import { StateNode, createShapeId, type TLPointerEventInfo, type TLShapeId } from 'tldraw'
-import { snapToWallEndpoint, snapAngle } from '../lib/snap'
+import { resolveDrawPoint } from '../lib/snap'
 import { drawingState } from '../lib/drawingState'
 import { getDefaultWallThicknessMm } from '../lib/settings'
 import { getScaleConfig } from '../lib/scaleConfig'
@@ -12,14 +12,7 @@ export class WallTool extends StateNode {
   private previewId: TLShapeId | null = null
 
   private resolvePoint(): { x: number; y: number } {
-    const point = this.editor.inputs.currentPagePoint
-    const snapped = snapToWallEndpoint(this.editor, point, this.previewId ?? undefined)
-    if (snapped) return { x: snapped.x, y: snapped.y }
-    if (this.startPoint && this.editor.inputs.shiftKey) {
-      const v = snapAngle(point.x - this.startPoint.x, point.y - this.startPoint.y)
-      return { x: this.startPoint.x + v.x, y: this.startPoint.y + v.y }
-    }
-    return { x: point.x, y: point.y }
+    return resolveDrawPoint(this.editor, this.startPoint, this.previewId ?? undefined)
   }
 
   private startWallAt(point: { x: number; y: number }) {

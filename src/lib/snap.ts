@@ -1,4 +1,5 @@
 import type { Editor } from 'tldraw'
+import { getSnapEnabled } from './settings'
 
 export type SnapPoint = { x: number; y: number; sourceId?: string }
 
@@ -87,4 +88,25 @@ export function snapAngle(dx: number, dy: number, stepDeg = 15): { x: number; y:
   const step = (stepDeg * Math.PI) / 180
   const angle = Math.round(Math.atan2(dy, dx) / step) * step
   return { x: Math.cos(angle) * len, y: Math.sin(angle) * len }
+}
+
+/**
+ * Shared point resolution for draw tools (wall/dimension): endpoint snap takes
+ * priority, then orthogonal angle snap — on by default, Shift inverts it.
+ */
+export function resolveDrawPoint(
+  editor: Editor,
+  startPoint: { x: number; y: number } | null,
+  excludeId?: string,
+): { x: number; y: number } {
+  const point = editor.inputs.currentPagePoint
+  const snapped = snapToWallEndpoint(editor, point, excludeId)
+  if (snapped) return { x: snapped.x, y: snapped.y }
+
+  const orthoOn = getSnapEnabled() !== editor.inputs.shiftKey
+  if (startPoint && orthoOn) {
+    const v = snapAngle(point.x - startPoint.x, point.y - startPoint.y)
+    return { x: startPoint.x + v.x, y: startPoint.y + v.y }
+  }
+  return { x: point.x, y: point.y }
 }

@@ -1,5 +1,5 @@
 import { StateNode, createShapeId, type TLPointerEventInfo, type TLShapeId } from 'tldraw'
-import { snapAngle, snapToWallEndpoint } from '../lib/snap'
+import { resolveDrawPoint } from '../lib/snap'
 import { drawingState } from '../lib/drawingState'
 
 export class DimensionTool extends StateNode {
@@ -10,14 +10,7 @@ export class DimensionTool extends StateNode {
   private previewId: TLShapeId | null = null
 
   private resolvePoint(): { x: number; y: number } {
-    const point = this.editor.inputs.currentPagePoint
-    const snapped = snapToWallEndpoint(this.editor, point, this.previewId ?? undefined)
-    if (snapped) return { x: snapped.x, y: snapped.y }
-    if (this.startPoint && this.editor.inputs.shiftKey) {
-      const v = snapAngle(point.x - this.startPoint.x, point.y - this.startPoint.y)
-      return { x: this.startPoint.x + v.x, y: this.startPoint.y + v.y }
-    }
-    return { x: point.x, y: point.y }
+    return resolveDrawPoint(this.editor, this.startPoint, this.previewId ?? undefined)
   }
 
   onPointerDown = (_info: TLPointerEventInfo) => {

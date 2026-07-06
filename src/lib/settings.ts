@@ -35,6 +35,16 @@ export function setShowRoomAreas(v: boolean) {
   localStorage.setItem(SHOW_ROOM_AREAS_KEY, String(v))
 }
 
+const SNAP_ENABLED_KEY = 'bimove_snap_enabled'
+
+/** Orthogonal angle snap while drawing walls/dimensions (Shift inverts). */
+export function getSnapEnabled(): boolean {
+  return localStorage.getItem(SNAP_ENABLED_KEY) !== 'false'
+}
+export function setSnapEnabled(v: boolean) {
+  localStorage.setItem(SNAP_ENABLED_KEY, String(v))
+}
+
 const ROOM_NAMES_KEY = 'bimove_room_names'
 
 export function getRoomNames(): Record<string, string> {

@@ -76,7 +76,7 @@ function EditorView({ projectId, onBack }: { projectId: string; onBack: () => vo
   const projectName = getProjects().find(p => p.id === projectId)?.name ?? '프로젝트'
 
   const handleMount = (ed: Editor) => {
-    ed.updateInstanceState({ isGridMode: true })
+    ed.updateInstanceState({ isGridMode: false })
     const saved = loadSnapshot(projectId)
     if (saved) {
       try { ed.loadSnapshot(saved as TLEditorSnapshot) } catch { /* ignore corrupt */ }

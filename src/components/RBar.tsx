@@ -1,5 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { type TLShapeId, createShapeId } from 'tldraw'
+import {
+  Lock, Unlock, FlipHorizontal2, RotateCw, Check, Wand2, Link2, History,
+  AlignStartVertical, AlignCenterVertical, AlignEndVertical,
+  AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
+  AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
+} from 'lucide-react'
 import { useEditor } from '../context/EditorContext'
 import { detectWalls } from '../lib/detectWalls'
 import {
@@ -22,9 +28,11 @@ import {
   getShowWallLengths, setShowWallLengths,
   getShowRoomAreas, setShowRoomAreas,
   getRoomNames,
+  getSnapEnabled, setSnapEnabled,
 } from '../lib/settings'
 import { detectRooms } from '../lib/roomDetection'
 import { formatArea } from '../lib/formatArea'
+import { drawingState } from '../lib/drawingState'
 
 type SelInfo = {
   id: TLShapeId
@@ -36,6 +44,7 @@ export function RBar() {
   const editor = useEditor()
   const [sel, setSel] = useState<SelInfo>(null)
   const [scale, setScaleState] = useState<ScaleConfig>({ unit: 'mm', pxPerMm: 1 })
+  const [toolId, setToolId] = useState<string>('select')
 
   useEffect(() => {
     if (!editor) return
@@ -48,9 +57,12 @@ export function RBar() {
         setSel(null)
       }
       setScaleState(getScaleConfig(editor))
+      setToolId(editor.getCurrentToolId())
     })
     return unsub
   }, [editor])
+
+  const showWallProps = toolId === 'wall' || sel?.type === 'wall'
 
   const handleUnit = (unit: ScaleUnit) => { if (editor) setScaleConfig(editor, { unit }) }
   const handlePreset = (pxPerMm: number) => { if (editor) setScaleConfig(editor, { pxPerMm }) }
@@ -87,11 +99,14 @@ export function RBar() {
       {/* 그리드 크기 설정 */}
       <GridSection />
 
-      {/* 기본 벽 두께 설정 */}
-      <WallDefaultSection scale={scale} />
+      {/* 스냅 설정 */}
+      <SnapSection />
 
-      {/* 3D 벽 높이 */}
-      <WallHeightSection />
+      {/* 기본 벽 두께 설정 (벽체 작성/선택 시에만) */}
+      {showWallProps && <WallDefaultSection scale={scale} />}
+
+      {/* 3D 벽 높이 (벽체 작성/선택 시에만) */}
+      {showWallProps && <WallHeightSection />}
 
       {/* 표시 설정 */}
       <DisplaySection scale={scale} />
@@ -99,14 +114,90 @@ export function RBar() {
       {/* 방 면적 요약 */}
       <RoomAreaSection scale={scale} />
 
-      {/* 내보내기 */}
-      <ExportSection />
+      {/* 내보내기 메뉴 */}
+      <ExportMenuSection />
 
       {selectedShapes.length > 1 && <AlignPanel />}
       {sel ? (
         <PropsPanel sel={sel} scale={scale} />
       ) : null}
+
+      {/* 그리는 중 길이·각도 표시 (하단 고정) */}
+      <DistanceReadoutSection toolId={toolId} scale={scale} />
     </aside>
+  )
+}
+
+// ---------- ortho snap toggle ----------
+
+function SnapSection() {
+  const [on, setOn] = useState(getSnapEnabled)
+
+  const toggle = () => {
+    const next = !on
+    setSnapEnabled(next)
+    setOn(next)
+  }
+
+  return (
+    <section className="rbar-section">
+      <h3>스냅</h3>
+      <div className="rbar-row">
+        <span>직교 스냅</span>
+        <button
+          className={`export-btn${on ? ' active' : ''}`}
+          style={on ? { background: '#333', color: '#fff', borderColor: '#333' } : undefined}
+          onClick={toggle}
+        >
+          {on ? '켜짐' : '꺼짐'}
+        </button>
+      </div>
+    </section>
+  )
+}
+
+// ---------- live length/angle readout while drawing ----------
+
+function DistanceReadoutSection({ toolId, scale }: { toolId: string; scale: ScaleConfig }) {
+  const editor = useEditor()
+  const [text, setText] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!editor) return
+    const update = () => {
+      const currentToolId = editor.getCurrentToolId()
+      if (currentToolId !== 'wall') { setText(null); return }
+      const drawingId = drawingState.drawingId
+      const shape = drawingId ? editor.getShape(drawingId as never) : undefined
+      if (!shape) { setText(null); return }
+      const p = shape.props as { x2: number; y2: number }
+      const lenPx = Math.hypot(p.x2, p.y2)
+      if (lenPx <= 5) { setText(null); return }
+      const lenMm = lenPx / scale.pxPerMm
+      const formatted = scale.unit === 'm'
+        ? `${(lenMm / 1000).toFixed(2)} m`
+        : scale.unit === 'cm'
+        ? `${(lenMm / 10).toFixed(1)} cm`
+        : `${Math.round(lenMm)} mm`
+      const angleDeg = (Math.atan2(p.y2, p.x2) * 180 / Math.PI).toFixed(1)
+      setText(`${formatted}  ${angleDeg}°`)
+    }
+    update()
+    const unsub = editor.store.listen(update)
+    return unsub
+  }, [editor, scale])
+
+  if (toolId !== 'wall') return null
+
+  return (
+    <section className="rbar-section">
+      <h3>길이·각도</h3>
+      <div className="rbar-row">
+        <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: text ? '#1a73e8' : '#bbb' }}>
+          {text ?? '그리는 중 표시됩니다'}
+        </span>
+      </div>
+    </section>
   )
 }
 
@@ -124,7 +215,9 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
         style={isLocked ? { background: '#555', color: '#fff', borderColor: '#555' } : undefined}
         onClick={() => editor?.updateShape({ id: sel.id, isLocked: !isLocked } as never)}
       >
-        {isLocked ? '🔓 잠금 해제' : '🔒 잠금'}
+        {isLocked
+          ? <span className="icon-label"><Unlock size={14} strokeWidth={1.75} /> 잠금 해제</span>
+          : <span className="icon-label"><Lock size={14} strokeWidth={1.75} /> 잠금</span>}
       </button>
     </section>
   )
@@ -265,7 +358,7 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
             <button className={`export-btn${p.flipped ? ' active' : ''}`}
               style={p.flipped ? { background: '#555', color: '#fff', borderColor: '#555' } : undefined}
               onClick={flipDoor}>
-              {p.flipped ? '↔ 뒤집힘' : '↔ 뒤집기'}
+              <span className="icon-label"><FlipHorizontal2 size={14} strokeWidth={1.75} /> {p.flipped ? '뒤집힘' : '뒤집기'}</span>
             </button>
           </div>
         </section>
@@ -385,7 +478,7 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
               style={{ background: p.resolved ? '#4caf50' : undefined, color: p.resolved ? '#fff' : undefined }}
               onClick={() => update({ resolved: !p.resolved })}
             >
-              {p.resolved ? '✓ 해결됨' : '미해결'}
+              {p.resolved ? <span className="icon-label"><Check size={14} strokeWidth={1.75} /> 해결됨</span> : '미해결'}
             </button>
           </div>
         </section>
@@ -425,14 +518,14 @@ function AlignPanel() {
     <section className="rbar-section">
       <h3>정렬 ({ids.length}개 선택)</h3>
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        <button style={btnStyle} title="왼쪽 맞춤" onClick={() => align('left')}>⬛◻◻</button>
-        <button style={btnStyle} title="가운데 맞춤 (수평)" onClick={() => align('center-horizontal')}>◻⬛◻</button>
-        <button style={btnStyle} title="오른쪽 맞춤" onClick={() => align('right')}>◻◻⬛</button>
-        <button style={btnStyle} title="위쪽 맞춤" onClick={() => align('top')}>↑</button>
-        <button style={btnStyle} title="가운데 맞춤 (수직)" onClick={() => align('center-vertical')}>↕</button>
-        <button style={btnStyle} title="아래쪽 맞춤" onClick={() => align('bottom')}>↓</button>
-        <button style={btnStyle} title="수평 간격 균등" onClick={() => distribute('horizontal')}>⇔</button>
-        <button style={btnStyle} title="수직 간격 균등" onClick={() => distribute('vertical')}>⇕</button>
+        <button style={btnStyle} title="왼쪽 맞춤" onClick={() => align('left')}><AlignStartVertical size={16} strokeWidth={1.75} /></button>
+        <button style={btnStyle} title="가운데 맞춤 (수평)" onClick={() => align('center-horizontal')}><AlignCenterVertical size={16} strokeWidth={1.75} /></button>
+        <button style={btnStyle} title="오른쪽 맞춤" onClick={() => align('right')}><AlignEndVertical size={16} strokeWidth={1.75} /></button>
+        <button style={btnStyle} title="위쪽 맞춤" onClick={() => align('top')}><AlignStartHorizontal size={16} strokeWidth={1.75} /></button>
+        <button style={btnStyle} title="가운데 맞춤 (수직)" onClick={() => align('center-vertical')}><AlignCenterHorizontal size={16} strokeWidth={1.75} /></button>
+        <button style={btnStyle} title="아래쪽 맞춤" onClick={() => align('bottom')}><AlignEndHorizontal size={16} strokeWidth={1.75} /></button>
+        <button style={btnStyle} title="수평 간격 균등" onClick={() => distribute('horizontal')}><AlignHorizontalDistributeCenter size={16} strokeWidth={1.75} /></button>
+        <button style={btnStyle} title="수직 간격 균등" onClick={() => distribute('vertical')}><AlignVerticalDistributeCenter size={16} strokeWidth={1.75} /></button>
       </div>
     </section>
   )
@@ -551,7 +644,7 @@ function ImageDetectSection({ sel }: { sel: NonNullable<SelInfo> }) {
         업로드한 도면에서 벽 선을 자동으로 추출합니다.
       </div>
       <button className="export-btn" disabled={busy} onClick={run} style={{ width: '100%' }}>
-        {busy ? '분석 중…' : '✦ 벽 자동 인식'}
+        {busy ? '분석 중…' : <span className="icon-label"><Wand2 size={14} strokeWidth={1.75} /> 벽 자동 인식</span>}
       </button>
       {msg && <div style={{ fontSize: 11, color: busy ? '#1a73e8' : '#666', marginTop: 8, lineHeight: 1.5 }}>{msg}</div>}
     </section>
@@ -771,8 +864,8 @@ function ProjectSection() {
           } catch (err) {
             alert('공유 링크 생성 실패: ' + String(err))
           }
-        }}>🔗 공유</button>
-        <button className="export-btn" disabled={!projectId} onClick={() => setShowHistory(true)}>📜 히스토리</button>
+        }}><span className="icon-label"><Link2 size={14} strokeWidth={1.75} /> 공유</span></button>
+        <button className="export-btn" disabled={!projectId} onClick={() => setShowHistory(true)}><span className="icon-label"><History size={14} strokeWidth={1.75} /> 히스토리</span></button>
       </div>
       {showHistory && projectId && (
         <VersionHistoryPanel editor={editor} projectId={projectId} onClose={() => setShowHistory(false)} />
@@ -781,37 +874,67 @@ function ProjectSection() {
   )
 }
 
-// ---------- export ----------
+// ---------- export (menu) ----------
 
-function ExportSection() {
+function ExportMenuSection() {
   const editor = useEditor()
   const [loading, setLoading] = useState(false)
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    window.addEventListener('mousedown', onClick)
+    return () => window.removeEventListener('mousedown', onClick)
+  }, [open])
 
   const run = async (fn: () => Promise<void>) => {
     setLoading(true)
+    setOpen(false)
     try { await fn() } finally { setLoading(false) }
   }
 
+  const items: { label: string; fn: () => Promise<void> }[] = editor ? [
+    { label: 'PNG로 내보내기', fn: () => exportPng(editor) },
+    { label: 'SVG로 내보내기', fn: () => exportSvg(editor) },
+    { label: 'PDF로 인쇄', fn: () => printPdf(editor) },
+  ] : []
+
   return (
-    <section className="rbar-section">
+    <section className="rbar-section" ref={menuRef} style={{ position: 'relative' }}>
       <h3>내보내기</h3>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        <button
-          className="export-btn"
-          disabled={loading}
-          onClick={() => editor && run(() => exportPng(editor))}
-        >PNG</button>
-        <button
-          className="export-btn"
-          disabled={loading}
-          onClick={() => editor && run(() => exportSvg(editor))}
-        >SVG</button>
-        <button
-          className="export-btn"
-          disabled={loading}
-          onClick={() => editor && run(() => printPdf(editor))}
-        >PDF 인쇄</button>
-      </div>
+      <button
+        className="export-btn"
+        disabled={loading}
+        onClick={() => setOpen(v => !v)}
+        style={{ width: '100%' }}
+      >
+        {loading ? '내보내는 중…' : '내보내기 메뉴 ▾'}
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', left: 16, right: 16, marginTop: 4,
+          background: '#fff', border: '1px solid #e0e0e0', borderRadius: 6,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.12)', zIndex: 600, overflow: 'hidden',
+        }}>
+          {items.map(item => (
+            <button
+              key={item.label}
+              onClick={() => run(item.fn)}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left',
+                padding: '8px 12px', border: 'none', background: 'transparent',
+                cursor: 'pointer', fontSize: 12, color: '#333',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#f5f5f5')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >{item.label}</button>
+          ))}
+        </div>
+      )}
     </section>
   )
 }
@@ -850,7 +973,7 @@ function RotationField({ value, onCommit }: { value: number; onCommit: (deg: num
           style={{ width: 22, height: 22, border: '1px solid #e0e0e0', borderRadius: 3, background: '#fff', cursor: 'pointer', fontSize: 12 }}
           title="90° 회전"
           onClick={() => snap90(normalized + 90)}
-        >↻</button>
+        ><RotateCw size={13} strokeWidth={1.75} /></button>
       </div>
     </div>
   )
