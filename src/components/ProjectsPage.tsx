@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useToast } from '../context/ToastContext'
 import {
   fetchProjects, createProject as createProjectDB,
   deleteProject as deleteProjectDB, renameProject as renameProjectDB,
@@ -186,6 +187,7 @@ function miniBtn(bg: string, color: string): React.CSSProperties {
 
 export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) => void }) {
   const { user, signOut } = useAuth()
+  const { toast } = useToast()
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -195,7 +197,8 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) =
       const data = await fetchProjects(user.id)
       setProjects(data)
     } catch (err) {
-      console.warn('[projects] fetch failed, using empty list', err)
+      console.warn('[projects] fetch failed', err)
+      toast('프로젝트 목록을 불러오지 못했습니다.', 'error')
       setProjects([])
     }
     setLoading(false)
@@ -221,10 +224,15 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) =
 
   const handleCreate = async (name: string) => {
     if (!user) return
-    const p = await createProjectDB(user.id, name)
-    if (p) {
-      await loadProjects()
-      onOpen(p.id, p.name)
+    try {
+      const p = await createProjectDB(user.id, name)
+      if (p) {
+        toast(`"${name}" 프로젝트가 생성되었습니다.`, 'success')
+        await loadProjects()
+        onOpen(p.id, p.name)
+      }
+    } catch {
+      toast('프로젝트 생성에 실패했습니다.', 'error')
     }
   }
 

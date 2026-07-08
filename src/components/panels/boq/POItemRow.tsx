@@ -1,11 +1,12 @@
-// 품목 한 행 (인라인 편집, 도면 치수 연동, 복사/삭제)
+// 품목 한 행 (인라인 편집, 도면 치수 연동, 자재 프리셋, 복사/삭제)
 import { useState } from 'react'
-import { Copy, Trash2, MapPin, X } from 'lucide-react'
+import { Copy, Trash2, MapPin, X, ChevronDown } from 'lucide-react'
 import type { BOQItem, Exclusion } from '../../../lib/purchaseOrder'
 import {
   grossArea, exclusionArea, netArea, calcQuantity, calcAmount,
   fmtKRW, fmtArea, uid,
 } from '../../../lib/purchaseOrder'
+import { loadMaterialPresets, type MaterialPreset } from '../../../lib/materialPresets'
 import { POExclusionPicker } from './POExclusionPicker'
 
 type Props = {
@@ -26,6 +27,7 @@ export function POItemRow({
   const [expanded, setExpanded] = useState(false)
   const [showDimPicker, setShowDimPicker] = useState(false)
   const [showExclusion, setShowExclusion] = useState(false)
+  const [showPresets, setShowPresets] = useState(false)
 
   const set = (patch: Partial<BOQItem>) => onChange({ ...item, ...patch })
   const setNum = (key: keyof BOQItem, val: string) => {
@@ -62,11 +64,47 @@ export function POItemRow({
           </div>
           <div className="po-field-row">
             <label>마감재</label>
-            <input
-              value={item.material}
-              onChange={e => set({ material: e.target.value })}
-              placeholder="마감재명 / 규격"
-            />
+            <div className="po-field-with-btn" style={{ position: 'relative' }}>
+              <input
+                value={item.material}
+                onChange={e => set({ material: e.target.value })}
+                placeholder="마감재명 / 규격"
+              />
+              <button
+                className="po-preset-trigger"
+                title="자재 프리셋"
+                onClick={e => { e.stopPropagation(); setShowPresets(!showPresets) }}
+              >
+                <ChevronDown size={12} />
+              </button>
+              {showPresets && (
+                <div className="po-preset-dropdown">
+                  <div className="po-preset-dropdown-title">자재 프리셋</div>
+                  {loadMaterialPresets().map(p => (
+                    <button
+                      key={p.id}
+                      className="po-preset-option"
+                      onClick={e => {
+                        e.stopPropagation()
+                        const patch: Partial<BOQItem> = { material: p.label }
+                        if (p.pricePerM2 && item.unit === 'm²') patch.unitPrice = p.pricePerM2
+                        else if (p.pricePerM2) patch.unitPrice = p.pricePerM2
+                        else if (p.pricePerM) patch.unitPrice = p.pricePerM
+                        set(patch)
+                        setShowPresets(false)
+                      }}
+                    >
+                      <span className="po-preset-swatch" style={{ background: p.fill, borderColor: p.stroke }} />
+                      <span className="po-preset-label">{p.label}</span>
+                      <span className="po-preset-price">
+                        {p.pricePerM2 ? `₩${(p.pricePerM2/1000).toFixed(0)}k/m²` :
+                         p.pricePerM ? `₩${(p.pricePerM/1000).toFixed(0)}k/m` : ''}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* 너비 (도면 연동) */}

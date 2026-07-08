@@ -3,6 +3,7 @@ import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { Plus, Download } from 'lucide-react'
 import { useEditor } from '../../../context/EditorContext'
 import { useProjectId } from '../../../context/ProjectContext'
+import { useToast } from '../../../context/ToastContext'
 import { getScaleConfig } from '../../../lib/scaleConfig'
 import { getWallHeightMm } from '../../../lib/settings'
 import { detectRooms } from '../../../lib/roomDetection'
@@ -21,6 +22,7 @@ import { POTableCard } from './POTableCard'
 export function POTablesTab() {
   const editor = useEditor()
   const projectId = useProjectId()
+  const { toast } = useToast()
   const [po, setPo] = useState<PurchaseOrder>(() =>
     loadPurchaseOrder(projectId ?? ''),
   )
@@ -28,6 +30,7 @@ export function POTablesTab() {
   const [showExport, setShowExport] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const syncTimerRef = useRef<number>(0)
+  const syncFailCount = useRef(0)
 
   // Supabase에서 발주서 로드 (1회)
   useEffect(() => {
@@ -40,7 +43,7 @@ export function POTablesTab() {
           setPo(remote)
         }
       } catch {
-        // Supabase 실패시 localStorage 폴백 (이미 초기값)
+        if (!cancelled) toast('서버에서 발주서를 불러오지 못했습니다. 로컬 데이터를 사용합니다.', 'error')
       }
       if (!cancelled) setLoaded(true)
     })()
@@ -53,11 +56,20 @@ export function POTablesTab() {
     syncTimerRef.current = window.setTimeout(async () => {
       try {
         await syncPurchaseOrder(purchaseOrder)
+        if (syncFailCount.current > 0) {
+          toast('동기화가 복구되었습니다.', 'success')
+          syncFailCount.current = 0
+        }
       } catch (err) {
+        syncFailCount.current++
         console.warn('[po-sync] Supabase sync failed', err)
+        // 첫 실패 시에만 토스트 (반복 방지)
+        if (syncFailCount.current === 1) {
+          toast('발주서 동기화에 실패했습니다. 로컬에 저장됩니다.', 'error')
+        }
       }
     }, 2000)
-  }, [])
+  }, [toast])
 
   // 자동 저장 (localStorage 즉시 + Supabase 디바운스)
   useEffect(() => {

@@ -12,6 +12,7 @@ import { ChatPanel } from './components/ChatPanel'
 import { ProjectsPage } from './components/ProjectsPage'
 import { AuthPage } from './components/AuthPage'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { ToastProvider, useToast } from './context/ToastContext'
 const Viewer3D = lazy(() => import('./components/Viewer3D').then(m => ({ default: m.Viewer3D })))
 import { WallShapeUtil } from './shapes/WallShape'
 import { DoorShapeUtil } from './shapes/DoorShape'
@@ -247,6 +248,19 @@ function EditorView({ projectId, projectName, onBack }: { projectId: string; pro
   )
 }
 
+function OfflineBanner() {
+  const [online, setOnline] = useState(navigator.onLine)
+  useEffect(() => {
+    const on = () => setOnline(true)
+    const off = () => setOnline(false)
+    window.addEventListener('online', on)
+    window.addEventListener('offline', off)
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
+  }, [])
+  if (online) return null
+  return <div className="offline-banner">⚠ 오프라인 상태입니다. 변경사항은 로컬에 저장됩니다.</div>
+}
+
 function AppContent() {
   const { user, loading } = useAuth()
   const [currentProject, setCurrentProject] = useState<{ id: string; name: string } | null>(null)
@@ -271,18 +285,23 @@ function AppContent() {
   }
 
   return (
-    <EditorView
-      projectId={currentProject.id}
-      projectName={currentProject.name}
-      onBack={() => setCurrentProject(null)}
-    />
+    <>
+      <EditorView
+        projectId={currentProject.id}
+        projectName={currentProject.name}
+        onBack={() => setCurrentProject(null)}
+      />
+      <OfflineBanner />
+    </>
   )
 }
 
 function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <ToastProvider>
+        <AppContent />
+      </ToastProvider>
     </AuthProvider>
   )
 }
