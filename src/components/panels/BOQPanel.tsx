@@ -9,6 +9,7 @@ import { printQuotePdf } from '../../lib/quoteExport'
 import { useProjectId } from '../../context/ProjectContext'
 import { getProjects } from '../../lib/projectStore'
 import { loadMaterialPresets, findMaterialByFill } from '../../lib/materialPresets'
+import { POTablesTab } from './boq/POTablesTab'
 
 type BOQ = {
   wallTotalLenMm: number
@@ -86,7 +87,7 @@ export function BOQPanel() {
   const editor = useEditor()
   const [boq, setBoq] = useState<BOQ | null>(null)
   const [relations, setRelations] = useState<RoomRelation[]>([])
-  const [tab, setTab] = useState<'boq' | 'rel' | 'quote'>('boq')
+  const [tab, setTab] = useState<'boq' | 'quote' | 'rel' | 'po'>('boq')
   const [priceConfig, setPriceConfig] = useState<PriceConfig>(() => loadPriceConfig())
   const [showPriceEdit, setShowPriceEdit] = useState(false)
   const [scope, setScope] = useState<'all' | 'selection'>('all')
@@ -113,14 +114,14 @@ export function BOQPanel() {
 
       {/* tab switcher */}
       <div style={{ display: 'flex', borderBottom: '1px solid #eee' }}>
-        {(['boq', 'quote', 'rel'] as const).map(t => (
+        {(['boq', 'quote', 'rel', 'po'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} style={{
-            flex: 1, padding: '6px 0', fontSize: 12, border: 'none', cursor: 'pointer',
+            flex: 1, padding: '6px 0', fontSize: 11, border: 'none', cursor: 'pointer',
             background: tab === t ? '#f0f4ff' : 'transparent',
             color: tab === t ? '#1a73e8' : '#666',
             borderBottom: tab === t ? '2px solid #1a73e8' : '2px solid transparent',
           }}>
-            {t === 'boq' ? '물량표' : t === 'quote' ? '견적' : '관계 정의'}
+            {t === 'boq' ? '물량' : t === 'quote' ? '견적' : t === 'rel' ? '관계' : '발주서'}
           </button>
         ))}
       </div>
@@ -146,7 +147,9 @@ export function BOQPanel() {
       )}
 
       <div className="lbar-panel-body" style={{ fontSize: 13 }}>
-        {tab === 'boq' ? (
+        {tab === 'po' ? (
+          <POTablesTab />
+        ) : tab === 'boq' ? (
           !boq || boq.wallCount === 0 ? (
             <div style={{ color: '#999', padding: 16 }}>도면을 그리면 자동으로 산출됩니다.</div>
           ) : (
