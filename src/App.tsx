@@ -10,6 +10,8 @@ import { RoomOverlay } from './components/RoomOverlay'
 import { ScaleRuler } from './components/ScaleRuler'
 import { ChatPanel } from './components/ChatPanel'
 import { ProjectsPage } from './components/ProjectsPage'
+import { AuthPage } from './components/AuthPage'
+import { AuthProvider, useAuth } from './context/AuthContext'
 const Viewer3D = lazy(() => import('./components/Viewer3D').then(m => ({ default: m.Viewer3D })))
 import { WallShapeUtil } from './shapes/WallShape'
 import { DoorShapeUtil } from './shapes/DoorShape'
@@ -25,7 +27,8 @@ import { CommentTool } from './tools/CommentTool'
 import { DimensionTool } from './tools/DimensionTool'
 import { EditorContext } from './context/EditorContext'
 import { ProjectContext } from './context/ProjectContext'
-import { loadSnapshot, saveSnapshot, saveThumbnail, touchProject, getProjects } from './lib/projectStore'
+import { loadSnapshot, saveSnapshot, saveThumbnail, touchProject } from './lib/projectStore'
+import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase } from './lib/supabaseSync'
 import { saveVersion } from './lib/versions'
 import './App.css'
 
@@ -70,15 +73,18 @@ function EmptyCanvasHint({ editor }: { editor: Editor | null }) {
   )
 }
 
-function EditorView({ projectId, onBack }: { projectId: string; onBack: () => void }) {
+function EditorView({ projectId, projectName, onBack }: { projectId: string; projectName: string; onBack: () => void }) {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [show3D, setShow3D] = useState(false)
 
-  const projectName = getProjects().find(p => p.id === projectId)?.name ?? '프로젝트'
-
-  const handleMount = (ed: Editor) => {
+  const handleMount = async (ed: Editor) => {
     ed.updateInstanceState({ isGridMode: false })
-    const saved = loadSnapshot(projectId)
+    // Supabase에서 먼저 로드, 실패하면 localStorage 폴백
+    let saved: object | null = null
+    try {
+      saved = await loadSnapshotFromSupabase(projectId) as object | null
+    } catch { /* Supabase 실패 */ }
+    if (!saved) saved = loadSnapshot(projectId)
     if (saved) {
       try { ed.loadSnapshot(saved as TLEditorSnapshot) } catch { /* ignore corrupt */ }
     }
@@ -88,13 +94,20 @@ function EditorView({ projectId, onBack }: { projectId: string; onBack: () => vo
   useEffect(() => {
     if (!editor) return
     let timer = 0
+    let supabaseTimer = 0
     let dirtySinceAuto = false
+    let latestSnapshot: object | null = null
+
     const unsub = editor.store.listen(() => {
       dirtySinceAuto = true
       clearTimeout(timer)
       timer = window.setTimeout(async () => {
-        saveSnapshot(projectId, editor.getSnapshot())
+        const snapshot = editor.getSnapshot()
+        latestSnapshot = snapshot
+        // localStorage 즉시 저장
+        saveSnapshot(projectId, snapshot)
         touchProject(projectId)
+        // 썸네일
         const shapes = editor.getCurrentPageShapes()
         if (shapes.length > 0) {
           try {
@@ -108,6 +121,18 @@ function EditorView({ projectId, onBack }: { projectId: string; onBack: () => vo
         }
       }, 1500)
     })
+
+    // Supabase 동기화 (5초 디바운스)
+    supabaseTimer = window.setInterval(async () => {
+      if (!latestSnapshot) return
+      const snap = latestSnapshot
+      latestSnapshot = null
+      try {
+        await saveSnapshotToSupabase(projectId, snap)
+      } catch (err) {
+        console.warn('[supabase-sync] snapshot save failed', err)
+      }
+    }, 5000)
 
     // 5분마다 자동 버전 저장 (변경 있을 때만)
     const AUTO_VERSION_MS = 5 * 60 * 1000
@@ -124,6 +149,7 @@ function EditorView({ projectId, onBack }: { projectId: string; onBack: () => vo
     return () => {
       unsub()
       clearTimeout(timer)
+      clearInterval(supabaseTimer)
       clearInterval(autoVersionTimer)
     }
   }, [editor, projectId])
@@ -221,14 +247,44 @@ function EditorView({ projectId, onBack }: { projectId: string; onBack: () => vo
   )
 }
 
-function App() {
-  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
+function AppContent() {
+  const { user, loading } = useAuth()
+  const [currentProject, setCurrentProject] = useState<{ id: string; name: string } | null>(null)
 
-  if (!currentProjectId) {
-    return <ProjectsPage onOpen={setCurrentProjectId} />
+  if (loading) {
+    return (
+      <div style={{
+        minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: '#f8f8f8', color: '#999', fontSize: 14,
+      }}>
+        로딩 중...
+      </div>
+    )
   }
 
-  return <EditorView projectId={currentProjectId} onBack={() => setCurrentProjectId(null)} />
+  if (!user) {
+    return <AuthPage />
+  }
+
+  if (!currentProject) {
+    return <ProjectsPage onOpen={(id, name) => setCurrentProject({ id, name: name ?? '프로젝트' })} />
+  }
+
+  return (
+    <EditorView
+      projectId={currentProject.id}
+      projectName={currentProject.name}
+      onBack={() => setCurrentProject(null)}
+    />
+  )
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
+  )
 }
 
 export default App

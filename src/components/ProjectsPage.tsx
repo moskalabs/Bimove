@@ -1,9 +1,21 @@
 import { useState, useEffect, useRef } from 'react'
-import type { Project } from '../lib/projectStore'
-import { getProjects, createProject, deleteProject, renameProject, migrateOldData, saveSnapshot } from '../lib/projectStore'
+import { useAuth } from '../context/AuthContext'
+import {
+  fetchProjects, createProject as createProjectDB,
+  deleteProject as deleteProjectDB, renameProject as renameProjectDB,
+  saveProjectSnapshot,
+} from '../lib/supabaseSync'
 import { readShareFromHash, clearShareHash } from '../lib/shareLink'
 
-function formatDate(ts: number) {
+type Project = {
+  id: string
+  name: string
+  thumbnail: string | null
+  created_at: string
+  updated_at: string
+}
+
+function formatDate(ts: string) {
   const d = new Date(ts)
   return d.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
@@ -129,7 +141,7 @@ function ProjectCard({ project, onOpen, onDelete, onRename }: {
       )}
 
       <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>
-        수정 {formatDate(project.updatedAt)}
+        수정 {formatDate(project.updated_at)}
       </div>
 
       {/* delete button */}
@@ -172,42 +184,59 @@ function miniBtn(bg: string, color: string): React.CSSProperties {
   }
 }
 
-export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
+export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) => void }) {
+  const { user, signOut } = useAuth()
   const [projects, setProjects] = useState<Project[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const loadProjects = async () => {
+    if (!user) return
+    try {
+      const data = await fetchProjects(user.id)
+      setProjects(data)
+    } catch (err) {
+      console.warn('[projects] fetch failed, using empty list', err)
+      setProjects([])
+    }
+    setLoading(false)
+  }
 
   useEffect(() => {
-    migrateOldData()
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setProjects(getProjects())
+    void loadProjects()
     // 공유 링크로 들어왔으면 새 프로젝트로 임포트
     void (async () => {
+      if (!user) return
       const shared = await readShareFromHash()
       if (!shared) return
-      const p = createProject(shared.name + ' (공유받음)')
-      saveSnapshot(p.id, shared.snapshot)
-      clearShareHash()
-      setProjects(getProjects())
-      onOpen(p.id)
+      const p = await createProjectDB(user.id, shared.name + ' (공유받음)')
+      if (p) {
+        await saveProjectSnapshot(p.id, shared.snapshot)
+        clearShareHash()
+        await loadProjects()
+        onOpen(p.id, p.name)
+      }
     })()
-  }, [onOpen])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user])
 
-  const refresh = () => setProjects(getProjects())
-
-  const handleCreate = (name: string) => {
-    const p = createProject(name)
-    refresh()
-    onOpen(p.id)
+  const handleCreate = async (name: string) => {
+    if (!user) return
+    const p = await createProjectDB(user.id, name)
+    if (p) {
+      await loadProjects()
+      onOpen(p.id, p.name)
+    }
   }
 
-  const handleDelete = (id: string, name: string) => {
+  const handleDelete = async (id: string, name: string) => {
     if (!confirm(`"${name}" 프로젝트를 삭제할까요?`)) return
-    deleteProject(id)
-    refresh()
+    await deleteProjectDB(id)
+    await loadProjects()
   }
 
-  const handleRename = (id: string, name: string) => {
-    renameProject(id, name)
-    refresh()
+  const handleRename = async (id: string, name: string) => {
+    await renameProjectDB(id, name)
+    await loadProjects()
   }
 
   return (
@@ -220,16 +249,32 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
         padding: '32px 40px 24px',
         borderBottom: '1px solid #e8e8e8',
         background: '#fff',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-          <span style={{ fontSize: 22, fontWeight: 800, color: '#111', letterSpacing: -0.5 }}>bimove</span>
-          <span style={{ fontSize: 12, background: '#f0f0f0', color: '#888', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>
-            프로젝트
-          </span>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            <span style={{ fontSize: 22, fontWeight: 800, color: '#111', letterSpacing: -0.5 }}>bimove</span>
+            <span style={{ fontSize: 12, background: '#f0f0f0', color: '#888', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>
+              프로젝트
+            </span>
+          </div>
+          <p style={{ margin: 0, fontSize: 13, color: '#999' }}>
+            {loading ? '로딩 중...' : projects.length > 0 ? `${projects.length}개의 프로젝트` : '아직 프로젝트가 없어요'}
+          </p>
         </div>
-        <p style={{ margin: 0, fontSize: 13, color: '#999' }}>
-          {projects.length > 0 ? `${projects.length}개의 프로젝트` : '아직 프로젝트가 없어요'}
-        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 12, color: '#999' }}>{user?.email}</span>
+          <button
+            onClick={signOut}
+            style={{
+              padding: '6px 14px', borderRadius: 8, border: '1px solid #e0e0e0',
+              background: '#fff', fontSize: 12, fontWeight: 600, color: '#666',
+              cursor: 'pointer',
+            }}
+          >
+            로그아웃
+          </button>
+        </div>
       </div>
 
       {/* grid */}
@@ -243,7 +288,7 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
           <ProjectCard
             key={p.id}
             project={p}
-            onOpen={() => onOpen(p.id)}
+            onOpen={() => onOpen(p.id, p.name)}
             onDelete={() => handleDelete(p.id, p.name)}
             onRename={name => handleRename(p.id, name)}
           />

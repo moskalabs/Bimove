@@ -1,5 +1,5 @@
 // 발주서 메인 탭 - 물량표 목록 + [+] 추가 + 내보내기
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { Plus, Download } from 'lucide-react'
 import { useEditor } from '../../../context/EditorContext'
 import { useProjectId } from '../../../context/ProjectContext'
@@ -12,6 +12,7 @@ import {
   addTable, removeTable, updateTableItems,
   poGrandTotal, fmtKRW, uid,
 } from '../../../lib/purchaseOrder'
+import { fetchPurchaseOrder, syncPurchaseOrder } from '../../../lib/supabaseSync'
 import type { BOQTemplate } from '../../../lib/boqTemplates'
 import { createItemFromTemplate } from '../../../lib/boqTemplates'
 import { POTemplateSelector } from './POTemplateSelector'
@@ -25,11 +26,51 @@ export function POTablesTab() {
   )
   const [showSelector, setShowSelector] = useState(false)
   const [showExport, setShowExport] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const syncTimerRef = useRef<number>(0)
 
-  // 자동 저장
+  // Supabase에서 발주서 로드 (1회)
   useEffect(() => {
-    if (projectId) savePurchaseOrder(po)
-  }, [po, projectId])
+    if (!projectId || loaded) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const remote = await fetchPurchaseOrder(projectId)
+        if (!cancelled && remote && remote.tables.length > 0) {
+          setPo(remote)
+        }
+      } catch {
+        // Supabase 실패시 localStorage 폴백 (이미 초기값)
+      }
+      if (!cancelled) setLoaded(true)
+    })()
+    return () => { cancelled = true }
+  }, [projectId, loaded])
+
+  // 디바운스된 Supabase 동기화
+  const syncToSupabase = useCallback((purchaseOrder: PurchaseOrder) => {
+    clearTimeout(syncTimerRef.current)
+    syncTimerRef.current = window.setTimeout(async () => {
+      try {
+        await syncPurchaseOrder(purchaseOrder)
+      } catch (err) {
+        console.warn('[po-sync] Supabase sync failed', err)
+      }
+    }, 2000)
+  }, [])
+
+  // 자동 저장 (localStorage 즉시 + Supabase 디바운스)
+  useEffect(() => {
+    if (projectId && loaded) {
+      savePurchaseOrder(po)
+      syncToSupabase(po)
+    }
+  }, [po, projectId, loaded, syncToSupabase])
+
+  // cleanup
+  useEffect(() => {
+    return () => clearTimeout(syncTimerRef.current)
+  }, [])
 
   // 도면에서 벽/방/문/창문 데이터 추출
   const drawingData = useMemo(() => {
