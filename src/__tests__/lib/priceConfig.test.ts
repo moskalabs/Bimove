@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest'
 import {
   loadPriceConfig, savePriceConfig, resetPriceConfig,
   computeQuote, fmtKRW,
-  type PriceConfig, type CostLine,
 } from '../../lib/priceConfig'
 
 describe('loadPriceConfig', () => {

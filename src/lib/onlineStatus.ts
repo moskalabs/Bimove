@@ -1,5 +1,4 @@
 // 온라인/오프라인 감지 + Supabase 안전 호출 래퍼
-import { supabase } from './supabase'
 
 let _online = navigator.onLine
 const listeners = new Set<(online: boolean) => void>()

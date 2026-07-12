@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
   BOQ_TEMPLATES, createItemFromTemplate, getTemplate,
-  type BOQTemplate,
 } from '../../lib/boqTemplates'
 
 describe('BOQ_TEMPLATES', () => {

@@ -108,9 +108,9 @@ export function POTablesTab() {
     const rooms = detectRooms(wallData)
     const roomPerimeters = rooms.map((r, i) => {
       let perimeter = 0
-      for (let j = 0; j < r.polygon.length; j++) {
-        const a = r.polygon[j]
-        const b = r.polygon[(j + 1) % r.polygon.length]
+      for (let j = 0; j < r.vertices.length; j++) {
+        const a = r.vertices[j]
+        const b = r.vertices[(j + 1) % r.vertices.length]
         perimeter += Math.hypot(b.x - a.x, b.y - a.y)
       }
       return { label: `공간 ${i + 1}`, mm: perimeter / scale.pxPerMm }

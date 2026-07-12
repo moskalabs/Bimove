@@ -2,9 +2,8 @@
 // localStorage를 1차 캐시로, Supabase를 영속 저장소로 사용
 import { supabase } from './supabase'
 import type {
-  PurchaseOrder, BOQTable, BOQItem, Exclusion,
+  PurchaseOrder, BOQTable, BOQItem,
 } from './purchaseOrder'
-import { uid } from './purchaseOrder'
 
 // ── 발주서 로드 (Supabase → 클라이언트 모델) ──
 

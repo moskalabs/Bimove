@@ -1,8 +1,8 @@
 // 발주서 내보내기: XLSX, PDF, JPG
-import type { PurchaseOrder, BOQTable, BOQItem } from './purchaseOrder'
+import type { PurchaseOrder } from './purchaseOrder'
 import {
   grossArea, exclusionArea, netArea, calcQuantity, calcAmount,
-  tableTotal, poGrandTotal, fmtKRW,
+  tableTotal, poGrandTotal,
 } from './purchaseOrder'
 import { getTemplate } from './boqTemplates'
 
@@ -14,7 +14,6 @@ export async function exportPOXlsx(po: PurchaseOrder) {
   const wb = XLSX.utils.book_new()
 
   for (const table of po.tables) {
-    const template = getTemplate(table.templateId)
     const sheetName = table.label.slice(0, 31) // Excel 시트명 31자 제한
 
     const header = [

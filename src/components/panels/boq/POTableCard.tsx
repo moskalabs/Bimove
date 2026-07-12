@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { Plus, Trash2, MoreVertical } from 'lucide-react'
 import type { BOQItem, BOQTable } from '../../../lib/purchaseOrder'
-import { tableTotal, fmtKRW, duplicateItem, uid } from '../../../lib/purchaseOrder'
+import { tableTotal, fmtKRW, duplicateItem } from '../../../lib/purchaseOrder'
 import { getTemplate, createItemFromTemplate } from '../../../lib/boqTemplates'
 import { POItemRow } from './POItemRow'
 

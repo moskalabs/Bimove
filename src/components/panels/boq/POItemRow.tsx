@@ -1,12 +1,12 @@
 // 품목 한 행 (인라인 편집, 도면 치수 연동, 자재 프리셋, 복사/삭제)
 import { useState } from 'react'
 import { Copy, Trash2, MapPin, X, ChevronDown } from 'lucide-react'
-import type { BOQItem, Exclusion } from '../../../lib/purchaseOrder'
+import type { BOQItem } from '../../../lib/purchaseOrder'
 import {
   grossArea, exclusionArea, netArea, calcQuantity, calcAmount,
-  fmtKRW, fmtArea, uid,
+  fmtKRW, fmtArea,
 } from '../../../lib/purchaseOrder'
-import { loadMaterialPresets, type MaterialPreset } from '../../../lib/materialPresets'
+import { loadMaterialPresets } from '../../../lib/materialPresets'
 import { POExclusionPicker } from './POExclusionPicker'
 
 type Props = {

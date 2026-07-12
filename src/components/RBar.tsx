@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { type TLShapeId, createShapeId } from 'tldraw'
 import {
   Lock, Unlock, FlipHorizontal2, RotateCw, Check, Wand2,
-  Link2, History, Play, User, Eye, EyeOff, MoreHorizontal,
+  History, Play, User, MoreHorizontal,
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
   AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
@@ -13,27 +13,17 @@ import { detectWalls } from '../lib/detectWalls'
 import {
   getScaleConfig,
   setScaleConfig,
-  SCALE_PRESETS,
   type ScaleUnit,
   type ScaleConfig,
 } from '../lib/scaleConfig'
-import { exportPng, exportSvg, printPdf } from '../lib/exportPng'
 import { createShareLink, copyToClipboard } from '../lib/shareLink'
-import { saveVersion } from '../lib/versions'
 import { useProjectId } from '../context/ProjectContext'
 import { VersionHistoryPanel } from './VersionHistoryPanel'
-import { saveProject, openProject } from '../lib/project'
-import { exportDxf } from '../lib/dxf'
 import {
   getDefaultWallThicknessMm, setDefaultWallThicknessMm,
   getWallHeightMm, setWallHeightMm,
-  getShowWallLengths, setShowWallLengths,
-  getShowRoomAreas, setShowRoomAreas,
-  getRoomNames,
   getSnapEnabled, setSnapEnabled,
 } from '../lib/settings'
-import { detectRooms } from '../lib/roomDetection'
-import { formatArea } from '../lib/formatArea'
 import { drawingState } from '../lib/drawingState'
 
 type SelInfo = {
@@ -47,7 +37,7 @@ export function RBar() {
   const editor = useEditor()
   const [sel, setSel] = useState<SelInfo>(null)
   const [scale, setScaleState] = useState<ScaleConfig>({ unit: 'mm', pxPerMm: 1 })
-  const [toolId, setToolId] = useState<string>('select')
+  const [currentToolId, setCurrentToolId] = useState<string>('select')
 
   useEffect(() => {
     if (!editor) return
@@ -60,12 +50,12 @@ export function RBar() {
         setSel(null)
       }
       setScaleState(getScaleConfig(editor))
-      setToolId(editor.getCurrentToolId())
+      setCurrentToolId(editor.getCurrentToolId())
     })
     return unsub
   }, [editor])
 
-  const showWallProps = toolId === 'wall' || sel?.type === 'wall'
+  const showWallProps = currentToolId === 'wall' || sel?.type === 'wall'
   const selectedShapes = editor?.getSelectedShapes() ?? []
 
   return (
@@ -89,7 +79,7 @@ export function RBar() {
       {sel && <PropsPanel sel={sel} scale={scale} />}
 
       {/* ── 섹션 4: 화면 보기 (하단 고정) ── */}
-      <ViewSection toolId={toolId} scale={scale} />
+      <ViewSection toolId={currentToolId} scale={scale} />
     </aside>
   )
 }
@@ -279,7 +269,7 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
 }
 
 /* ── 화면 보기 (하단): 거리 표시 + 스냅 ── */
-function ViewSection({ toolId, scale }: { toolId: string; scale: ScaleConfig }) {
+function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleConfig }) {
   const editor = useEditor()
   const [snapEnd, setSnapEnd] = useState(true)
   const [snapMid, setSnapMid] = useState(true)

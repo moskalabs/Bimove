@@ -72,7 +72,7 @@ describe('getVersion', () => {
 
 describe('deleteVersion', () => {
   it('removes specific version', () => {
-    const v1 = saveVersion(PID, SNAPSHOT, 'keep')
+    saveVersion(PID, SNAPSHOT, 'keep')
     const v2 = saveVersion(PID, SNAPSHOT, 'delete')
     deleteVersion(PID, v2.id)
     const list = listVersions(PID)

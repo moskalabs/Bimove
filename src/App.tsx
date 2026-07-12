@@ -12,7 +12,7 @@ import { ChatPanel } from './components/ChatPanel'
 import { ProjectsPage } from './components/ProjectsPage'
 import { AuthPage } from './components/AuthPage'
 import { AuthProvider, useAuth } from './context/AuthContext'
-import { ToastProvider, useToast } from './context/ToastContext'
+import { ToastProvider } from './context/ToastContext'
 const Viewer3D = lazy(() => import('./components/Viewer3D').then(m => ({ default: m.Viewer3D })))
 import { WallShapeUtil } from './shapes/WallShape'
 import { DoorShapeUtil } from './shapes/DoorShape'
@@ -78,18 +78,20 @@ function EditorView({ projectId, projectName, onBack }: { projectId: string; pro
   const [editor, setEditor] = useState<Editor | null>(null)
   const [show3D, setShow3D] = useState(false)
 
-  const handleMount = async (ed: Editor) => {
+  const handleMount = (ed: Editor) => {
     ed.updateInstanceState({ isGridMode: false })
     // Supabase에서 먼저 로드, 실패하면 localStorage 폴백
-    let saved: object | null = null
-    try {
-      saved = await loadSnapshotFromSupabase(projectId) as object | null
-    } catch { /* Supabase 실패 */ }
-    if (!saved) saved = loadSnapshot(projectId)
-    if (saved) {
-      try { ed.loadSnapshot(saved as TLEditorSnapshot) } catch { /* ignore corrupt */ }
-    }
-    setEditor(ed)
+    ;(async () => {
+      let saved: object | null = null
+      try {
+        saved = await loadSnapshotFromSupabase(projectId) as object | null
+      } catch { /* Supabase 실패 */ }
+      if (!saved) saved = loadSnapshot(projectId)
+      if (saved) {
+        try { ed.loadSnapshot(saved as TLEditorSnapshot) } catch { /* ignore corrupt */ }
+      }
+      setEditor(ed)
+    })()
   }
 
   useEffect(() => {
