@@ -986,7 +986,7 @@
   gap: 8px;
 }
 
-.export-btn {
+.action-btn {
   flex: 1;
   padding: 7px 0;
   font-size: 12px;
@@ -999,13 +999,13 @@
   transition: background 0.1s, border-color 0.1s;
 }
 
-.export-btn:hover {
+.action-btn:hover {
   background: #f0f4ff;
   border-color: #1a73e8;
   color: #1a73e8;
 }
 
-.export-btn:disabled {
+.action-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -2172,8 +2172,8 @@ html[data-dark="true"] .mat-btn { text-shadow: 0 1px 3px rgba(0,0,0,0.6); }
 html[data-dark="true"] .mat-library { background: #1e1e22; border-color: #333; }
 html[data-dark="true"] .mat-library-title { color: #bbb; }
 html[data-dark="true"] .mat-library-desc { color: #777; }
-html[data-dark="true"] .export-btn { background: #2a2a30; color: #bbb; border-color: #444; }
-html[data-dark="true"] .export-btn:hover { background: #1a3a5c; color: #5aa3f0; border-color: #5aa3f0; }
+html[data-dark="true"] .action-btn { background: #2a2a30; color: #bbb; border-color: #444; }
+html[data-dark="true"] .action-btn:hover { background: #1a3a5c; color: #5aa3f0; border-color: #5aa3f0; }
 
 /* --- 토스트 (다크모드 버전) --- */
 html[data-dark="true"] .toast-success { background: #0f2a1a; color: #4ade80; border-color: #166534; }
@@ -2454,7 +2454,7 @@ html[data-dark="true"] .cad-layer-cancel {
   .rbar-toggle-btn { min-height: 32px; }
   .po-dim-btn { min-width: 32px; min-height: 32px; }
   .po-dim-option { min-height: 40px; }
-  .export-btn { min-height: 36px; }
+  .action-btn { min-height: 36px; }
   .mat-btn { min-height: 40px; }
 }
 

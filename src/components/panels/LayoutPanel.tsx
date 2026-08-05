@@ -43,8 +43,8 @@ export function LayoutPanel() {
 
         <div className="panel-section-title">뷰</div>
         <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-          <button className="export-btn" style={{ flex: 1 }} onClick={zoomFit}>맞춤</button>
-          <button className="export-btn" style={{ flex: 1 }} onClick={zoomReset}>100%</button>
+          <button className="action-btn" style={{ flex: 1 }} onClick={zoomFit}>맞춤</button>
+          <button className="action-btn" style={{ flex: 1 }} onClick={zoomReset}>100%</button>
         </div>
 
         <div className="panel-section-title">그리드</div>
@@ -68,7 +68,7 @@ export function LayoutPanel() {
         {SCALE_PRESETS.map(p => (
           <button
             key={p.label}
-            className="export-btn"
+            className="action-btn"
             style={{
               width: '100%', marginBottom: 4, textAlign: 'left',
               background: scale?.pxPerMm === p.pxPerMm ? '#eff6ff' : undefined,

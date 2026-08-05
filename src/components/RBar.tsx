@@ -369,7 +369,7 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
   const lockBtn = (
     <section className="rbar-section" style={{ paddingTop: 10, paddingBottom: 10 }}>
       <button
-        className="export-btn"
+        className="action-btn"
         style={isLocked ? { background: '#555', color: '#fff', borderColor: '#555' } : undefined}
         onClick={() => editor?.updateShape({ id: sel.id, isLocked: !isLocked } as never)}
       >
@@ -513,7 +513,7 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
           <RotationField value={rotDeg} onCommit={setRot} />
           <div className="rbar-row">
             <span>뒤집기</span>
-            <button className={`export-btn${p.flipped ? ' active' : ''}`}
+            <button className={`action-btn${p.flipped ? ' active' : ''}`}
               style={p.flipped ? { background: '#555', color: '#fff', borderColor: '#555' } : undefined}
               onClick={flipDoor}>
               <span className="icon-label"><FlipHorizontal2 size={14} strokeWidth={1.75} /> {p.flipped ? '뒤집힘' : '뒤집기'}</span>
@@ -629,7 +629,7 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
           <div className="rbar-row">
             <span>상태</span>
             <button
-              className={`export-btn${p.resolved ? ' active' : ''}`}
+              className={`action-btn${p.resolved ? ' active' : ''}`}
               style={{ background: p.resolved ? '#4caf50' : undefined, color: p.resolved ? '#fff' : undefined }}
               onClick={() => update({ resolved: !p.resolved })}
             >
@@ -737,7 +737,7 @@ function ImageDetectSection({ sel }: { sel: NonNullable<SelInfo> }) {
       <div style={{ fontSize: 11, color: '#888', marginBottom: 8, lineHeight: 1.5 }}>
         업로드한 도면에서 벽 선을 자동으로 추출합니다.
       </div>
-      <button className="export-btn" disabled={busy} onClick={run} style={{ width: '100%' }}>
+      <button className="action-btn" disabled={busy} onClick={run} style={{ width: '100%' }}>
         {busy ? '분석 중…' : <span className="icon-label"><Wand2 size={14} strokeWidth={1.75} /> 벽 자동 인식</span>}
       </button>
       {msg && <div style={{ fontSize: 11, color: busy ? '#1a73e8' : '#666', marginTop: 8, lineHeight: 1.5 }}>{msg}</div>}

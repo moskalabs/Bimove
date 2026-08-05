@@ -127,8 +127,8 @@ export function MaterialsPanel() {
             회사별 표준 공유에 활용.
           </div>
           <div className="mat-library-actions">
-            <button className="export-btn" onClick={handleExport}>⬇ Export</button>
-            <button className="export-btn" onClick={handleImport}>⬆ Import</button>
+            <button className="action-btn" onClick={handleExport}>⬇ Export</button>
+            <button className="action-btn" onClick={handleImport}>⬆ Import</button>
           </div>
         </div>
 

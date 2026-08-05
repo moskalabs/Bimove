@@ -64,7 +64,7 @@ export function ImportPanel() {
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#555', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>CAD 도면</div>
           <button
-            className="export-btn"
+            className="action-btn"
             style={{ width: '100%', marginBottom: 8 }}
             onClick={handleCadImport}
           >
@@ -83,7 +83,7 @@ export function ImportPanel() {
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#555', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>PDF 도면</div>
           <button
-            className="export-btn"
+            className="action-btn"
             style={{ width: '100%', marginBottom: 8 }}
             onClick={() => editor && importPdf(editor, notify)}
           >
@@ -102,7 +102,7 @@ export function ImportPanel() {
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#555', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>이미지 배경</div>
           <button
-            className="export-btn"
+            className="action-btn"
             style={{ width: '100%', marginBottom: 8 }}
             onClick={() => editor && uploadImage(editor)}
           >
