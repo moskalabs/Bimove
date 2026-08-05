@@ -310,3 +310,69 @@ export async function renameProject(projectId: string, name: string) {
     .update({ name, updated_at: new Date().toISOString() })
     .eq('id', projectId)
 }
+
+// ── 재질 프리셋 동기화 ──
+
+import type { MaterialPreset } from './materialPresets'
+
+export async function fetchMaterialPresets(userId: string): Promise<MaterialPreset[] | null> {
+  const { data } = await supabase
+    .from('material_presets')
+    .select('presets')
+    .eq('user_id', userId)
+    .single()
+  if (!data?.presets) return null
+  return data.presets as MaterialPreset[]
+}
+
+export async function syncMaterialPresets(userId: string, presets: MaterialPreset[]): Promise<void> {
+  await supabase
+    .from('material_presets')
+    .upsert({
+      user_id: userId,
+      presets,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id' })
+}
+
+// ── 프로젝트 버전 히스토리 동기화 ──
+
+import type { Version } from './versions'
+
+export async function fetchProjectVersions(projectId: string): Promise<Version[]> {
+  const { data } = await supabase
+    .from('project_versions')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+    .limit(30)
+  if (!data) return []
+  return data.map(v => ({
+    id: v.id,
+    timestamp: new Date(v.created_at).getTime(),
+    label: v.label ?? undefined,
+    snapshot: v.snapshot as object,
+  }))
+}
+
+export async function saveProjectVersion(
+  projectId: string,
+  version: Version,
+): Promise<void> {
+  await supabase
+    .from('project_versions')
+    .insert({
+      id: version.id,
+      project_id: projectId,
+      label: version.label ?? null,
+      snapshot: version.snapshot,
+      created_at: new Date(version.timestamp).toISOString(),
+    })
+}
+
+export async function deleteProjectVersion(versionId: string): Promise<void> {
+  await supabase
+    .from('project_versions')
+    .delete()
+    .eq('id', versionId)
+}
