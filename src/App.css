@@ -2457,3 +2457,34 @@ html[data-dark="true"] .cad-layer-cancel {
   .export-btn { min-height: 36px; }
   .mat-btn { min-height: 40px; }
 }
+
+/* ── 벽 그리기 각도/거리 오버레이 ── */
+.tool-angle-badge {
+  position: absolute;
+  background: #1a73e8;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 102;
+  transform: translateY(-50%);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+  font-variant-numeric: tabular-nums;
+}
+.tool-dist-label {
+  position: absolute;
+  background: rgba(26,115,232,0.85);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 102;
+  transform: translate(-50%, 0);
+  font-variant-numeric: tabular-nums;
+}

@@ -3,14 +3,18 @@ import type { TLShapeId } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
 import { snapToWallEndpoint } from '../lib/snap'
 import { drawingState } from '../lib/drawingState'
+import { getScaleConfig, formatLength } from '../lib/scaleConfig'
 
 type Pt = { x: number; y: number }
 
-/** 길이·각도 표시는 우측 속성패널 하단으로 이동 — see RBar's DistanceReadoutSection. */
 export function ToolOverlay() {
   const editor = useEditor()
   const [start, setStart] = useState<Pt | null>(null)
   const [snap, setSnap] = useState<Pt | null>(null)
+  const [end, setEnd] = useState<Pt | null>(null)
+  const [mid, setMid] = useState<Pt | null>(null)
+  const [angleDeg, setAngleDeg] = useState<number | null>(null)
+  const [distLabel, setDistLabel] = useState<string | null>(null)
 
   useEffect(() => {
     if (!editor) return
@@ -20,15 +24,46 @@ export function ToolOverlay() {
       if (toolId !== 'wall' && toolId !== 'dimension') {
         setStart(null)
         setSnap(null)
+        setEnd(null)
+        setMid(null)
+        setAngleDeg(null)
+        setDistLabel(null)
         return
       }
 
       const drawingId = drawingState.drawingId
       if (drawingId) {
         const shape = editor.getShape(drawingId as TLShapeId)
-        setStart(shape ? editor.pageToViewport({ x: shape.x, y: shape.y }) : null)
+        if (shape) {
+          setStart(editor.pageToViewport({ x: shape.x, y: shape.y }))
+          const p = shape.props as { x2: number; y2: number }
+          const lenPx = Math.hypot(p.x2, p.y2)
+          if (lenPx > 5) {
+            setEnd(editor.pageToViewport({ x: shape.x + p.x2, y: shape.y + p.y2 }))
+            setMid(editor.pageToViewport({ x: shape.x + p.x2 / 2, y: shape.y + p.y2 / 2 }))
+            const angle = Math.atan2(p.y2, p.x2) * 180 / Math.PI
+            setAngleDeg(angle)
+            const scale = getScaleConfig(editor)
+            setDistLabel(formatLength(lenPx, scale))
+          } else {
+            setEnd(null)
+            setMid(null)
+            setAngleDeg(null)
+            setDistLabel(null)
+          }
+        } else {
+          setStart(null)
+          setEnd(null)
+          setMid(null)
+          setAngleDeg(null)
+          setDistLabel(null)
+        }
       } else {
         setStart(null)
+        setEnd(null)
+        setMid(null)
+        setAngleDeg(null)
+        setDistLabel(null)
       }
 
       // 스냅 가능한 끝점 링
@@ -57,6 +92,20 @@ export function ToolOverlay() {
           border: '2px solid #00b341', background: 'rgba(0,179,65,0.15)',
           pointerEvents: 'none', zIndex: 101,
         }} />
+      )}
+      {end && angleDeg !== null && (
+        <div className="tool-angle-badge" style={{
+          left: end.x + 12, top: end.y - 14,
+        }}>
+          {angleDeg.toFixed(1)}°
+        </div>
+      )}
+      {mid && distLabel && (
+        <div className="tool-dist-label" style={{
+          left: mid.x, top: mid.y - 24,
+        }}>
+          {distLabel}
+        </div>
       )}
     </>
   )

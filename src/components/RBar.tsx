@@ -294,12 +294,13 @@ function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleC
       const lenPx = Math.hypot(p.x2, p.y2)
       if (lenPx <= 5) { setDistText(null); return }
       const lenMm = lenPx / scale.pxPerMm
-      const formatted = scale.unit === 'm'
+      const dist = scale.unit === 'm'
         ? `${(lenMm / 1000).toFixed(2)} m`
         : scale.unit === 'cm'
         ? `${(lenMm / 10).toFixed(1)} cm`
         : `${Math.round(lenMm)} mm`
-      setDistText(formatted)
+      const angle = Math.atan2(p.y2, p.x2) * 180 / Math.PI
+      setDistText(`${dist} · ${angle.toFixed(1)}°`)
     }
     update()
     const unsub = editor.store.listen(update)
