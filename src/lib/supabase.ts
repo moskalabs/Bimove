@@ -54,6 +54,9 @@ export type DBBOQItem = {
   loss_rate: number
   unit_price: number
   unit: string
+  calc_method: string
+  length_m: number
+  manual_qty: number
   sort_order: number
   created_at: string
 }

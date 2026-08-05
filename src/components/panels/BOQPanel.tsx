@@ -210,24 +210,31 @@ export function BOQPanel() {
                   }}>📄 PDF</button>
                 </div>
               </div>
-              <table className="boq-table" style={{ fontSize: 12 }}><thead>
-                <tr style={{ background: '#fafafa', fontWeight: 600, color: '#666' }}>
-                  <td>품목</td><td>수량</td><td style={{ textAlign: 'right' }}>단가</td><td style={{ textAlign: 'right' }}>금액</td>
-                </tr>
-              </thead><tbody>
+              <div style={{ padding: '0 12px' }}>
                 {quote.lines.map((l, i) => (
-                  <tr key={i}>
-                    <td>{l.name}</td>
-                    <td>{l.qty.toLocaleString('ko-KR', { maximumFractionDigits: 2 })} {l.unit}</td>
-                    <td style={{ textAlign: 'right', color: '#888' }}>{fmtKRW(l.unitPrice)}</td>
-                    <td style={{ textAlign: 'right' }}>{fmtKRW(l.amount)}</td>
-                  </tr>
+                  <div key={i} style={{
+                    padding: '8px 0',
+                    borderBottom: '1px solid #f0f0f0',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 2 }}>
+                      <span style={{ fontWeight: 500, color: '#333', fontSize: 12 }}>{l.name}</span>
+                      <span style={{ fontWeight: 600, color: '#333', fontSize: 12, whiteSpace: 'nowrap' }}>{fmtKRW(l.amount)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888' }}>
+                      <span>{l.qty.toLocaleString('ko-KR', { maximumFractionDigits: 2 })} {l.unit}</span>
+                      <span>@{fmtKRW(l.unitPrice)}</span>
+                    </div>
+                  </div>
                 ))}
-                <tr className="boq-total" style={{ fontWeight: 700, background: '#f0f4ff' }}>
-                  <td>합계</td><td></td><td></td>
-                  <td style={{ textAlign: 'right', color: '#1a73e8' }}>{fmtKRW(quote.total)}</td>
-                </tr>
-              </tbody></table>
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '10px 0', borderTop: '2px solid #1a73e8', marginTop: 4,
+                  fontWeight: 700, fontSize: 13,
+                }}>
+                  <span style={{ color: '#333' }}>합계</span>
+                  <span style={{ color: '#1a73e8' }}>{fmtKRW(quote.total)}</span>
+                </div>
+              </div>
             </>
           )
         ) : (

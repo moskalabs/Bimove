@@ -1,6 +1,8 @@
 // 프로젝트 버전 히스토리 — localStorage에 timestamped snapshot 보관.
 // 명시적 저장 + 자동 주기 저장 둘 다 지원. 최대 N개 유지.
 
+import { scopedGet, scopedSet, scopedRemove } from './scopedStorage'
+
 export type Version = {
   id: string
   timestamp: number
@@ -13,7 +15,7 @@ const versionsKey = (projectId: string) => `bimove_versions_${projectId}`
 
 function readList(projectId: string): Version[] {
   try {
-    const raw = localStorage.getItem(versionsKey(projectId))
+    const raw = scopedGet(versionsKey(projectId))
     return raw ? (JSON.parse(raw) as Version[]) : []
   } catch {
     return []
@@ -22,12 +24,12 @@ function readList(projectId: string): Version[] {
 
 function writeList(projectId: string, list: Version[]) {
   try {
-    localStorage.setItem(versionsKey(projectId), JSON.stringify(list))
+    scopedSet(versionsKey(projectId), JSON.stringify(list))
   } catch (err) {
     console.warn('[versions] storage full — pruning oldest', err)
     // 절반 정도 줄여서 재시도
     const pruned = list.slice(0, Math.floor(list.length / 2))
-    try { localStorage.setItem(versionsKey(projectId), JSON.stringify(pruned)) } catch { /* give up */ }
+    try { scopedSet(versionsKey(projectId), JSON.stringify(pruned)) } catch { /* give up */ }
   }
 }
 
@@ -64,7 +66,7 @@ export function deleteVersion(projectId: string, versionId: string) {
 
 /** 모든 버전 삭제 (프로젝트 삭제 시 호출). */
 export function clearVersions(projectId: string) {
-  localStorage.removeItem(versionsKey(projectId))
+  scopedRemove(versionsKey(projectId))
 }
 
 /** 버전 라벨 변경. */

@@ -18,11 +18,13 @@ import {
 } from '../lib/scaleConfig'
 import { createShareLink, copyToClipboard } from '../lib/shareLink'
 import { useProjectId } from '../context/ProjectContext'
+import { useToast } from '../context/ToastContext'
 import { VersionHistoryPanel } from './VersionHistoryPanel'
 import {
   getDefaultWallThicknessMm, setDefaultWallThicknessMm,
   getWallHeightMm, setWallHeightMm,
   getSnapEnabled, setSnapEnabled,
+  getDarkMode, setDarkMode as persistDarkMode,
 } from '../lib/settings'
 import { drawingState } from '../lib/drawingState'
 
@@ -35,6 +37,7 @@ type SelInfo = {
 /* ── R bar 메인 ── */
 export function RBar() {
   const editor = useEditor()
+  const { toast } = useToast()
   const [sel, setSel] = useState<SelInfo>(null)
   const [scale, setScaleState] = useState<ScaleConfig>({ unit: 'mm', pxPerMm: 1 })
   const [currentToolId, setCurrentToolId] = useState<string>('select')
@@ -105,9 +108,9 @@ function TopActionBar() {
             const snapshot = editor.store.getStoreSnapshot()
             const url = await createShareLink('Drawing', snapshot)
             const ok = await copyToClipboard(url)
-            alert(ok ? '공유 링크가 클립보드에 복사됐어!' : '공유 링크:\n' + url)
+            toast(ok ? '공유 링크가 클립보드에 복사되었습니다.' : '클립보드 복사 실패. 링크: ' + url, ok ? 'success' : 'info')
           } catch (err) {
-            alert('공유 링크 생성 실패: ' + String(err))
+            toast('공유 링크 생성에 실패했습니다: ' + String(err), 'error')
           }
         }}>공유하기</button>
       </div>
@@ -127,9 +130,9 @@ function TopActionBar() {
             const snapshot = editor.store.getStoreSnapshot()
             const url = await createShareLink('Drawing', snapshot)
             const ok = await copyToClipboard(url)
-            alert(ok ? '공유 링크가 클립보드에 복사됐어!' : '공유 링크:\n' + url)
+            toast(ok ? '공유 링크가 클립보드에 복사되었습니다.' : '클립보드 복사 실패. 링크: ' + url, ok ? 'success' : 'info')
           } catch (err) {
-            alert('공유 링크 생성 실패: ' + String(err))
+            toast('공유 링크 생성에 실패했습니다: ' + String(err), 'error')
           }
         }}>Share</button>
       </div>
@@ -168,7 +171,7 @@ function ProjectInfoSection() {
 function ModelPageSection({ scale }: { scale: ScaleConfig }) {
   const editor = useEditor()
   const [gridOn, setGridOn] = useState(false)
-  const [darkMode, setDarkMode] = useState(false)
+  const [darkMode, setDarkModeLocal] = useState(getDarkMode)
   const [layer, setLayer] = useState('CO-1')
 
   useEffect(() => {
@@ -223,11 +226,11 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
         <div className="rbar-toggle-group">
           <button
             className={`rbar-toggle-btn${!darkMode ? ' active' : ''}`}
-            onClick={() => setDarkMode(false)}
+            onClick={() => { persistDarkMode(false); setDarkModeLocal(false) }}
           >Light</button>
           <button
             className={`rbar-toggle-btn${darkMode ? ' active' : ''}`}
-            onClick={() => setDarkMode(true)}
+            onClick={() => { persistDarkMode(true); setDarkModeLocal(true) }}
           >Dark</button>
         </div>
       </div>
@@ -743,6 +746,7 @@ function ImageDetectSection({ sel }: { sel: NonNullable<SelInfo> }) {
 
 /* ── 벽 기본 두께 ── */
 function WallDefaultSection({ scale }: { scale: ScaleConfig }) {
+  const editor = useEditor()
   const [thickMm, setThickMm] = useState(getDefaultWallThicknessMm)
   const dispUnit = scale.unit
   const dispVal = scale.unit === 'm' ? thickMm / 1000 : scale.unit === 'cm' ? thickMm / 10 : thickMm
@@ -756,6 +760,19 @@ function WallDefaultSection({ scale }: { scale: ScaleConfig }) {
       const mm = scale.unit === 'm' ? raw * 1000 : scale.unit === 'cm' ? raw * 10 : raw
       setDefaultWallThicknessMm(mm)
       setThickMm(mm)
+
+      // 기존 벽들도 두께 업데이트
+      if (editor) {
+        const thickPx = mm * scale.pxPerMm
+        const walls = editor.getCurrentPageShapes().filter(s => s.type === 'wall')
+        walls.forEach(w => {
+          editor.updateShape({
+            id: w.id,
+            type: 'wall' as never,
+            props: { thickness: thickPx },
+          })
+        })
+      }
     }
     setDraft(null)
   }

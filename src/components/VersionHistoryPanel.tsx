@@ -84,11 +84,11 @@ export function VersionHistoryPanel({ editor, projectId, onClose, onRestored }: 
   }
 
   return (
-    <div style={{
+    <div className="vh-overlay" style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999,
     }} onClick={onClose}>
-      <div style={{
+      <div className="vh-modal" style={{
         background: '#fff', borderRadius: 12, padding: 20, minWidth: 480, maxHeight: '80vh',
         display: 'flex', flexDirection: 'column', boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
       }} onClick={e => e.stopPropagation()}>

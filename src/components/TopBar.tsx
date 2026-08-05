@@ -113,6 +113,7 @@ function ToolButton({ tool, active, onClick }: { tool: ToolDef; active: boolean;
     <button
       className={`topbar-btn${active ? ' active' : ''}`}
       title={tool.label}
+      data-tool={tool.id}
       onClick={onClick}
     >
       {tool.render()}

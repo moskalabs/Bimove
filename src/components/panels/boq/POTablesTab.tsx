@@ -1,5 +1,5 @@
 // 발주서 메인 탭 - 물량표 목록 + [+] 추가 + 내보내기
-import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { Plus, Download } from 'lucide-react'
 import { useEditor } from '../../../context/EditorContext'
 import { useProjectId } from '../../../context/ProjectContext'
@@ -84,55 +84,68 @@ export function POTablesTab() {
     return () => clearTimeout(syncTimerRef.current)
   }, [])
 
-  // 도면에서 벽/방/문/창문 데이터 추출
-  const drawingData = useMemo(() => {
-    if (!editor) return { wallLengths: [], roomPerimeters: [], doors: [], windows: [] }
+  // 도면에서 벽/방/문/창문 데이터 추출 (shape 변경 시 자동 갱신)
+  const [drawingData, setDrawingData] = useState<{
+    wallLengths: { label: string; mm: number }[]
+    roomPerimeters: { label: string; mm: number }[]
+    doors: { id: string; label: string; widthMm: number; heightMm: number }[]
+    windows: { id: string; label: string; widthMm: number; heightMm: number }[]
+  }>({ wallLengths: [], roomPerimeters: [], doors: [], windows: [] })
 
-    const shapes = editor.getCurrentPageShapes()
-    const scale = getScaleConfig(editor)
-    const wallHeight = getWallHeightMm()
+  useEffect(() => {
+    if (!editor) return
 
-    // 벽 길이
-    const walls = shapes.filter(s => s.type === 'wall')
-    const wallLengths = walls.map((w, i) => {
-      const p = w.props as { x2: number; y2: number }
-      const lenMm = Math.hypot(p.x2, p.y2) / scale.pxPerMm
-      return { label: `벽 ${i + 1}`, mm: lenMm }
+    const compute = () => {
+      const shapes = editor.getCurrentPageShapes()
+      const scale = getScaleConfig(editor)
+      const wallHeight = getWallHeightMm()
+
+      const walls = shapes.filter(s => s.type === 'wall')
+      const wallLengths = walls.map((w, i) => {
+        const p = w.props as { x2: number; y2: number }
+        const lenMm = Math.hypot(p.x2, p.y2) / scale.pxPerMm
+        return { label: `벽 ${i + 1}`, mm: lenMm }
+      })
+
+      const wallData = walls.map(w => {
+        const p = w.props as { x2: number; y2: number }
+        return { x1: w.x, y1: w.y, x2: w.x + p.x2, y2: w.y + p.y2 }
+      })
+      const rooms = detectRooms(wallData)
+      const roomPerimeters = rooms.map((r, i) => {
+        let perimeter = 0
+        for (let j = 0; j < r.vertices.length; j++) {
+          const a = r.vertices[j]
+          const b = r.vertices[(j + 1) % r.vertices.length]
+          perimeter += Math.hypot(b.x - a.x, b.y - a.y)
+        }
+        return { label: `공간 ${i + 1}`, mm: perimeter / scale.pxPerMm }
+      })
+
+      const doorShapes = shapes.filter(s => s.type === 'door')
+      const doors = doorShapes.map((d, i) => {
+        const p = d.props as { width: number }
+        const wMm = p.width / scale.pxPerMm
+        return { id: d.id, label: `문 ${i + 1}`, widthMm: Math.round(wMm), heightMm: wallHeight }
+      })
+
+      const windowShapes = shapes.filter(s => s.type === 'window')
+      const windows = windowShapes.map((w, i) => {
+        const p = w.props as { width: number }
+        const wMm = p.width / scale.pxPerMm
+        return { id: w.id, label: `창문 ${i + 1}`, widthMm: Math.round(wMm), heightMm: 1200 }
+      })
+
+      setDrawingData({ wallLengths, roomPerimeters, doors, windows })
+    }
+
+    compute()
+    let timer = 0
+    const unsub = editor.store.listen(() => {
+      clearTimeout(timer)
+      timer = window.setTimeout(compute, 200)
     })
-
-    // 방 둘레
-    const wallData = walls.map(w => {
-      const p = w.props as { x2: number; y2: number }
-      return { x1: w.x, y1: w.y, x2: w.x + p.x2, y2: w.y + p.y2 }
-    })
-    const rooms = detectRooms(wallData)
-    const roomPerimeters = rooms.map((r, i) => {
-      let perimeter = 0
-      for (let j = 0; j < r.vertices.length; j++) {
-        const a = r.vertices[j]
-        const b = r.vertices[(j + 1) % r.vertices.length]
-        perimeter += Math.hypot(b.x - a.x, b.y - a.y)
-      }
-      return { label: `공간 ${i + 1}`, mm: perimeter / scale.pxPerMm }
-    })
-
-    // 문
-    const doorShapes = shapes.filter(s => s.type === 'door')
-    const doors = doorShapes.map((d, i) => {
-      const p = d.props as { width: number }
-      const wMm = p.width / scale.pxPerMm
-      return { id: d.id, label: `문 ${i + 1}`, widthMm: Math.round(wMm), heightMm: wallHeight }
-    })
-
-    // 창문
-    const windowShapes = shapes.filter(s => s.type === 'window')
-    const windows = windowShapes.map((w, i) => {
-      const p = w.props as { width: number }
-      const wMm = p.width / scale.pxPerMm
-      return { id: w.id, label: `창문 ${i + 1}`, widthMm: Math.round(wMm), heightMm: 1200 }
-    })
-
-    return { wallLengths, roomPerimeters, doors, windows }
+    return () => { unsub(); clearTimeout(timer) }
   }, [editor])
 
   const handleAddTable = (template: BOQTemplate) => {

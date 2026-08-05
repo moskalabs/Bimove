@@ -24,11 +24,13 @@ export const DEFAULT_MATERIAL_PRESETS: MaterialPreset[] = [
   { id: 'tile_floor', label: '타일 (바닥)', fill: '#d8d3cf', stroke: '#9a948e', pattern: 'tile', pricePerM2: 110000 },
 ]
 
+import { scopedGet, scopedSet, scopedRemove } from './scopedStorage'
+
 const KEY = 'bimove_materials_v2'
 
 export function loadMaterialPresets(): MaterialPreset[] {
   try {
-    const raw = localStorage.getItem(KEY)
+    const raw = scopedGet(KEY)
     if (!raw) return DEFAULT_MATERIAL_PRESETS
     const arr = JSON.parse(raw) as MaterialPreset[]
     if (!Array.isArray(arr) || arr.length === 0) return DEFAULT_MATERIAL_PRESETS
@@ -40,11 +42,11 @@ export function loadMaterialPresets(): MaterialPreset[] {
 }
 
 export function saveMaterialPresets(list: MaterialPreset[]) {
-  try { localStorage.setItem(KEY, JSON.stringify(list)) } catch { /* full */ }
+  try { scopedSet(KEY, JSON.stringify(list)) } catch { /* full */ }
 }
 
 export function resetMaterialPresets(): MaterialPreset[] {
-  localStorage.removeItem(KEY)
+  scopedRemove(KEY)
   return DEFAULT_MATERIAL_PRESETS
 }
 

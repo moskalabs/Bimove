@@ -1,7 +1,19 @@
 // 발주서 데이터 모델 + CRUD + 계산 함수
 // localStorage 기반 프로젝트별 저장
 
-export type BOQTemplateId = 'wallpaper' | 'tile' | 'paint' | 'flooring' | 'film'
+export type BOQTemplateId =
+  | 'wallpaper' | 'tile' | 'paint' | 'flooring' | 'film'
+  // 천정
+  | 'ceil-gypsum' | 'ceil-paint' | 'ceil-tex'
+  // 벽
+  | 'wall-wallpaper' | 'wall-paint' | 'wall-film' | 'wall-tile' | 'wall-louver' | 'wall-panel'
+  // 바닥
+  | 'floor-wood' | 'floor-tile' | 'floor-deco' | 'floor-vinyl' | 'floor-paint'
+  // 몰딩
+  | 'mold-ceiling' | 'mold-baseboard' | 'mold-finish'
+
+/** 산출방식: 면적(m²), 길이(m), 수량(EA) */
+export type CalcMethod = 'area' | 'length' | 'quantity'
 
 export type Exclusion = {
   id: string
@@ -16,8 +28,14 @@ export type BOQItem = {
   id: string
   name: string
   material: string
+  /** 산출방식 (기본: area) */
+  calcMethod?: CalcMethod
   widthMm: number
   heightMm: number
+  /** 길이 산출용 (m 단위) */
+  lengthM?: number
+  /** 수량 산출용 (EA) */
+  manualQty?: number
   exclusions: Exclusion[]
   itemWidthMm: number
   itemLengthMm: number
@@ -60,8 +78,23 @@ export function netArea(item: BOQItem): number {
   return Math.max(0, grossArea(item) - exclusionArea(item))
 }
 
-/** 수량 산출 */
+/** 수량 산출 (산출방식별 분기) */
 export function calcQuantity(item: BOQItem): number {
+  const method = item.calcMethod ?? 'area'
+
+  if (method === 'length') {
+    // 길이 산출: lengthM * (1 + 로스율)
+    const lenM = item.lengthM ?? 0
+    if (lenM <= 0) return 0
+    return +(lenM * (1 + item.lossRate)).toFixed(2)
+  }
+
+  if (method === 'quantity') {
+    // 수량 산출: 직접 입력 EA
+    return item.manualQty ?? 0
+  }
+
+  // 면적 산출 (기본)
   const net = netArea(item)
   if (net <= 0) return 0
   // m² 단위: 면적 그대로
@@ -97,11 +130,13 @@ export function uid(): string {
 
 // ── localStorage CRUD ──
 
+import { scopedGet, scopedSet } from './scopedStorage'
+
 const PO_KEY = (projectId: string) => `bimove_po_${projectId}`
 
 export function loadPurchaseOrder(projectId: string): PurchaseOrder {
   try {
-    const raw = localStorage.getItem(PO_KEY(projectId))
+    const raw = scopedGet(PO_KEY(projectId))
     if (raw) return JSON.parse(raw) as PurchaseOrder
   } catch { /* ignore */ }
   return { projectId, tables: [], updatedAt: Date.now() }
@@ -110,7 +145,7 @@ export function loadPurchaseOrder(projectId: string): PurchaseOrder {
 export function savePurchaseOrder(po: PurchaseOrder): void {
   po.updatedAt = Date.now()
   try {
-    localStorage.setItem(PO_KEY(po.projectId), JSON.stringify(po))
+    scopedSet(PO_KEY(po.projectId), JSON.stringify(po))
   } catch { /* storage full */ }
 }
 

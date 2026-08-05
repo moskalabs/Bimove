@@ -15,7 +15,7 @@ import {
 import type { IndexKey } from '@tldraw/editor'
 import { useEffect, useState } from 'react'
 import { getScaleConfig, formatLength } from '../lib/scaleConfig'
-import { getShowWallLengths } from '../lib/settings'
+import { getShowWallLengths, getGrayscaleMode } from '../lib/settings'
 import { renderPatternDef } from '../lib/wallPatterns'
 import type { PatternId } from '../lib/materialPresets'
 
@@ -132,9 +132,13 @@ function computeJoinedCorners(editor: Editor, shape: WallShape): Vec[] {
 function WallComponent({ shape }: { shape: WallShape }) {
   const editor = useEditor()
   const [showDim, setShowDim] = useState(getShowWallLengths)
+  const [grayscale, setGrayscale] = useState(getGrayscaleMode)
 
   useEffect(() => {
-    const onSettings = () => setShowDim(getShowWallLengths())
+    const onSettings = () => {
+      setShowDim(getShowWallLengths())
+      setGrayscale(getGrayscaleMode())
+    }
     window.addEventListener('bimove:settings', onSettings)
     return () => window.removeEventListener('bimove:settings', onSettings)
   }, [])
@@ -142,20 +146,27 @@ function WallComponent({ shape }: { shape: WallShape }) {
   const { x2, y2, thickness } = shape.props
   const len = Math.sqrt(x2 * x2 + y2 * y2)
 
-  // tldraw wraps shape components in a reactive context, so reading
-  // editor.getCurrentPageShapes() here auto-subscribes to shape changes.
   const corners = computeJoinedCorners(editor, shape)
   const d = `M${corners[0].x},${corners[0].y} L${corners[1].x},${corners[1].y} L${corners[2].x},${corners[2].y} L${corners[3].x},${corners[3].y} Z`
 
-  const fill = (shape.meta?.fill as string) ?? '#555'
-  const stroke = (shape.meta?.stroke as string) ?? '#222'
-  const pattern = (shape.meta?.pattern as string | undefined)
+  // DXF lineweight → strokeWidth (hundredths of mm → px)
+  const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
+  const strokeW = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 25, 4)) : 1
+
+  // Grayscale 모드: 패턴 OFF, 흑백 선
+  // DXF 색상이 있으면 fill/stroke 대신 사용 (BUG 8)
+  const dxfColor = shape.meta?.dxfColor as string | undefined
+  const rawFill = (shape.meta?.fill as string) ?? dxfColor ?? '#555'
+  const rawStroke = (shape.meta?.stroke as string) ?? dxfColor ?? '#222'
+  const fill = grayscale ? '#f5f5f5' : rawFill
+  const stroke = grayscale ? '#333' : rawStroke
+  const pattern = grayscale ? undefined : (shape.meta?.pattern as string | undefined)
   const patId = pattern && pattern !== 'none' ? `pat-${pattern}-${shape.id.slice(-6)}` : null
   const patternDef = patId ? renderPatternDef(pattern as PatternId, patId, stroke) : null
   const fillAttr = patId ? `url(#${patId})` : fill
 
   if (len < 4) {
-    return <SVGContainer>{patternDef}<path d={d} fill={fillAttr} stroke={stroke} strokeWidth={1} /></SVGContainer>
+    return <SVGContainer>{patternDef}<path d={d} fill={fillAttr} stroke={stroke} strokeWidth={strokeW} /></SVGContainer>
   }
 
   const nx = -y2 / len, ny = x2 / len
@@ -175,7 +186,7 @@ function WallComponent({ shape }: { shape: WallShape }) {
   return (
     <SVGContainer>
       {patternDef}
-      <path d={d} fill={fillAttr} stroke={stroke} strokeWidth={1} />
+      <path d={d} fill={fillAttr} stroke={stroke} strokeWidth={strokeW} />
 
       {showDim && (
         <>

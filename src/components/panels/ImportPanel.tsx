@@ -1,31 +1,79 @@
+import { useState } from 'react'
 import { useEditor } from '../../context/EditorContext'
+import { useToast } from '../../context/ToastContext'
 import { uploadImage } from '../../lib/project'
-import { importDxf } from '../../lib/dxf'
+import { pickCadFile, parseCadFile, commitCadImport, type CadParseResult } from '../../lib/dxf'
 import { importPdf } from '../../lib/pdfImport'
+import { CadLayerDialog } from '../CadLayerDialog'
 
 export function ImportPanel() {
   const editor = useEditor()
+  const { toast } = useToast()
+  const notify = {
+    onSuccess: (msg: string) => toast(msg, 'success'),
+    onError: (msg: string) => toast(msg, 'error'),
+    onInfo: (msg: string) => toast(msg, 'info'),
+  }
+  const [cadResult, setCadResult] = useState<CadParseResult | null>(null)
+
+  const handleCadImport = async () => {
+    if (!editor) return
+    const file = await pickCadFile()
+    if (!file) return
+    const result = await parseCadFile(file, notify)
+    if (!result) return
+
+    // 중복 체크
+    const existingFps = new Set(
+      editor.getCurrentPageShapes()
+        .map((s) => (s.meta as Record<string, unknown>)?.dxfFingerprint)
+        .filter((fp): fp is string => typeof fp === 'string'),
+    )
+    if (existingFps.has(result.fingerprint)) {
+      const proceed = confirm(
+        `"${file.name}" 파일이 이미 임포트된 것 같습니다.\n그래도 다시 임포트하시겠습니까?`,
+      )
+      if (!proceed) return
+    }
+
+    // 레이어가 2개 이상이면 선택 다이얼로그, 1개면 바로 임포트
+    if (result.layers.length > 1) {
+      setCadResult(result)
+    } else {
+      const allLayers = new Set(result.layers.map((l) => l.name))
+      const count = commitCadImport(editor, result, allLayers)
+      const fmt = result.isDwg ? 'DWG' : 'DXF'
+      toast(`"${result.fileName}" ${fmt}를 가져왔습니다. (${count}개 벽)`, 'success')
+    }
+  }
+
+  const handleLayerConfirm = (selectedLayers: Set<string>) => {
+    if (!editor || !cadResult) return
+    const count = commitCadImport(editor, cadResult, selectedLayers)
+    const fmt = cadResult.isDwg ? 'DWG' : 'DXF'
+    toast(`"${cadResult.fileName}" ${fmt}를 가져왔습니다. (${count}개 벽, ${selectedLayers.size}개 레이어)`, 'success')
+    setCadResult(null)
+  }
 
   return (
     <div className="lbar-panel">
       <div className="lbar-panel-header">가져오기</div>
       <div className="lbar-panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-        {/* DXF */}
+        {/* DXF / DWG */}
         <div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#555', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>DXF 도면</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#555', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>CAD 도면</div>
           <button
             className="export-btn"
             style={{ width: '100%', marginBottom: 8 }}
-            onClick={() => editor && importDxf(editor)}
+            onClick={handleCadImport}
           >
-            📐 DXF 불러오기
+            📐 DXF / DWG 불러오기
           </button>
           <div style={{ fontSize: 11, color: '#888', lineHeight: 1.7, background: '#f8f8f8', borderRadius: 6, padding: '8px 10px' }}>
-            <strong style={{ color: '#555' }}>SketchUp 사용자:</strong><br />
-            File → Export → 2D Graphic →<br />
-            파일 형식을 <strong style={{ color: '#3b82f6' }}>AutoCAD DXF (.dxf)</strong> 로<br />
-            저장 후 불러오세요.
+            <strong style={{ color: '#3b82f6' }}>DXF</strong> 및 <strong style={{ color: '#3b82f6' }}>DWG</strong> 파일 지원<br />
+            (DWG는 브라우저에서 자동 변환)<br />
+            <span style={{ color: '#aaa', fontSize: 10 }}>AutoCAD R13~R2018 지원</span>
           </div>
         </div>
 
@@ -37,7 +85,7 @@ export function ImportPanel() {
           <button
             className="export-btn"
             style={{ width: '100%', marginBottom: 8 }}
-            onClick={() => editor && importPdf(editor)}
+            onClick={() => editor && importPdf(editor, notify)}
           >
             📄 PDF 불러오기
           </button>
@@ -69,6 +117,15 @@ export function ImportPanel() {
         </div>
 
       </div>
+
+      {/* 레이어 선택 다이얼로그 */}
+      {cadResult && (
+        <CadLayerDialog
+          result={cadResult}
+          onConfirm={handleLayerConfirm}
+          onCancel={() => setCadResult(null)}
+        />
+      )}
     </div>
   )
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
+import { ProfileModal } from './ProfileModal'
 import {
   fetchProjects, createProject as createProjectDB,
   deleteProject as deleteProjectDB, renameProject as renameProjectDB,
@@ -190,6 +191,7 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) =
   const { toast } = useToast()
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
+  const [showProfile, setShowProfile] = useState(false)
 
   const loadProjects = async () => {
     if (!user) return
@@ -209,14 +211,25 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) =
     // 공유 링크로 들어왔으면 새 프로젝트로 임포트
     void (async () => {
       if (!user) return
+      if (!window.location.hash.startsWith('#share=')) return
       const shared = await readShareFromHash()
-      if (!shared) return
-      const p = await createProjectDB(user.id, shared.name + ' (공유받음)')
-      if (p) {
-        await saveProjectSnapshot(p.id, shared.snapshot)
+      if (!shared) {
+        toast('공유 링크를 열 수 없습니다. 링크가 손상되었을 수 있습니다.', 'error')
         clearShareHash()
-        await loadProjects()
-        onOpen(p.id, p.name)
+        return
+      }
+      try {
+        const p = await createProjectDB(user.id, shared.name + ' (공유받음)')
+        if (p) {
+          await saveProjectSnapshot(p.id, shared.snapshot)
+          clearShareHash()
+          await loadProjects()
+          toast(`"${shared.name}" 프로젝트를 공유받았습니다.`, 'success')
+          onOpen(p.id, p.name)
+        }
+      } catch {
+        toast('공유 프로젝트를 저장하지 못했습니다.', 'error')
+        clearShareHash()
       }
     })()
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -270,8 +283,18 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) =
             {loading ? '로딩 중...' : projects.length > 0 ? `${projects.length}개의 프로젝트` : '아직 프로젝트가 없어요'}
           </p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 12, color: '#999' }}>{user?.email}</span>
+          <button
+            onClick={() => setShowProfile(true)}
+            style={{
+              padding: '6px 14px', borderRadius: 8, border: '1px solid #e0e0e0',
+              background: '#fff', fontSize: 12, fontWeight: 600, color: '#666',
+              cursor: 'pointer',
+            }}
+          >
+            설정
+          </button>
           <button
             onClick={signOut}
             style={{
@@ -302,6 +325,8 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) =
           />
         ))}
       </div>
+
+      {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
     </div>
   )
 }

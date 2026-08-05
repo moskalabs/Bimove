@@ -28,11 +28,13 @@ const DEFAULTS: PriceConfig = {
   },
 }
 
+import { scopedGet, scopedSet, scopedRemove } from './scopedStorage'
+
 const KEY = 'bimove_price_config_v1'
 
 export function loadPriceConfig(): PriceConfig {
   try {
-    const raw = localStorage.getItem(KEY)
+    const raw = scopedGet(KEY)
     if (!raw) return { ...DEFAULTS, blocks: { ...DEFAULTS.blocks } }
     const parsed = JSON.parse(raw) as Partial<PriceConfig>
     return {
@@ -49,11 +51,11 @@ export function loadPriceConfig(): PriceConfig {
 }
 
 export function savePriceConfig(config: PriceConfig) {
-  try { localStorage.setItem(KEY, JSON.stringify(config)) } catch { /* full */ }
+  try { scopedSet(KEY, JSON.stringify(config)) } catch { /* full */ }
 }
 
 export function resetPriceConfig(): PriceConfig {
-  localStorage.removeItem(KEY)
+  scopedRemove(KEY)
   return { ...DEFAULTS, blocks: { ...DEFAULTS.blocks } }
 }
 
@@ -115,7 +117,5 @@ export function computeQuote(
   return { lines, total }
 }
 
-export function fmtKRW(amount: number): string {
-  if (amount === 0) return '₩0'
-  return '₩' + Math.round(amount).toLocaleString('ko-KR')
-}
+// fmtKRW는 purchaseOrder.ts로 통합됨 — 기존 import 호환용 re-export
+export { fmtKRW } from './purchaseOrder'

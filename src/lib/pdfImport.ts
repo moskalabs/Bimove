@@ -12,7 +12,10 @@ async function getPdfJs() {
   return pdfjsLib
 }
 
-export function importPdf(editor: Editor) {
+export function importPdf(
+  editor: Editor,
+  notify?: { onSuccess?: (msg: string) => void; onError?: (msg: string) => void },
+) {
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = 'application/pdf'
@@ -21,9 +24,10 @@ export function importPdf(editor: Editor) {
     if (!file) return
     try {
       await importPdfFile(editor, file)
+      notify?.onSuccess?.(`"${file.name}" PDF를 가져왔습니다.`)
     } catch (err) {
       console.error('[PDF import] failed:', err)
-      alert('PDF 가져오기 실패: ' + String(err))
+      notify?.onError?.('PDF 가져오기 실패: ' + String(err))
     }
   }
   input.click()

@@ -112,12 +112,8 @@ function amountToKorean(n: number): string {
   return '일금 ' + groups.join(' ') + '원정(₩' + Math.round(n).toLocaleString('ko-KR') + ')'
 }
 
-export function printPOPdf(po: PurchaseOrder) {
-  if (po.tables.length === 0) {
-    alert('물량표가 비어 있습니다.')
-    return
-  }
-
+/** 발주서 HTML body 내용물 생성 (PDF·JPG 공통) */
+function buildPOBodyHtml(po: PurchaseOrder) {
   const now = new Date()
   const dateStr = `${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일`
   const docNo = `PO-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`
@@ -125,7 +121,6 @@ export function printPOPdf(po: PurchaseOrder) {
   const vat = Math.round(grand * 0.1)
   const totalWithVat = grand + vat
 
-  // 물량표별 테이블 HTML
   const tablesHtml = po.tables.map((table, ti) => {
     const template = getTemplate(table.templateId)
     const total = tableTotal(table)
@@ -176,30 +171,95 @@ export function printPOPdf(po: PurchaseOrder) {
     `
   }).join('')
 
-  const html = `<!DOCTYPE html>
-<html lang="ko">
-<head>
-<meta charset="utf-8">
-<title>발주서 ${docNo}</title>
-<style>
-  @page { size: A4 portrait; margin: 12mm 15mm; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', 'NanumGothic', sans-serif; color: #111; font-size: 9pt; line-height: 1.5; }
+  const bodyHtml = `
+  <div class="doc-title">발 주 서</div>
+  <div class="doc-meta">
+    <span>문서번호: ${docNo}</span>
+    <span>발주일자: ${dateStr}</span>
+  </div>
+  <div class="info-wrap">
+    <div class="info-block">
+      <div class="block-title">수 신 (공급자)</div>
+      <div class="info-row"><div class="info-label">상 호</div><div class="info-value"></div></div>
+      <div class="info-row"><div class="info-label">대표자</div><div class="info-value"></div></div>
+      <div class="info-row"><div class="info-label">주 소</div><div class="info-value"></div></div>
+      <div class="info-row"><div class="info-label">연락처</div><div class="info-value"></div></div>
+    </div>
+    <div class="info-block">
+      <div class="block-title">발 신 (발주처)</div>
+      <div class="info-row"><div class="info-label">상 호</div><div class="info-value"></div></div>
+      <div class="info-row"><div class="info-label">대표자</div><div class="info-value"></div></div>
+      <div class="info-row"><div class="info-label">현장명</div><div class="info-value"></div></div>
+      <div class="info-row"><div class="info-label">연락처</div><div class="info-value"></div></div>
+    </div>
+  </div>
+  <div class="amount-box">
+    <div class="amount-row">
+      <div class="amount-label">합계금액</div>
+      <div class="amount-value korean">${amountToKorean(totalWithVat)}</div>
+    </div>
+    <div class="amount-row">
+      <div class="amount-label">공급가액</div>
+      <div class="amount-value">${comma(grand)}원</div>
+    </div>
+    <div class="amount-row">
+      <div class="amount-label">부가세</div>
+      <div class="amount-value">${comma(vat)}원 (10%)</div>
+    </div>
+    <div class="amount-row">
+      <div class="amount-label" style="background:#e8edf5;font-size:10pt">합 계</div>
+      <div class="amount-value highlight">${comma(totalWithVat)}원</div>
+    </div>
+  </div>
+  ${tablesHtml}
+  <div class="grand-total">
+    <div class="gt-label">합 계</div>
+    <div class="gt-supply"><span class="gt-sub-label">공급가액</span> ${comma(grand)}원</div>
+    <div class="gt-vat"><span class="gt-sub-label">부가세</span> ${comma(vat)}원</div>
+    <div class="gt-total">${comma(totalWithVat)}원</div>
+  </div>
+  <div class="notes">
+    <div class="notes-title">특기사항</div>
+    1. 상기 금액은 부가가치세 포함 금액입니다.<br>
+    2. 납품기한: 발주일로부터 ( )일 이내<br>
+    3. 납품장소: <br>
+    4. 결제조건: <br>
+    5. 자재 시세에 따라 단가가 변동될 수 있습니다.
+  </div>
+  <div class="stamp-area">
+    <div class="stamp-box">
+      <div class="stamp-title">작 성</div>
+      <div class="stamp-content">(인)</div>
+    </div>
+    <div class="stamp-box">
+      <div class="stamp-title">검 토</div>
+      <div class="stamp-content">(인)</div>
+    </div>
+    <div class="stamp-box">
+      <div class="stamp-title">승 인</div>
+      <div class="stamp-content">(인)</div>
+    </div>
+  </div>
+  <div class="footer">
+    본 발주서는 ${dateStr} 기준 작성되었습니다. | bimove
+  </div>`
 
-  /* 제목 */
+  return { bodyHtml, docNo, dateStr }
+}
+
+/** 발주서 공통 CSS */
+const PO_CSS = `
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body, .po-root { font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', 'NanumGothic', sans-serif; color: #111; font-size: 9pt; line-height: 1.5; }
   .doc-title {
     text-align: center; font-size: 26pt; font-weight: 900;
     letter-spacing: 16px; padding: 18px 0 14px;
     border-bottom: 3px double #111;
   }
-
-  /* 문서번호/날짜 */
   .doc-meta {
     display: flex; justify-content: flex-end; gap: 20px;
     padding: 8px 0; font-size: 8.5pt; color: #555;
   }
-
-  /* 상단 정보 테이블 */
   .info-wrap {
     display: flex; gap: 0; margin: 10px 0 14px;
     border: 1.5px solid #111;
@@ -225,8 +285,6 @@ export function printPOPdf(po: PurchaseOrder) {
     flex: 1; padding: 4px 10px; display: flex; align-items: center;
     font-size: 8.5pt;
   }
-
-  /* 금액 요약 */
   .amount-box {
     border: 1.5px solid #111; margin: 0 0 14px;
   }
@@ -246,8 +304,6 @@ export function printPOPdf(po: PurchaseOrder) {
   }
   .amount-value.korean { font-size: 9pt; font-weight: 400; color: #333; }
   .amount-value.highlight { font-size: 12pt; font-weight: 800; color: #1a56db; }
-
-  /* 품목 테이블 */
   .table-section { margin-bottom: 14px; }
   .table-title {
     font-size: 10pt; font-weight: 700; padding: 6px 0 4px;
@@ -271,8 +327,6 @@ export function printPOPdf(po: PurchaseOrder) {
     background: #f0f4ff; font-weight: 700; font-size: 8.5pt;
     border-top: 1.5px solid #555;
   }
-
-  /* 합계 영역 */
   .grand-total {
     border: 2px solid #111; margin: 16px 0;
     display: flex; align-items: stretch; min-height: 38px;
@@ -295,16 +349,12 @@ export function printPOPdf(po: PurchaseOrder) {
     font-weight: 800; font-size: 13pt; color: #1a56db;
   }
   .gt-sub-label { font-size: 7pt; color: #888; margin-right: 6px; }
-
-  /* 특기사항 */
   .notes {
     border: 1px solid #ccc; padding: 10px 14px; margin: 14px 0;
     font-size: 8pt; color: #555; line-height: 1.8;
     background: #fafafa; border-radius: 4px;
   }
   .notes-title { font-weight: 700; color: #333; margin-bottom: 4px; }
-
-  /* 도장란 */
   .stamp-area {
     display: flex; justify-content: flex-end; margin-top: 30px; gap: 0;
   }
@@ -320,109 +370,35 @@ export function printPOPdf(po: PurchaseOrder) {
     height: 60px; display: flex; align-items: center; justify-content: center;
     color: #ccc; font-size: 7pt;
   }
-
-  /* 푸터 */
   .footer {
     margin-top: 20px; padding-top: 8px; border-top: 1px solid #ddd;
     font-size: 7pt; color: #aaa; text-align: center;
   }
+`
 
+export function printPOPdf(po: PurchaseOrder) {
+  if (po.tables.length === 0) {
+    alert('물량표가 비어 있습니다.')
+    return
+  }
+
+  const { bodyHtml, docNo } = buildPOBodyHtml(po)
+
+  const html = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>발주서 ${docNo}</title>
+<style>
+  @page { size: A4 portrait; margin: 12mm 15mm; }
+  ${PO_CSS}
   @media print {
     body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
 </style>
 </head>
 <body>
-
-  <!-- 제목 -->
-  <div class="doc-title">발 주 서</div>
-
-  <!-- 문서번호/날짜 -->
-  <div class="doc-meta">
-    <span>문서번호: ${docNo}</span>
-    <span>발주일자: ${dateStr}</span>
-  </div>
-
-  <!-- 수신/발신 정보 -->
-  <div class="info-wrap">
-    <div class="info-block">
-      <div class="block-title">수 신 (공급자)</div>
-      <div class="info-row"><div class="info-label">상 호</div><div class="info-value"></div></div>
-      <div class="info-row"><div class="info-label">대표자</div><div class="info-value"></div></div>
-      <div class="info-row"><div class="info-label">주 소</div><div class="info-value"></div></div>
-      <div class="info-row"><div class="info-label">연락처</div><div class="info-value"></div></div>
-    </div>
-    <div class="info-block">
-      <div class="block-title">발 신 (발주처)</div>
-      <div class="info-row"><div class="info-label">상 호</div><div class="info-value"></div></div>
-      <div class="info-row"><div class="info-label">대표자</div><div class="info-value"></div></div>
-      <div class="info-row"><div class="info-label">현장명</div><div class="info-value"></div></div>
-      <div class="info-row"><div class="info-label">연락처</div><div class="info-value"></div></div>
-    </div>
-  </div>
-
-  <!-- 금액 요약 -->
-  <div class="amount-box">
-    <div class="amount-row">
-      <div class="amount-label">합계금액</div>
-      <div class="amount-value korean">${amountToKorean(totalWithVat)}</div>
-    </div>
-    <div class="amount-row">
-      <div class="amount-label">공급가액</div>
-      <div class="amount-value">${comma(grand)}원</div>
-    </div>
-    <div class="amount-row">
-      <div class="amount-label">부가세</div>
-      <div class="amount-value">${comma(vat)}원 (10%)</div>
-    </div>
-    <div class="amount-row">
-      <div class="amount-label" style="background:#e8edf5;font-size:10pt">합 계</div>
-      <div class="amount-value highlight">${comma(totalWithVat)}원</div>
-    </div>
-  </div>
-
-  <!-- 품목 상세 -->
-  ${tablesHtml}
-
-  <!-- 총 합계 바 -->
-  <div class="grand-total">
-    <div class="gt-label">합 계</div>
-    <div class="gt-supply"><span class="gt-sub-label">공급가액</span> ${comma(grand)}원</div>
-    <div class="gt-vat"><span class="gt-sub-label">부가세</span> ${comma(vat)}원</div>
-    <div class="gt-total">${comma(totalWithVat)}원</div>
-  </div>
-
-  <!-- 특기사항 -->
-  <div class="notes">
-    <div class="notes-title">특기사항</div>
-    1. 상기 금액은 부가가치세 포함 금액입니다.<br>
-    2. 납품기한: 발주일로부터 ( )일 이내<br>
-    3. 납품장소: <br>
-    4. 결제조건: <br>
-    5. 자재 시세에 따라 단가가 변동될 수 있습니다.
-  </div>
-
-  <!-- 도장란 -->
-  <div class="stamp-area">
-    <div class="stamp-box">
-      <div class="stamp-title">작 성</div>
-      <div class="stamp-content">(인)</div>
-    </div>
-    <div class="stamp-box">
-      <div class="stamp-title">검 토</div>
-      <div class="stamp-content">(인)</div>
-    </div>
-    <div class="stamp-box">
-      <div class="stamp-title">승 인</div>
-      <div class="stamp-content">(인)</div>
-    </div>
-  </div>
-
-  <!-- 푸터 -->
-  <div class="footer">
-    본 발주서는 ${dateStr} 기준 작성되었습니다. | bimove
-  </div>
-
+  ${bodyHtml}
 </body>
 </html>`
 
@@ -433,11 +409,63 @@ export function printPOPdf(po: PurchaseOrder) {
   setTimeout(() => win.print(), 600)
 }
 
-// ── JPG 내보내기 (canvas 렌더링) ──
+// ── JPG 내보내기 (html2canvas) ──
 
 export async function exportPOJpg(po: PurchaseOrder) {
-  alert('JPG 내보내기는 PDF에서 인쇄 > JPG 저장을 이용해 주세요.')
-  printPOPdf(po)
+  if (po.tables.length === 0) {
+    alert('물량표가 비어 있습니다.')
+    return
+  }
+
+  const { bodyHtml } = buildPOBodyHtml(po)
+
+  const A4_W = 794
+  const PADDING = 40
+
+  // 숨겨진 컨테이너에 HTML 렌더링
+  const container = document.createElement('div')
+  container.style.cssText = `position:fixed;left:-9999px;top:0;width:${A4_W}px;background:#fff;z-index:-1;`
+  const style = document.createElement('style')
+  style.textContent = PO_CSS + `\n.po-root { width: ${A4_W - PADDING * 2}px; padding: ${PADDING}px; background: #fff; }`
+  container.appendChild(style)
+  const root = document.createElement('div')
+  root.className = 'po-root'
+  root.innerHTML = bodyHtml
+  container.appendChild(root)
+  document.body.appendChild(container)
+
+  try {
+    // 레이아웃 대기
+    await new Promise(r => setTimeout(r, 300))
+
+    const html2canvas = (await import('html2canvas')).default
+    const canvas = await html2canvas(container, {
+      scale: 2,
+      backgroundColor: '#ffffff',
+      useCORS: true,
+      logging: false,
+      width: A4_W,
+      windowWidth: A4_W,
+    })
+
+    const jpgBlob = await new Promise<Blob | null>(resolve =>
+      canvas.toBlob(b => resolve(b), 'image/jpeg', 0.92),
+    )
+
+    if (!jpgBlob) throw new Error('JPG 변환 실패')
+
+    const a = document.createElement('a')
+    const date = new Date().toISOString().slice(0, 10)
+    a.download = `발주서_${date}.jpg`
+    a.href = URL.createObjectURL(jpgBlob)
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+  } catch {
+    alert('JPG 렌더링에 실패했습니다. PDF 인쇄 화면으로 전환합니다.')
+    printPOPdf(po)
+  } finally {
+    document.body.removeChild(container)
+  }
 }
 
 // ── 유틸 ──

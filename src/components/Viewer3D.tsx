@@ -4,6 +4,7 @@ import { OrbitControls, Grid, Environment, Html } from '@react-three/drei'
 import * as THREE from 'three'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { useEditor } from '../context/EditorContext'
+import { useToast } from '../context/ToastContext'
 import { getScaleConfig } from '../lib/scaleConfig'
 import { getWallHeightMm, getRoomNames } from '../lib/settings'
 import { detectRooms } from '../lib/roomDetection'
@@ -244,7 +245,10 @@ function RoomMesh({ pts, y, opacity = 1 }: { pts: { x: number; z: number }[]; y:
 
 // ── GLTF exporter hook ────────────────────────────────────────────────────────
 
-function SceneExporter({ exportRef }: { exportRef: React.MutableRefObject<(() => void) | null> }) {
+function SceneExporter({ exportRef, onExportError }: {
+  exportRef: React.MutableRefObject<(() => void) | null>
+  onExportError?: (msg: string) => void
+}) {
   const { scene } = useThree()
   useEffect(() => {
     exportRef.current = () => {
@@ -258,12 +262,15 @@ function SceneExporter({ exportRef }: { exportRef: React.MutableRefObject<(() =>
           a.href = url; a.download = 'model.glb'; a.click()
           setTimeout(() => URL.revokeObjectURL(url), 5000)
         },
-        (err) => console.error('GLTF export error:', err),
+        (err) => {
+          console.error('GLTF export error:', err)
+          onExportError?.('3D 모델 내보내기에 실패했습니다.')
+        },
         { binary: true },
       )
     }
     return () => { exportRef.current = null }
-  }, [scene, exportRef])
+  }, [scene, exportRef, onExportError])
   return null
 }
 
@@ -271,9 +278,11 @@ function SceneExporter({ exportRef }: { exportRef: React.MutableRefObject<(() =>
 
 export function Viewer3D({ onClose }: { onClose: () => void }) {
   const editor = useEditor()
+  const { toast } = useToast()
   const scene = useMemo(() => buildScene(editor), [editor])
   const [showCeiling, setShowCeiling] = useState(false)
   const exportRef = useRef<(() => void) | null>(null)
+  const handleExportError = (msg: string) => toast(msg, 'error')
 
   const btnStyle: React.CSSProperties = {
     background: '#fff', border: 'none', borderRadius: 8,
@@ -320,7 +329,7 @@ export function Viewer3D({ onClose }: { onClose: () => void }) {
         </div>
       ) : (
         <Canvas shadows camera={{ position: [scene.camDist, scene.camY, scene.camDist], fov: 50 }}>
-          <SceneExporter exportRef={exportRef} />
+          <SceneExporter exportRef={exportRef} onExportError={handleExportError} />
           <color attach="background" args={['#1e2228']} />
           <ambientLight intensity={0.5} />
           <directionalLight

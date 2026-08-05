@@ -7,12 +7,13 @@ import { LBar } from './components/LBar'
 import { RBar } from './components/RBar'
 import { ToolOverlay } from './components/ToolOverlay'
 import { RoomOverlay } from './components/RoomOverlay'
+import { CanvasPickOverlay } from './components/CanvasPickOverlay'
 import { ScaleRuler } from './components/ScaleRuler'
 import { ChatPanel } from './components/ChatPanel'
 import { ProjectsPage } from './components/ProjectsPage'
 import { AuthPage } from './components/AuthPage'
 import { AuthProvider, useAuth } from './context/AuthContext'
-import { ToastProvider } from './context/ToastContext'
+import { ToastProvider, useToast } from './context/ToastContext'
 const Viewer3D = lazy(() => import('./components/Viewer3D').then(m => ({ default: m.Viewer3D })))
 import { WallShapeUtil } from './shapes/WallShape'
 import { DoorShapeUtil } from './shapes/DoorShape'
@@ -31,7 +32,12 @@ import { ProjectContext } from './context/ProjectContext'
 import { loadSnapshot, saveSnapshot, saveThumbnail, touchProject } from './lib/projectStore'
 import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase } from './lib/supabaseSync'
 import { saveVersion } from './lib/versions'
+import { initGrayscaleAttr, initDarkAttr } from './lib/settings'
 import './App.css'
+
+// body data-grayscale / dark 동기화 (페이지 로드 시)
+initGrayscaleAttr()
+initDarkAttr()
 
 const SHAPE_UTILS = [WallShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil, CommentShapeUtil, DimensionShapeUtil]
 const TOOLS = [WallTool, DoorTool, WindowTool, BlockTool, CommentTool, DimensionTool]
@@ -77,6 +83,7 @@ function EmptyCanvasHint({ editor }: { editor: Editor | null }) {
 function EditorView({ projectId, projectName, onBack }: { projectId: string; projectName: string; onBack: () => void }) {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [show3D, setShow3D] = useState(false)
+  const { toast } = useToast()
 
   const handleMount = (ed: Editor) => {
     ed.updateInstanceState({ isGridMode: false })
@@ -125,15 +132,38 @@ function EditorView({ projectId, projectName, onBack }: { projectId: string; pro
       }, 1500)
     })
 
-    // Supabase 동기화 (5초 디바운스)
+    // Supabase 동기화 (5초 디바운스, optimistic locking)
+    let lastServerUpdatedAt: string | undefined
+    let syncFailed = false
     supabaseTimer = window.setInterval(async () => {
       if (!latestSnapshot) return
       const snap = latestSnapshot
       latestSnapshot = null
       try {
-        await saveSnapshotToSupabase(projectId, snap)
+        const result = await saveSnapshotToSupabase(projectId, snap, undefined, lastServerUpdatedAt)
+        if (result.conflict) {
+          console.warn('[supabase-sync] conflict detected, other session saved first')
+          toast('다른 세션에서 프로젝트가 수정되었습니다.', 'info')
+          const overwrite = confirm(
+            '다른 세션에서 이 프로젝트를 수정했습니다.\n현재 내용으로 덮어쓰시겠습니까?'
+          )
+          if (overwrite) {
+            const retry = await saveSnapshotToSupabase(projectId, snap)
+            lastServerUpdatedAt = retry.serverUpdatedAt
+          }
+        } else {
+          lastServerUpdatedAt = result.serverUpdatedAt
+          if (syncFailed) {
+            toast('서버 동기화가 복구되었습니다.', 'success')
+            syncFailed = false
+          }
+        }
       } catch (err) {
         console.warn('[supabase-sync] snapshot save failed', err)
+        if (!syncFailed) {
+          toast('서버 동기화에 실패했습니다. 로컬에 저장됩니다.', 'error')
+          syncFailed = true
+        }
       }
     }, 5000)
 
@@ -146,6 +176,7 @@ function EditorView({ projectId, projectName, onBack }: { projectId: string; pro
         dirtySinceAuto = false
       } catch (err) {
         console.warn('[auto-version] failed', err)
+        toast('자동 버전 저장에 실패했습니다.', 'error')
       }
     }, AUTO_VERSION_MS)
 
@@ -200,6 +231,7 @@ function EditorView({ projectId, projectName, onBack }: { projectId: string; pro
               hideUi
             />
             <EmptyCanvasHint editor={editor} />
+            <CanvasPickOverlay />
             <RoomOverlay />
             <ScaleRuler />
           </main>
@@ -263,8 +295,35 @@ function OfflineBanner() {
   return <div className="offline-banner">⚠ 오프라인 상태입니다. 변경사항은 로컬에 저장됩니다.</div>
 }
 
+function SessionExpiredBanner() {
+  const { sessionExpired, dismissSessionExpired } = useAuth()
+  if (!sessionExpired) return null
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 10000,
+      background: '#fef3c7', borderBottom: '2px solid #f59e0b',
+      padding: '12px 20px', display: 'flex', alignItems: 'center',
+      justifyContent: 'space-between', gap: 16,
+    }}>
+      <span style={{ fontSize: 13, fontWeight: 600, color: '#92400e' }}>
+        ⚠ 세션이 만료되었습니다. 작업 내용은 로컬에 저장되어 있습니다. 다시 로그인해주세요.
+      </span>
+      <button
+        onClick={dismissSessionExpired}
+        style={{
+          padding: '6px 16px', borderRadius: 8, border: 'none',
+          background: '#f59e0b', color: '#fff', fontSize: 12, fontWeight: 700,
+          cursor: 'pointer', whiteSpace: 'nowrap',
+        }}
+      >
+        로그인하기
+      </button>
+    </div>
+  )
+}
+
 function AppContent() {
-  const { user, loading } = useAuth()
+  const { user, loading, sessionExpired } = useAuth()
   const [currentProject, setCurrentProject] = useState<{ id: string; name: string } | null>(null)
 
   if (loading) {
@@ -279,7 +338,26 @@ function AppContent() {
   }
 
   if (!user) {
-    return <AuthPage />
+    return (
+      <>
+        <SessionExpiredBanner />
+        <AuthPage />
+      </>
+    )
+  }
+
+  // 세션 만료 상태이면 에디터 유지하면서 배너만 표시 (작업 보존)
+  if (sessionExpired && currentProject) {
+    return (
+      <>
+        <SessionExpiredBanner />
+        <EditorView
+          projectId={currentProject.id}
+          projectName={currentProject.name}
+          onBack={() => setCurrentProject(null)}
+        />
+      </>
+    )
   }
 
   if (!currentProject) {

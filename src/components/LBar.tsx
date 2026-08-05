@@ -6,9 +6,16 @@ import { LayersPanel } from './panels/LayersPanel'
 import { BOQPanel } from './panels/BOQPanel'
 import { MaterialsPanel } from './panels/MaterialsPanel'
 import { LayoutPanel } from './panels/LayoutPanel'
+import { ImportPanel } from './panels/ImportPanel'
+import { useEditor } from '../context/EditorContext'
+import { exportDxf } from '../lib/dxf'
+import { exportPng } from '../lib/exportPng'
 
 /* ── 햄버거 메뉴 드롭다운 ── */
-function HamburgerMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
+function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onClose: () => void; onImport: () => void }) {
+  const editor = useEditor()
+  const [exportSub, setExportSub] = useState(false)
+
   if (!open) return null
 
   return (
@@ -16,7 +23,7 @@ function HamburgerMenu({ open, onClose }: { open: boolean; onClose: () => void }
       {/* backdrop */}
       <div
         style={{ position: 'fixed', inset: 0, zIndex: 98 }}
-        onClick={onClose}
+        onClick={() => { onClose(); setExportSub(false) }}
       />
       <div className="lbar-menu-dropdown">
         <div className="lbar-menu-section">
@@ -27,19 +34,31 @@ function HamburgerMenu({ open, onClose }: { open: boolean; onClose: () => void }
         </div>
         <div className="lbar-menu-divider" />
         <div className="lbar-menu-section">
-          <div className="lbar-menu-item lbar-menu-has-sub">
+          <div className="lbar-menu-item lbar-menu-has-sub" onClick={() => { onImport(); onClose(); setExportSub(false) }}>
             가져오기
             <span className="lbar-menu-arrow">›</span>
           </div>
-          <div className="lbar-menu-item lbar-menu-has-sub">
+          <div className="lbar-menu-item lbar-menu-has-sub" style={{ position: 'relative' }}
+            onClick={() => setExportSub(!exportSub)}
+          >
             내보내기
             <span className="lbar-menu-arrow">›</span>
+            {exportSub && (
+              <div className="lbar-menu-dropdown" style={{ position: 'absolute', left: '100%', top: -4, minWidth: 140 }}>
+                <div className="lbar-menu-item" onClick={(e) => { e.stopPropagation(); editor && exportDxf(editor); onClose(); setExportSub(false) }}>
+                  📐 DXF 내보내기
+                </div>
+                <div className="lbar-menu-item" onClick={(e) => { e.stopPropagation(); editor && exportPng(editor); onClose(); setExportSub(false) }}>
+                  🖼 PNG 내보내기
+                </div>
+              </div>
+            )}
           </div>
         </div>
         <div className="lbar-menu-divider" />
         <div className="lbar-menu-section">
           <div className="lbar-menu-item">공유</div>
-          <div className="lbar-menu-item">인쇄</div>
+          <div className="lbar-menu-item" onClick={() => { window.print(); onClose() }}>인쇄</div>
         </div>
         <div className="lbar-menu-divider" />
         <div className="lbar-menu-section">
@@ -73,7 +92,7 @@ function View3DIcon() {
   )
 }
 
-type PanelId = 'layers' | 'materials' | 'table' | 'layout' | null
+type PanelId = 'layers' | 'materials' | 'table' | 'layout' | 'import' | null
 
 export function LBar() {
   const [activePanel, setActivePanel] = useState<PanelId>(null)
@@ -81,6 +100,10 @@ export function LBar() {
 
   const togglePanel = (id: Exclude<PanelId, null>) =>
     setActivePanel(prev => prev === id ? null : id)
+
+  const openImportPanel = () => {
+    setActivePanel('import')
+  }
 
   return (
     <>
@@ -152,13 +175,14 @@ export function LBar() {
       </aside>
 
       {/* 햄버거 메뉴 드롭다운 */}
-      <HamburgerMenu open={menuOpen} onClose={() => setMenuOpen(false)} />
+      <HamburgerMenu open={menuOpen} onClose={() => setMenuOpen(false)} onImport={openImportPanel} />
 
       {/* 패널 */}
       {activePanel === 'layers' && <LayersPanel />}
       {activePanel === 'table' && <BOQPanel />}
       {activePanel === 'materials' && <MaterialsPanel />}
       {activePanel === 'layout' && <LayoutPanel />}
+      {activePanel === 'import' && <ImportPanel />}
     </>
   )
 }

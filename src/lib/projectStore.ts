@@ -1,3 +1,5 @@
+import { scopedGet, scopedSet, scopedRemove } from './scopedStorage'
+
 export type Project = {
   id: string
   name: string
@@ -10,11 +12,11 @@ const LIST_KEY = 'bimove_projects_v1'
 const snapshotKey = (id: string) => `bimove_project_${id}`
 
 export function getProjects(): Project[] {
-  try { return JSON.parse(localStorage.getItem(LIST_KEY) ?? '[]') } catch { return [] }
+  try { return JSON.parse(scopedGet(LIST_KEY) ?? '[]') } catch { return [] }
 }
 
 function saveProjectList(projects: Project[]) {
-  localStorage.setItem(LIST_KEY, JSON.stringify(projects))
+  scopedSet(LIST_KEY, JSON.stringify(projects))
 }
 
 export function createProject(name: string): Project {
@@ -32,11 +34,11 @@ export function createProject(name: string): Project {
 
 export function deleteProject(id: string) {
   saveProjectList(getProjects().filter(p => p.id !== id))
-  localStorage.removeItem(snapshotKey(id))
+  scopedRemove(snapshotKey(id))
   // 버전 히스토리도 함께 정리
   try {
     const versionsKey = `bimove_versions_${id}`
-    localStorage.removeItem(versionsKey)
+    scopedRemove(versionsKey)
   } catch { /* ignore */ }
 }
 
@@ -54,13 +56,13 @@ export function touchProject(id: string) {
 
 export function loadSnapshot(id: string): object | null {
   try {
-    const raw = localStorage.getItem(snapshotKey(id))
+    const raw = scopedGet(snapshotKey(id))
     return raw ? JSON.parse(raw) : null
   } catch { return null }
 }
 
 export function saveSnapshot(id: string, snapshot: object) {
-  try { localStorage.setItem(snapshotKey(id), JSON.stringify(snapshot)) } catch { /* storage full */ }
+  try { scopedSet(snapshotKey(id), JSON.stringify(snapshot)) } catch { /* storage full */ }
 }
 
 export function saveThumbnail(id: string, dataUrl: string) {
@@ -75,6 +77,6 @@ export function migrateOldData() {
   const old = localStorage.getItem(OLD_KEY)
   if (!old || getProjects().length > 0) return
   const project = createProject('기존 프로젝트')
-  localStorage.setItem(snapshotKey(project.id), old)
+  scopedSet(snapshotKey(project.id), old)
   localStorage.removeItem(OLD_KEY)
 }
