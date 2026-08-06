@@ -19,13 +19,11 @@ function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onClose: ()
   if (!open) return null
 
   return (
-    <>
-      {/* backdrop */}
-      <div
-        style={{ position: 'fixed', inset: 0, zIndex: 98 }}
-        onClick={() => { onClose(); setExportSub(false) }}
-      />
-      <div className="lbar-menu-dropdown">
+    <div
+      style={{ position: 'fixed', inset: 0, zIndex: 1100 }}
+      onClick={() => { onClose(); setExportSub(false) }}
+    >
+      <div className="lbar-menu-dropdown" onClick={(e) => e.stopPropagation()}>
         <div className="lbar-menu-section">
           <div className="lbar-menu-header">홈</div>
           <div className="lbar-menu-item active">● Drawing 1</div>
@@ -44,11 +42,11 @@ function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onClose: ()
             내보내기
             <span className="lbar-menu-arrow">›</span>
             {exportSub && (
-              <div className="lbar-menu-dropdown" style={{ position: 'absolute', left: '100%', top: -4, minWidth: 140 }}>
-                <div className="lbar-menu-item" onClick={(e) => { e.stopPropagation(); editor && exportDxf(editor); onClose(); setExportSub(false) }}>
+              <div className="lbar-menu-sub" onClick={(e) => e.stopPropagation()}>
+                <div className="lbar-menu-item" onClick={() => { editor && exportDxf(editor); onClose(); setExportSub(false) }}>
                   📐 DXF 내보내기
                 </div>
-                <div className="lbar-menu-item" onClick={(e) => { e.stopPropagation(); editor && exportPng(editor); onClose(); setExportSub(false) }}>
+                <div className="lbar-menu-item" onClick={() => { editor && exportPng(editor); onClose(); setExportSub(false) }}>
                   🖼 PNG 내보내기
                 </div>
               </div>
@@ -65,7 +63,7 @@ function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onClose: ()
           <div className="lbar-menu-item">옵션</div>
         </div>
       </div>
-    </>
+    </div>
   )
 }
 
