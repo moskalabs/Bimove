@@ -492,7 +492,11 @@ export function commitCadImport(
   if (shapes.length) {
     editor.createShapes(shapes as never)
     editor.setSelectedShapes(shapes.map((s) => s.id))
-    editor.zoomToFit()
+    // 셰이프 생성 직후 바운드 계산 전에 zoomToFit이 실패할 수 있어서 딜레이
+    requestAnimationFrame(() => {
+      editor.zoomToFit()
+      editor.zoomOut()
+    })
   }
   return shapes.length
 }
