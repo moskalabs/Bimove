@@ -209,6 +209,8 @@
   z-index: 1100;
   padding: 4px 0;
   overflow: visible;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .lbar-menu-header {
