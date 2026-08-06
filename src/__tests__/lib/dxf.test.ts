@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import DxfParser from 'dxf-parser'
-import { dxfFingerprint, parseDxfSegments, type CadLayerInfo } from '../../lib/dxf'
+import { dxfFingerprint, parseDxfSegments } from '../../lib/dxf'
 
 // ── untitled.dxf 원본 내용 (Downloads에서 복사) ──
 const UNTITLED_DXF = `0

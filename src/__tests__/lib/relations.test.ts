@@ -13,7 +13,7 @@ vi.mock('../../lib/scaleConfig', () => ({
   getScaleConfig: vi.fn(() => ({ pxPerMm: 1 })),
 }))
 
-import { computeRelations, type RoomRelation, type WallOpening } from '../../lib/relations'
+import { computeRelations } from '../../lib/relations'
 import { detectRooms } from '../../lib/roomDetection'
 
 // Helper: create a mock Editor

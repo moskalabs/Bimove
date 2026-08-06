@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { BLOCKS, BLOCK_CATEGORIES, getBlock, type BlockDef } from '../../lib/blockLibrary'
+import { BLOCKS, BLOCK_CATEGORIES, getBlock } from '../../lib/blockLibrary'
 
 describe('BLOCKS data integrity', () => {
   it('has at least 20 block definitions', () => {
