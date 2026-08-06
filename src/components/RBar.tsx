@@ -37,7 +37,6 @@ type SelInfo = {
 /* ── R bar 메인 ── */
 export function RBar() {
   const editor = useEditor()
-  const { toast } = useToast()
   const [sel, setSel] = useState<SelInfo>(null)
   const [scale, setScaleState] = useState<ScaleConfig>({ unit: 'mm', pxPerMm: 1 })
   const [currentToolId, setCurrentToolId] = useState<string>('select')
@@ -90,6 +89,7 @@ export function RBar() {
 /* ── 상단 액션바: 사용자 아이콘 · 히스토리 · 미리보기 · 공유하기 ── */
 function TopActionBar() {
   const editor = useEditor()
+  const { toast } = useToast()
   const projectId = useProjectId()
   const [showHistory, setShowHistory] = useState(false)
 

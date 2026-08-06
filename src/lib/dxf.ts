@@ -406,7 +406,7 @@ export async function parseCadFile(
     return null
   }
 
-  const layerTable = (dxf.tables as Record<string, unknown>)?.layer as
+  const layerTable = (dxf.tables as unknown as Record<string, unknown>)?.layer as
     { layers?: Record<string, { colorIndex?: number; color?: number; lineweight?: number }> } | undefined
   const layerDefs = layerTable?.layers ?? {}
 

@@ -62,7 +62,7 @@ export function LayersPanel() {
   const [materialCounts, setMaterialCounts] = useState<Record<string, number>>({})
   const [dxfLayerCounts, setDxfLayerCounts] = useState<Record<string, number>>({})
   const [dxfLayerLw, setDxfLayerLw] = useState<Record<string, number>>({})
-  const [hidden, setHidden] = useState<Set<string>>(new Set())
+  const [_hidden, setHidden] = useState<Set<string>>(new Set())
   const [opacityMap, setOpacityMap] = useState<Record<string, OpacityLevel>>({})
   const [isGrayscale, setIsGrayscale] = useState(getGrayscaleMode)
   const presets = loadMaterialPresets()

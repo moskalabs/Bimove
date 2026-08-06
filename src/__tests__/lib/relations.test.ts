@@ -57,7 +57,7 @@ describe('computeRelations', () => {
           { x: 0, y: 100 },
         ],
         area: 10000, // px² (with pxPerMm=1 → mm² → m²)
-        wallIds: [],
+        centroid: { x: 0, y: 0 },
       },
     ])
 
@@ -82,7 +82,7 @@ describe('computeRelations', () => {
           { x: 0, y: 200 },
         ],
         area: 40000,
-        wallIds: [],
+        centroid: { x: 0, y: 0 },
       },
     ])
 
@@ -118,7 +118,7 @@ describe('computeRelations', () => {
           { x: 0, y: 500 },
         ],
         area: 250000,
-        wallIds: [],
+        centroid: { x: 0, y: 0 },
       },
     ])
 
@@ -140,12 +140,12 @@ describe('computeRelations', () => {
       {
         vertices: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }],
         area: 10000,
-        wallIds: [],
+        centroid: { x: 0, y: 0 },
       },
       {
         vertices: [{ x: 200, y: 0 }, { x: 300, y: 0 }, { x: 300, y: 100 }, { x: 200, y: 100 }],
         area: 10000,
-        wallIds: [],
+        centroid: { x: 0, y: 0 },
       },
     ])
 

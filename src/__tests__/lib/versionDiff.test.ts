@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { diffSnapshots, type DiffResult } from '../../lib/versionDiff'
+import { diffSnapshots } from '../../lib/versionDiff'
 
 function makeSnapshot(shapes: Record<string, { type?: string; [key: string]: unknown }>) {
   const store: Record<string, { id: string; typeName: string; type?: string; [key: string]: unknown }> = {}
