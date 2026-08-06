@@ -492,10 +492,27 @@ export function commitCadImport(
   if (shapes.length) {
     editor.createShapes(shapes as never)
     editor.setSelectedShapes(shapes.map((s) => s.id))
-    // 셰이프 생성 직후 바운드 계산 전에 zoomToFit이 실패할 수 있어서 딜레이
-    requestAnimationFrame(() => {
-      editor.zoomToFit()
-      editor.zoomOut()
+    // 직접 바운딩 박스 계산 후 카메라 이동 (zoomToFit 타이밍 이슈 우회)
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const s of shapes) {
+      const ex = s.x + s.props.x2
+      const ey = s.y + s.props.y2
+      minX = Math.min(minX, s.x, ex)
+      minY = Math.min(minY, s.y, ey)
+      maxX = Math.max(maxX, s.x, ex)
+      maxY = Math.max(maxY, s.y, ey)
+    }
+    const pad = 100
+    const w = maxX - minX + pad * 2
+    const h = maxY - minY + pad * 2
+    const vp = editor.getViewportScreenBounds()
+    const zoom = Math.min(vp.w / w, vp.h / h, 1)
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
+    editor.setCamera({
+      x: -cx + vp.w / 2 / zoom,
+      y: -cy + vp.h / 2 / zoom,
+      z: zoom,
     })
   }
   return shapes.length
