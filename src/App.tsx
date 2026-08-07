@@ -243,9 +243,13 @@ function EditorView({ projectId, projectName, onBack }: { projectId: string; pro
             <CanvasPickOverlay />
             <RoomOverlay />
             <ScaleRuler />
+            <ChatPanel />
+            <button
+              className="canvas-3d-btn"
+              onClick={() => setShow3D(true)}
+            >🧱 3D</button>
           </main>
           <RBar />
-          <ChatPanel />
         </div>
 
         {/* back to projects */}
@@ -262,18 +266,6 @@ function EditorView({ projectId, projectName, onBack }: { projectId: string; pro
         >
           ← <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{projectName}</span>
         </button>
-
-        {/* 3D button */}
-        <button
-          onClick={() => setShow3D(true)}
-          style={{
-            position: 'fixed', bottom: 20, right: 76, zIndex: 500,
-            height: 46, padding: '0 16px', borderRadius: 23,
-            background: '#fff', border: '1.5px solid #e0e0e0',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.15)', cursor: 'pointer',
-            fontSize: 14, fontWeight: 600, color: '#444',
-          }}
-        >🧱 3D</button>
 
         {show3D && (
           <Suspense fallback={

@@ -68,7 +68,7 @@ export function ChatPanel() {
       <button
         onClick={() => { setOpen(v => !v); setUnread(0) }}
         style={{
-          position: 'fixed', bottom: 20, right: 20, zIndex: 500,
+          position: 'absolute', bottom: 20, right: 20, zIndex: 500,
           width: 46, height: 46, borderRadius: '50%',
           background: open ? '#1a73e8' : '#fff',
           border: '1.5px solid #e0e0e0',
@@ -94,7 +94,7 @@ export function ChatPanel() {
       {/* Chat panel */}
       {open && (
         <div style={{
-          position: 'fixed', bottom: 76, right: 20, zIndex: 499,
+          position: 'absolute', bottom: 76, right: 20, zIndex: 499,
           width: 300, height: 420, display: 'flex', flexDirection: 'column',
           background: '#fff', border: '1px solid #e0e0e0',
           borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.12)',

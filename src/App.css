@@ -289,6 +289,40 @@
   overflow: hidden;
 }
 
+.canvas-3d-btn {
+  position: absolute;
+  bottom: 20px;
+  right: 76px;
+  z-index: 500;
+  height: 46px;
+  padding: 0 16px;
+  border-radius: 23px;
+  background: #fff;
+  border: 1.5px solid #e0e0e0;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: #444;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.canvas-3d-btn:hover {
+  background: #f0f4ff;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+}
+
+html[data-dark="true"] .canvas-3d-btn {
+  background: #2a2a30;
+  color: #ccc;
+  border-color: #444;
+}
+
+html[data-dark="true"] .canvas-3d-btn:hover {
+  background: #333;
+}
+
 .rbar {
   width: 260px;
   height: 100%;
