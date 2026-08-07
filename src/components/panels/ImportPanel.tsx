@@ -15,44 +15,62 @@ export function ImportPanel() {
     onInfo: (msg: string) => toast(msg, 'info'),
   }
   const [cadResult, setCadResult] = useState<CadParseResult | null>(null)
+  const [loading, setLoading] = useState<string | null>(null) // 로딩 메시지
 
   const handleCadImport = async () => {
     if (!editor) return
     const file = await pickCadFile()
     if (!file) return
-    const result = await parseCadFile(file, notify)
-    if (!result) return
 
-    // 중복 체크
-    const existingFps = new Set(
-      editor.getCurrentPageShapes()
-        .map((s) => (s.meta as Record<string, unknown>)?.dxfFingerprint)
-        .filter((fp): fp is string => typeof fp === 'string'),
-    )
-    if (existingFps.has(result.fingerprint)) {
-      const proceed = confirm(
-        `"${file.name}" 파일이 이미 임포트된 것 같습니다.\n그래도 다시 임포트하시겠습니까?`,
+    setLoading('도면 파일 분석 중...')
+    try {
+      const result = await parseCadFile(file, notify)
+      if (!result) { setLoading(null); return }
+
+      // 중복 체크
+      const existingFps = new Set(
+        editor.getCurrentPageShapes()
+          .map((s) => (s.meta as Record<string, unknown>)?.dxfFingerprint)
+          .filter((fp): fp is string => typeof fp === 'string'),
       )
-      if (!proceed) return
-    }
+      if (existingFps.has(result.fingerprint)) {
+        setLoading(null)
+        const proceed = confirm(
+          `"${file.name}" 파일이 이미 임포트된 것 같습니다.\n그래도 다시 임포트하시겠습니까?`,
+        )
+        if (!proceed) return
+      }
 
-    // 레이어가 2개 이상이면 선택 다이얼로그, 1개면 바로 임포트
-    if (result.layers.length > 1) {
-      setCadResult(result)
-    } else {
-      const allLayers = new Set(result.layers.map((l) => l.name))
-      const count = commitCadImport(editor, result, allLayers)
-      const fmt = result.isDwg ? 'DWG' : 'DXF'
-      toast(`"${result.fileName}" ${fmt}를 가져왔습니다. (${count}개 벽)`, 'success')
+      // 레이어가 2개 이상이면 선택 다이얼로그, 1개면 바로 임포트
+      if (result.layers.length > 1) {
+        setCadResult(result)
+      } else {
+        setLoading(`${result.totalSegments.toLocaleString()}개 세그먼트 변환 중...`)
+        // UI 갱신 후 무거운 작업 실행
+        await new Promise((r) => setTimeout(r, 50))
+        const allLayers = new Set(result.layers.map((l) => l.name))
+        const count = commitCadImport(editor, result, allLayers)
+        const fmt = result.isDwg ? 'DWG' : 'DXF'
+        toast(`"${result.fileName}" ${fmt}를 가져왔습니다. (${count}개 벽)`, 'success')
+      }
+    } finally {
+      setLoading(null)
     }
   }
 
-  const handleLayerConfirm = (selectedLayers: Set<string>) => {
+  const handleLayerConfirm = async (selectedLayers: Set<string>) => {
     if (!editor || !cadResult) return
+    const segCount = cadResult.layers
+      .filter((l) => selectedLayers.has(l.name))
+      .reduce((sum, l) => sum + l.segCount, 0)
+    setLoading(`${segCount.toLocaleString()}개 세그먼트 변환 중...`)
+    // UI 갱신 후 무거운 작업 실행
+    await new Promise((r) => setTimeout(r, 50))
     const count = commitCadImport(editor, cadResult, selectedLayers)
     const fmt = cadResult.isDwg ? 'DWG' : 'DXF'
     toast(`"${cadResult.fileName}" ${fmt}를 가져왔습니다. (${count}개 벽, ${selectedLayers.size}개 레이어)`, 'success')
     setCadResult(null)
+    setLoading(null)
   }
 
   return (
@@ -123,9 +141,23 @@ export function ImportPanel() {
         <CadLayerDialog
           result={cadResult}
           onConfirm={handleLayerConfirm}
-          onCancel={() => setCadResult(null)}
+          onCancel={() => { setCadResult(null); setLoading(null) }}
         />
       )}
+
+      {/* 로딩 오버레이 */}
+      {loading && <ImportLoadingOverlay message={loading} />}
+    </div>
+  )
+}
+
+function ImportLoadingOverlay({ message }: { message: string }) {
+  return (
+    <div className="import-loading-overlay">
+      <div className="import-loading-card">
+        <div className="import-loading-spinner" />
+        <div className="import-loading-msg">{message}</div>
+      </div>
     </div>
   )
 }
