@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  Menu, Layers, Palette, FileText, Info,
+  Menu, Layers, Palette, FileText, Info, ArrowLeftCircle,
 } from 'lucide-react'
 import { LayersPanel } from './panels/LayersPanel'
 import { BOQPanel } from './panels/BOQPanel'
@@ -92,7 +92,7 @@ function View3DIcon() {
 
 type PanelId = 'layers' | 'materials' | 'table' | 'layout' | 'import' | null
 
-export function LBar() {
+export function LBar({ onBack }: { onBack?: () => void }) {
   const [activePanel, setActivePanel] = useState<PanelId>(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -154,8 +154,17 @@ export function LBar() {
         {/* spacer */}
         <div style={{ flex: 1 }} />
 
-        {/* ── 섹션 3: 정보 ── */}
+        {/* ── 섹션 3: 하단 ── */}
         <div className="lbar-section">
+          {onBack && (
+            <button
+              className="lbar-icon"
+              title="프로젝트 목록"
+              onClick={onBack}
+            >
+              <ArrowLeftCircle size={18} strokeWidth={1.75} />
+            </button>
+          )}
           <button
             className="lbar-icon"
             title="2D/3D 전환"

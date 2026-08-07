@@ -80,7 +80,7 @@ function EmptyCanvasHint({ editor }: { editor: Editor | null }) {
   )
 }
 
-function EditorView({ projectId, projectName, onBack }: { projectId: string; projectName: string; onBack: () => void }) {
+function EditorView({ projectId, onBack }: { projectId: string; projectName?: string; onBack: () => void }) {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [show3D, setShow3D] = useState(false)
   const { toast } = useToast()
@@ -229,7 +229,7 @@ function EditorView({ projectId, projectName, onBack }: { projectId: string; pro
       <div className="bimove-layout">
         <TopBar />
         <div className="bimove-body">
-          <LBar />
+          <LBar onBack={onBack} />
           <main className="canvas-area">
             <ToolOverlay />
             <Tldraw
@@ -251,21 +251,6 @@ function EditorView({ projectId, projectName, onBack }: { projectId: string; pro
           </main>
           <RBar />
         </div>
-
-        {/* back to projects */}
-        <button
-          onClick={onBack}
-          style={{
-            position: 'fixed', top: 12, left: 52, zIndex: 500,
-            height: 32, padding: '0 12px', borderRadius: 16,
-            background: '#fff', border: '1px solid #e0e0e0',
-            boxShadow: '0 1px 4px rgba(0,0,0,0.1)', cursor: 'pointer',
-            fontSize: 12, fontWeight: 600, color: '#555',
-            display: 'flex', alignItems: 'center', gap: 6,
-          }}
-        >
-          ← <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{projectName}</span>
-        </button>
 
         {show3D && (
           <Suspense fallback={
