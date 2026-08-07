@@ -492,40 +492,56 @@ export function commitCadImport(
   if (shapes.length) {
     editor.createShapes(shapes as never)
 
-    // 바운딩박스 직접 계산 (커스텀 shape bounds 의존 안 함)
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    for (const s of shapes) {
-      const x1 = s.x, y1 = s.y
-      const x2 = s.x + s.props.x2, y2 = s.y + s.props.y2
-      minX = Math.min(minX, x1, x2)
-      minY = Math.min(minY, y1, y2)
-      maxX = Math.max(maxX, x1, x2)
-      maxY = Math.max(maxY, y1, y2)
+    // 반복 zoomToFit (shapes 렌더 완료까지 대기)
+    const tryZoom = (attempt: number) => {
+      try {
+        const allShapes = editor.getCurrentPageShapes()
+        if (allShapes.length === 0) {
+          if (attempt < 10) setTimeout(() => tryZoom(attempt + 1), 100)
+          return
+        }
+        editor.selectAll()
+        editor.zoomToSelection({ animation: { duration: 0 } })
+        editor.zoomOut()
+        editor.zoomOut()
+        editor.selectNone()
+      } catch {
+        // zoomToSelection 실패 시 바운딩박스 직접 계산
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+        for (const s of shapes) {
+          const ax = s.x, ay = s.y
+          const bx = s.x + s.props.x2, by = s.y + s.props.y2
+          minX = Math.min(minX, ax, bx)
+          minY = Math.min(minY, ay, by)
+          maxX = Math.max(maxX, ax, bx)
+          maxY = Math.max(maxY, ay, by)
+        }
+        const bw = maxX - minX
+        const bh = maxY - minY
+        if (bw > 0 && bh > 0) {
+          const vp = editor.getViewportScreenBounds()
+          const pad = 80
+          const zoom = Math.min(
+            (vp.width - pad * 2) / bw,
+            (vp.height - pad * 2) / bh,
+            1,
+          )
+          const cx = minX + bw / 2
+          const cy = minY + bh / 2
+          // tldraw camera: screenX = (pageX + cam.x) * cam.z
+          // center cx at vp.width/2: (cx + cam.x) * zoom = vp.width/2
+          // cam.x = vp.width / (2 * zoom) - cx
+          editor.setCamera({
+            x: vp.width / (2 * zoom) - cx,
+            y: vp.height / (2 * zoom) - cy,
+            z: zoom,
+          })
+        }
+      }
     }
 
-    const bw = maxX - minX
-    const bh = maxY - minY
-    if (bw > 0 && bh > 0) {
-      const vp = editor.getViewportScreenBounds()
-      const pad = 60
-      const zoom = Math.min(
-        (vp.width - pad * 2) / bw,
-        (vp.height - pad * 2) / bh,
-        1, // 최대 줌 1x
-      )
-      const cx = minX + bw / 2
-      const cy = minY + bh / 2
-      editor.setCamera({
-        x: -(cx - vp.width / 2 / zoom),
-        y: -(cy - vp.height / 2 / zoom),
-        z: zoom,
-      })
-    }
-
-    // fallback: 직접 계산 실패 시
-    setTimeout(() => {
-      try { editor.zoomToFit() } catch { /* ignore */ }
-    }, 500)
+    // 첫 시도는 다음 프레임, 이후 점진적 재시도
+    requestAnimationFrame(() => tryZoom(0))
   }
   return shapes.length
 }
