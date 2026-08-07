@@ -85,18 +85,32 @@ function EditorView({ projectId, projectName, onBack }: { projectId: string; pro
   const [show3D, setShow3D] = useState(false)
   const { toast } = useToast()
 
+  // Supabase에서 로드 시 받아온 서버 타임스탬프 (충돌 방지용)
+  const serverUpdatedAtRef = useRef<string | undefined>(undefined)
+
   const handleMount = (ed: Editor) => {
     ed.updateInstanceState({ isGridMode: false })
     // Supabase에서 먼저 로드, 실패하면 localStorage 폴백
     ;(async () => {
       let saved: object | null = null
       try {
-        saved = await loadSnapshotFromSupabase(projectId) as object | null
+        const result = await loadSnapshotFromSupabase(projectId)
+        if (result) {
+          saved = result.snapshot as object
+          serverUpdatedAtRef.current = result.updatedAt
+        }
       } catch { /* Supabase 실패 */ }
       if (!saved) saved = loadSnapshot(projectId)
       if (saved) {
         try { ed.loadSnapshot(saved as TLEditorSnapshot) } catch { /* ignore corrupt */ }
       }
+      // 셰이프가 있으면 전체 보기로 카메라 이동
+      requestAnimationFrame(() => {
+        const shapes = ed.getCurrentPageShapes()
+        if (shapes.length > 0) {
+          ed.zoomToFit()
+        }
+      })
       setEditor(ed)
     })()
   }
@@ -133,7 +147,7 @@ function EditorView({ projectId, projectName, onBack }: { projectId: string; pro
     })
 
     // Supabase 동기화 (5초 디바운스, optimistic locking)
-    let lastServerUpdatedAt: string | undefined
+    let lastServerUpdatedAt: string | undefined = serverUpdatedAtRef.current
     let syncFailed = false
     supabaseTimer = window.setInterval(async () => {
       if (!latestSnapshot) return
@@ -142,15 +156,10 @@ function EditorView({ projectId, projectName, onBack }: { projectId: string; pro
       try {
         const result = await saveSnapshotToSupabase(projectId, snap, undefined, lastServerUpdatedAt)
         if (result.conflict) {
-          console.warn('[supabase-sync] conflict detected, other session saved first')
-          toast('다른 세션에서 프로젝트가 수정되었습니다.', 'info')
-          const overwrite = confirm(
-            '다른 세션에서 이 프로젝트를 수정했습니다.\n현재 내용으로 덮어쓰시겠습니까?'
-          )
-          if (overwrite) {
-            const retry = await saveSnapshotToSupabase(projectId, snap)
-            lastServerUpdatedAt = retry.serverUpdatedAt
-          }
+          // 충돌 시 조용히 현재 내용으로 덮어쓰기 (confirm 대신)
+          console.warn('[supabase-sync] conflict detected, auto-overwriting')
+          const retry = await saveSnapshotToSupabase(projectId, snap)
+          lastServerUpdatedAt = retry.serverUpdatedAt
         } else {
           lastServerUpdatedAt = result.serverUpdatedAt
           if (syncFailed) {

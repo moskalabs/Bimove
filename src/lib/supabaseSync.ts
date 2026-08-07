@@ -291,13 +291,14 @@ export async function saveProjectSnapshot(
   return { conflict: false, serverUpdatedAt: now }
 }
 
-export async function loadProjectSnapshot(projectId: string) {
+export async function loadProjectSnapshot(projectId: string): Promise<{ snapshot: unknown; updatedAt?: string } | null> {
   const { data } = await supabase
     .from('projects')
-    .select('snapshot')
+    .select('snapshot, updated_at')
     .eq('id', projectId)
     .single()
-  return data?.snapshot ?? null
+  if (!data?.snapshot) return null
+  return { snapshot: data.snapshot, updatedAt: data.updated_at }
 }
 
 export async function deleteProject(projectId: string) {
