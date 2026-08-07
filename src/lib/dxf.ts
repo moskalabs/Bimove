@@ -465,7 +465,8 @@ export function commitCadImport(
   const scale = getScaleConfig(editor).pxPerMm * result.unitToMm
   const thickness = getDefaultWallThicknessMm() * getScaleConfig(editor).pxPerMm
 
-  const shapes = result._segs
+  // 1단계: 스케일 적용 + 좌표 변환
+  const rawSegs = result._segs
     .filter((s) => selectedLayers.has(s.layer || '0'))
     .map((s) => {
       const x1 = s.x1 * scale
@@ -475,73 +476,64 @@ export function commitCadImport(
       return { x1, y1, dx, dy, layer: s.layer, lineweight: s.lineweight, color: s.color }
     })
     .filter((s) => Math.hypot(s.dx, s.dy) >= 1)
-    .map((s) => ({
-      id: createShapeId(),
-      type: 'wall' as const,
-      x: s.x1,
-      y: s.y1,
-      props: { x2: s.dx, y2: s.dy, thickness },
-      meta: {
-        dxfFingerprint: result.fingerprint,
-        ...(s.layer ? { dxfLayer: s.layer } : {}),
-        ...(s.lineweight ? { dxfLineweight: s.lineweight } : {}),
-        ...(s.color ? { dxfColor: s.color } : {}),
-      },
-    }))
+
+  if (!rawSegs.length) return 0
+
+  // 2단계: 바운딩박스 중심을 캔버스 원점(0,0)으로 정규화
+  // DXF 좌표계가 원점에서 멀면 shapes가 캔버스 밖에 생성되는 문제 방지
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const s of rawSegs) {
+    minX = Math.min(minX, s.x1, s.x1 + s.dx)
+    minY = Math.min(minY, s.y1, s.y1 + s.dy)
+    maxX = Math.max(maxX, s.x1, s.x1 + s.dx)
+    maxY = Math.max(maxY, s.y1, s.y1 + s.dy)
+  }
+  const offsetX = (minX + maxX) / 2
+  const offsetY = (minY + maxY) / 2
+
+  const shapes = rawSegs.map((s) => ({
+    id: createShapeId(),
+    type: 'wall' as const,
+    x: s.x1 - offsetX,
+    y: s.y1 - offsetY,
+    props: { x2: s.dx, y2: s.dy, thickness },
+    meta: {
+      dxfFingerprint: result.fingerprint,
+      ...(s.layer ? { dxfLayer: s.layer } : {}),
+      ...(s.lineweight ? { dxfLineweight: s.lineweight } : {}),
+      ...(s.color ? { dxfColor: s.color } : {}),
+    },
+  }))
 
   if (shapes.length) {
     editor.createShapes(shapes as never)
 
-    // 반복 zoomToFit (shapes 렌더 완료까지 대기)
-    const tryZoom = (attempt: number) => {
+    // 카메라를 도면 전체가 보이도록 설정
+    const bw = maxX - minX
+    const bh = maxY - minY
+    const vp = editor.getViewportScreenBounds()
+    const pad = 80
+    const zoom = Math.min(
+      (vp.width - pad * 2) / bw,
+      (vp.height - pad * 2) / bh,
+      1,
+    )
+    // shapes가 원점 중심이므로 카메라도 원점 중심으로
+    editor.setCamera({
+      x: vp.width / (2 * zoom),
+      y: vp.height / (2 * zoom),
+      z: zoom,
+    })
+
+    // fallback: 500ms 후 zoomToFit 재시도
+    setTimeout(() => {
       try {
-        const allShapes = editor.getCurrentPageShapes()
-        if (allShapes.length === 0) {
-          if (attempt < 10) setTimeout(() => tryZoom(attempt + 1), 100)
-          return
-        }
         editor.selectAll()
-        editor.zoomToSelection({ animation: { duration: 0 } })
-        editor.zoomOut()
+        editor.zoomToFit({ animation: { duration: 0 } })
         editor.zoomOut()
         editor.selectNone()
-      } catch {
-        // zoomToSelection 실패 시 바운딩박스 직접 계산
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-        for (const s of shapes) {
-          const ax = s.x, ay = s.y
-          const bx = s.x + s.props.x2, by = s.y + s.props.y2
-          minX = Math.min(minX, ax, bx)
-          minY = Math.min(minY, ay, by)
-          maxX = Math.max(maxX, ax, bx)
-          maxY = Math.max(maxY, ay, by)
-        }
-        const bw = maxX - minX
-        const bh = maxY - minY
-        if (bw > 0 && bh > 0) {
-          const vp = editor.getViewportScreenBounds()
-          const pad = 80
-          const zoom = Math.min(
-            (vp.width - pad * 2) / bw,
-            (vp.height - pad * 2) / bh,
-            1,
-          )
-          const cx = minX + bw / 2
-          const cy = minY + bh / 2
-          // tldraw camera: screenX = (pageX + cam.x) * cam.z
-          // center cx at vp.width/2: (cx + cam.x) * zoom = vp.width/2
-          // cam.x = vp.width / (2 * zoom) - cx
-          editor.setCamera({
-            x: vp.width / (2 * zoom) - cx,
-            y: vp.height / (2 * zoom) - cy,
-            z: zoom,
-          })
-        }
-      }
-    }
-
-    // 첫 시도는 다음 프레임, 이후 점진적 재시도
-    requestAnimationFrame(() => tryZoom(0))
+      } catch { /* ignore */ }
+    }, 500)
   }
   return shapes.length
 }
