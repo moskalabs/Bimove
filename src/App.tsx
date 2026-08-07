@@ -57,7 +57,7 @@ function EmptyCanvasHint({ editor }: { editor: Editor | null }) {
   if (!editor || hasShapes) return null
 
   return (
-    <div style={{
+    <div className="empty-canvas-hint" style={{
       position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
       pointerEvents: 'none', zIndex: 10,

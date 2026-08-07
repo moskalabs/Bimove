@@ -2401,6 +2401,12 @@ html[data-dark="true"] ::-webkit-scrollbar-thumb:hover { background: #555; }
   .po-category-icon { font-size: 16px; }
 }
 
+/* 모달/다이얼로그 열릴 때 온보딩 힌트 숨김 */
+body:has(.cad-layer-overlay) .empty-canvas-hint,
+body:has(.lbar-menu-dropdown) .empty-canvas-hint {
+  display: none;
+}
+
 /* ── CAD 레이어 선택 다이얼로그 ── */
 .cad-layer-overlay {
   position: fixed; inset: 0; z-index: 9999;
