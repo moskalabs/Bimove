@@ -61,7 +61,7 @@ function NewProjectCard({ onCreate }: { onCreate: (name: string) => void }) {
       {error && (
         <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4 }}>이름을 입력해주세요</div>
       )}
-      <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
+      <div style={{ display: 'flex', gap: 8, marginTop: 12, width: '100%' }}>
         <button onClick={confirm} style={miniBtn('#3b82f6', '#fff')}>만들기</button>
         <button onClick={cancel} style={miniBtn('#f0f0f0', '#555')}>취소</button>
       </div>
@@ -181,8 +181,9 @@ function cardStyle(dashed: boolean): React.CSSProperties {
 
 function miniBtn(bg: string, color: string): React.CSSProperties {
   return {
-    flex: 1, padding: '5px 0', borderRadius: 6, border: 'none',
+    flex: 1, padding: '6px 4px', borderRadius: 6, border: 'none',
     background: bg, color, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+    lineHeight: 1.4, textAlign: 'center', whiteSpace: 'nowrap',
   }
 }
 
