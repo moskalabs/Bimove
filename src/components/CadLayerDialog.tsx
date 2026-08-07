@@ -3,7 +3,7 @@
  * parseCadFile 결과를 받아서 레이어별 체크박스를 보여주고,
  * 선택된 레이어만 commitCadImport로 전달.
  */
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import type { CadParseResult } from '../lib/dxf'
 
 interface Props {
@@ -13,6 +13,12 @@ interface Props {
 }
 
 export function CadLayerDialog({ result, onConfirm, onCancel }: Props) {
+  // 다이얼로그 열릴 때 body에 data-modal-open 추가 → 온보딩 힌트 숨김
+  useEffect(() => {
+    document.body.dataset.modalOpen = 'true'
+    return () => { delete document.body.dataset.modalOpen }
+  }, [])
+
   // 초기 선택: 구조 관련 레이어만, 없으면 전체
   const hasStructural = result.layers.some((l) => l.likelyStructural)
   const [selected, setSelected] = useState<Set<string>>(() => {

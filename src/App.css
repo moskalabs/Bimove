@@ -2436,9 +2436,8 @@ html[data-dark="true"] ::-webkit-scrollbar-thumb:hover { background: #555; }
 }
 
 /* 모달/다이얼로그 열릴 때 온보딩 힌트 숨김 */
-body:has(.cad-layer-overlay) .empty-canvas-hint,
-body:has(.lbar-menu-dropdown) .empty-canvas-hint {
-  display: none;
+body[data-modal-open="true"] .empty-canvas-hint {
+  display: none !important;
 }
 
 /* ── 임포트 로딩 오버레이 ── */
