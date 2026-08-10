@@ -488,8 +488,17 @@ export function commitCadImport(
     maxX = Math.max(maxX, s.x1, s.x1 + s.dx)
     maxY = Math.max(maxY, s.y1, s.y1 + s.dy)
   }
-  const offsetX = (minX + maxX) / 2
-  const offsetY = (minY + maxY) / 2
+  // 현재 뷰포트 중심의 page 좌표를 구해서, shapes를 거기에 배치
+  // tldraw: screenX = (pageX + cam.x) * cam.z
+  //       → pageX = screenX / cam.z - cam.x
+  const cam = editor.getCamera()
+  const vp = editor.getViewportScreenBounds()
+  const vpCenterX = (vp.width / 2) / cam.z - cam.x
+  const vpCenterY = (vp.height / 2) / cam.z - cam.y
+
+  // 바운딩박스 중심 → 뷰포트 중심으로 오프셋
+  const offsetX = (minX + maxX) / 2 - vpCenterX
+  const offsetY = (minY + maxY) / 2 - vpCenterY
 
   const shapes = rawSegs.map((s) => ({
     id: createShapeId(),
@@ -508,35 +517,14 @@ export function commitCadImport(
   if (shapes.length) {
     editor.createShapes(shapes as never)
 
-    // 디버그: shapes 좌표 범위 확인
-    const sMinX = Math.min(...shapes.map(s => s.x))
-    const sMaxX = Math.max(...shapes.map(s => s.x + s.props.x2))
-    const sMinY = Math.min(...shapes.map(s => s.y))
-    const sMaxY = Math.max(...shapes.map(s => s.y + s.props.y2))
-    console.log('[DXF] shapes 생성됨:', shapes.length, '개')
-    console.log('[DXF] 좌표 범위 x:', sMinX.toFixed(0), '~', sMaxX.toFixed(0), ' y:', sMinY.toFixed(0), '~', sMaxY.toFixed(0))
-    console.log('[DXF] 카메라:', JSON.stringify(editor.getCamera()))
-    console.log('[DXF] 뷰포트:', JSON.stringify(editor.getViewportScreenBounds()))
-
-    // shapes 렌더링 완료 후 화면에 맞춤 — 여러 방법 순차 시도
-    const fitToShapes = (attempt = 0) => {
-      console.log('[DXF] fitToShapes attempt', attempt)
+    // shapes 생성 후 전체 보기 시도
+    setTimeout(() => {
       try {
-        // 1차: selectAll + zoomToFit (가장 단순)
         editor.selectAll()
-        const selected = editor.getSelectedShapeIds()
-        console.log('[DXF] selected:', selected.length, '개')
-        if (selected.length > 0) {
-          editor.zoomToFit({ animation: { duration: 0 } })
-          console.log('[DXF] zoomToFit 완료. 카메라:', JSON.stringify(editor.getCamera()))
-        }
+        editor.zoomToFit({ animation: { duration: 0 } })
         editor.selectNone()
-      } catch (e) {
-        console.warn('[DXF] fitToShapes 실패:', e)
-        if (attempt < 5) setTimeout(() => fitToShapes(attempt + 1), 300)
-      }
-    }
-    setTimeout(() => fitToShapes(), 200)
+      } catch { /* ignore */ }
+    }, 200)
   }
   return shapes.length
 }
