@@ -737,6 +737,29 @@ html[data-dark="true"] .canvas-3d-btn:hover {
   padding: 4px 0;
 }
 
+/* ── 가져오기(Import) 패널 전용 ── */
+.import-panel-body {
+  padding: 14px 18px;
+  gap: 22px;
+}
+.import-panel-body .import-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #444;
+  margin-bottom: 10px;
+  padding-left: 2px;
+}
+.import-panel-body .import-info-box {
+  font-size: 11px;
+  color: #888;
+  line-height: 1.8;
+  background: #f8f8f8;
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+html[data-dark="true"] .import-panel-body .import-section-title { color: #ccc; }
+html[data-dark="true"] .import-panel-body .import-info-box { background: #2a2a30; color: #999; }
+
 /* ── 레이어 패널 탭 ── */
 .layer-tabs {
   display: flex;
