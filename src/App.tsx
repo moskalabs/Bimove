@@ -48,10 +48,14 @@ function EmptyCanvasHint({ editor }: { editor: Editor | null }) {
 
   useEffect(() => {
     if (!editor) return
+    let timer: ReturnType<typeof setTimeout> | null = null
     const check = () => setHasShapes(editor.getCurrentPageShapes().length > 0)
     check()
-    unsubRef.current = editor.store.listen(check)
-    return () => { unsubRef.current?.() }
+    unsubRef.current = editor.store.listen(() => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(check, 300)
+    })
+    return () => { unsubRef.current?.(); if (timer) clearTimeout(timer) }
   }, [editor])
 
   if (!editor || hasShapes) return null

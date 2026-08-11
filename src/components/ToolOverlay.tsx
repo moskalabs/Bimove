@@ -71,8 +71,12 @@ export function ToolOverlay() {
       setSnap(hit ? editor.pageToViewport({ x: hit.x, y: hit.y }) : null)
     }
 
-    const unsub = editor.store.listen(update)
-    return unsub
+    let raf = 0
+    const unsub = editor.store.listen(() => {
+      if (raf) return
+      raf = requestAnimationFrame(() => { raf = 0; update() })
+    })
+    return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
   }, [editor])
 
   return (

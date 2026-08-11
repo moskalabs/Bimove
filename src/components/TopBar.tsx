@@ -139,8 +139,11 @@ export function TopBar() {
 
   useEffect(() => {
     if (!editor) return
+    let prevTool = ''
     const unsub = editor.store.listen(() => {
       const current = editor.getCurrentToolId()
+      if (current === prevTool) return // 변경 없으면 스킵
+      prevTool = current
       const reverseMap = Object.entries(TOOL_MAP).find(([, v]) => v === current)
       if (reverseMap) setActiveTool(reverseMap[0])
     })

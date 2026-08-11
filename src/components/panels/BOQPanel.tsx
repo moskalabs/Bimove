@@ -98,14 +98,18 @@ export function BOQPanel() {
 
   useEffect(() => {
     if (!editor) return
+    let timer: ReturnType<typeof setTimeout> | null = null
     const update = () => {
       setBoq(calcBOQ(editor, scope === 'selection'))
       setRelations(computeRelations(editor))
       setSelectedCount(editor.getSelectedShapes().length)
     }
     update()
-    const unsub = editor.store.listen(update)
-    return unsub
+    const unsub = editor.store.listen(() => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(update, 500)
+    })
+    return () => { unsub(); if (timer) clearTimeout(timer) }
   }, [editor, scope])
 
   return (

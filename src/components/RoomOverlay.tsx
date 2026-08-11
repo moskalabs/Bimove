@@ -40,13 +40,20 @@ const LABEL_COLORS = [
 ]
 
 // wall shapes의 fingerprint: shape 변경 시에만 detectRooms 재실행
+// 전체 shapes를 필터하지 않고, 저렴한 체크만 수행
+let _lastWallCount = -1
+let _lastWallFp = ''
 function wallsFingerprint(editor: { getCurrentPageShapes: () => Array<{ type: string; x: number; y: number; props: unknown }> }): string {
-  const walls = editor.getCurrentPageShapes().filter(s => s.type === 'wall')
-  if (walls.length === 0) return ''
-  // 빠른 hash: wall 개수 + 첫/마지막 wall 좌표
+  const all = editor.getCurrentPageShapes()
+  // 전체 shape 수가 같으면 wall도 안 변했을 가능성 높음 (카메라 변경 등)
+  if (all.length === _lastWallCount) return _lastWallFp
+  _lastWallCount = all.length
+  const walls = all.filter(s => s.type === 'wall')
+  if (walls.length === 0) { _lastWallFp = ''; return '' }
   const first = walls[0]
   const last = walls[walls.length - 1]
-  return `${walls.length}|${first.x.toFixed(0)},${first.y.toFixed(0)}|${last.x.toFixed(0)},${last.y.toFixed(0)}`
+  _lastWallFp = `${walls.length}|${first.x.toFixed(0)},${first.y.toFixed(0)}|${last.x.toFixed(0)},${last.y.toFixed(0)}`
+  return _lastWallFp
 }
 
 export function RoomOverlay() {

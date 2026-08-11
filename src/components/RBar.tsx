@@ -40,25 +40,31 @@ export function RBar() {
   const [sel, setSel] = useState<SelInfo>(null)
   const [scale, setScaleState] = useState<ScaleConfig>({ unit: 'mm', pxPerMm: 1 })
   const [currentToolId, setCurrentToolId] = useState<string>('select')
+  const [selCount, setSelCount] = useState(0)
 
   useEffect(() => {
     if (!editor) return
+    let raf = 0
     const unsub = editor.store.listen(() => {
-      const shapes = editor.getSelectedShapes()
-      if (shapes.length === 1) {
-        const s = shapes[0]
-        setSel({ id: s.id, type: s.type, props: s.props as Record<string, unknown> })
-      } else {
-        setSel(null)
-      }
-      setScaleState(getScaleConfig(editor))
-      setCurrentToolId(editor.getCurrentToolId())
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        const shapes = editor.getSelectedShapes()
+        setSelCount(shapes.length)
+        if (shapes.length === 1) {
+          const s = shapes[0]
+          setSel({ id: s.id, type: s.type, props: s.props as Record<string, unknown> })
+        } else {
+          setSel(null)
+        }
+        setScaleState(getScaleConfig(editor))
+        setCurrentToolId(editor.getCurrentToolId())
+      })
     })
-    return unsub
+    return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
   }, [editor])
 
   const showWallProps = currentToolId === 'wall' || sel?.type === 'wall'
-  const selectedShapes = editor?.getSelectedShapes() ?? []
 
   return (
     <aside className="rbar">
@@ -77,7 +83,7 @@ export function RBar() {
       {/* ── 선택 상태에 따른 속성 패널 ── */}
       {showWallProps && <WallDefaultSection scale={scale} />}
       {showWallProps && <WallHeightSection />}
-      {selectedShapes.length > 1 && <AlignPanel />}
+      {selCount > 1 && <AlignPanel />}
       {sel && <PropsPanel sel={sel} scale={scale} />}
 
       {/* ── 섹션 4: 화면 보기 (하단 고정) ── */}

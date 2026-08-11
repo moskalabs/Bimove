@@ -25,11 +25,16 @@ export function ScaleRuler() {
 
   useEffect(() => {
     if (!editor) return
+    let raf = 0
     const unsub = editor.store.listen(() => {
-      setZoom(editor.getCamera().z)
-      setPxPerMm(getScaleConfig(editor).pxPerMm)
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        setZoom(editor.getCamera().z)
+        setPxPerMm(getScaleConfig(editor).pxPerMm)
+      })
     })
-    return unsub
+    return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
   }, [editor])
 
   const screenPxPerMm = pxPerMm * zoom
