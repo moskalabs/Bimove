@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useEditor } from '../context/EditorContext'
 import { detectRooms, type Room } from '../lib/roomDetection'
 import { getScaleConfig } from '../lib/scaleConfig'
-import { getShowRoomAreas, getRoomNames, setRoomName } from '../lib/settings'
 import { formatArea } from '../lib/formatArea'
+import { getShowRoomAreas, getRoomNames, setRoomName } from '../lib/settings'
 
 type Pt = { x: number; y: number }
 
@@ -39,6 +39,16 @@ const LABEL_COLORS = [
   '#1a73e8', '#34a853', '#b5850b', '#ea4335', '#673ab7', '#00acc1',
 ]
 
+// wall shapes의 fingerprint: shape 변경 시에만 detectRooms 재실행
+function wallsFingerprint(editor: { getCurrentPageShapes: () => Array<{ type: string; x: number; y: number; props: unknown }> }): string {
+  const walls = editor.getCurrentPageShapes().filter(s => s.type === 'wall')
+  if (walls.length === 0) return ''
+  // 빠른 hash: wall 개수 + 첫/마지막 wall 좌표
+  const first = walls[0]
+  const last = walls[walls.length - 1]
+  return `${walls.length}|${first.x.toFixed(0)},${first.y.toFixed(0)}|${last.x.toFixed(0)},${last.y.toFixed(0)}`
+}
+
 export function RoomOverlay() {
   const editor = useEditor()
   const [rooms, setRooms] = useState<ViewRoom[]>([])
@@ -48,43 +58,83 @@ export function RoomOverlay() {
   const [draft, setDraft] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // 방 감지 결과 캐시 (page 좌표 기준, 카메라 무관)
+  const detectedRef = useRef<Array<Room & { idx: number; key: string }>>([])
+  const wallsFpRef = useRef('')
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const rafRef = useRef<number>(0)
+
   useEffect(() => {
     const onSettings = () => { setVisible(getShowRoomAreas()); setNames(getRoomNames()) }
     window.addEventListener('bimove:settings', onSettings)
     return () => window.removeEventListener('bimove:settings', onSettings)
   }, [])
 
+  // viewport 좌표 업데이트 (카메라 변경 시 호출 - 가벼운 연산)
+  const updateViewport = useCallback(() => {
+    if (!editor || detectedRef.current.length === 0) return
+
+    setRooms(detectedRef.current.map((r) => {
+      const vp = editor.pageToViewport(r.centroid)
+      const vpVerts = r.vertices.map(v => editor.pageToViewport(v))
+      return { ...r, cx: vp.x, cy: vp.y, vpVerts }
+    }))
+  }, [editor])
+
+  // 방 감지 (wall 변경 시에만 - 무거운 연산)
+  const redetect = useCallback(() => {
+    if (!editor) return
+
+    const walls = editor.getCurrentPageShapes()
+      .filter(s => s.type === 'wall')
+      .map(s => {
+        const p = s.props as { x2: number; y2: number }
+        return { x1: s.x, y1: s.y, x2: s.x + p.x2, y2: s.y + p.y2 }
+      })
+
+    const detected = detectRooms(walls)
+    const scale = getScaleConfig(editor)
+
+    detectedRef.current = detected.map((r, i) => ({
+      ...r,
+      idx: i + 1,
+      area: r.area / (scale.pxPerMm * scale.pxPerMm),
+      key: roomKey(r),
+    }))
+
+    wallsFpRef.current = wallsFingerprint(editor)
+    updateViewport()
+  }, [editor, updateViewport])
+
   useEffect(() => {
     if (!editor) return
-    const update = () => {
-      const walls = editor.getCurrentPageShapes()
-        .filter(s => s.type === 'wall')
-        .map(s => {
-          const p = s.props as { x2: number; y2: number }
-          return { x1: s.x, y1: s.y, x2: s.x + p.x2, y2: s.y + p.y2 }
-        })
 
-      const detected = detectRooms(walls)
-      const scale = getScaleConfig(editor)
+    // 초기 실행
+    redetect()
 
-      setRooms(detected.map((r, i) => {
-        const vp = editor.pageToViewport(r.centroid)
-        const vpVerts = r.vertices.map(v => editor.pageToViewport(v))
-        return {
-          ...r,
-          idx: i + 1,
-          cx: vp.x,
-          cy: vp.y,
-          vpVerts,
-          area: r.area / (scale.pxPerMm * scale.pxPerMm),
-          key: roomKey(r),
+    const unsub = editor.store.listen(() => {
+      // wall fingerprint가 변했으면 방 감지 재실행 (debounce 300ms)
+      const fp = wallsFingerprint(editor)
+      if (fp !== wallsFpRef.current) {
+        if (debounceRef.current) clearTimeout(debounceRef.current)
+        debounceRef.current = setTimeout(redetect, 300)
+      } else {
+        // wall 변경 없이 카메라만 변경된 경우: viewport 좌표만 업데이트 (rAF 스로틀)
+        if (!rafRef.current) {
+          rafRef.current = requestAnimationFrame(() => {
+            rafRef.current = 0
+            updateViewport()
+          })
         }
-      }))
+      }
+    })
+
+    return () => {
+      unsub()
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
-    update()
-    const unsub = editor.store.listen(update)
-    return unsub
-  }, [editor])
+  }, [editor, redetect, updateViewport])
 
   const startEdit = (key: string) => {
     setEditing(key)
@@ -191,4 +241,3 @@ export function RoomOverlay() {
     </div>
   )
 }
-
