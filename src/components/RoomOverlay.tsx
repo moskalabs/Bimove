@@ -216,9 +216,21 @@ export function RoomOverlay() {
         })}
       </svg>
 
-      {/* Labels (double-click to rename) */}
-      {rooms.map((r, i) => {
+      {/* Labels (double-click to rename) — 겹치는 라벨 숨김 */}
+      {(() => {
+        // 면적 작은 순으로 정렬 (작은 방 우선 표시)
+        const sorted = [...rooms].map((r, i) => ({ r, i })).sort((a, b) => a.r.area - b.r.area)
+        const placed: { x: number; y: number }[] = []
+        const LABEL_MIN_DIST = 60 // px — 이 거리 이내면 겹침으로 판단
+
+        return sorted.map(({ r, i }) => {
         if (!editor) return null
+
+        // 이미 배치된 라벨과 너무 가까우면 스킵
+        const tooClose = placed.some(p => Math.hypot(p.x - r.cx, p.y - r.cy) < LABEL_MIN_DIST)
+        if (tooClose) return null
+        placed.push({ x: r.cx, y: r.cy })
+
         const scale = getScaleConfig(editor)
         const color = LABEL_COLORS[i % LABEL_COLORS.length]
         const displayName = names[r.key]
@@ -278,7 +290,8 @@ export function RoomOverlay() {
             )}
           </div>
         )
-      })}
+      })
+      })()}
     </div>
   )
 }
