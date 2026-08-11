@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { snapAngle } from '../../lib/snap'
 
 // snapToWallEndpoint and snapToWallLine depend on tldraw Editor —

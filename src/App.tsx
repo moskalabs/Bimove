@@ -16,6 +16,7 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 import { ToastProvider, useToast } from './context/ToastContext'
 const Viewer3D = lazy(() => import('./components/Viewer3D').then(m => ({ default: m.Viewer3D })))
 import { WallShapeUtil } from './shapes/WallShape'
+import { DxfGroupShapeUtil } from './shapes/DxfGroupShape'
 import { DoorShapeUtil } from './shapes/DoorShape'
 import { WindowShapeUtil } from './shapes/WindowShape'
 import { BlockShapeUtil } from './shapes/BlockShape'
@@ -39,7 +40,7 @@ import './App.css'
 initGrayscaleAttr()
 initDarkAttr()
 
-const SHAPE_UTILS = [WallShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil, CommentShapeUtil, DimensionShapeUtil]
+const SHAPE_UTILS = [WallShapeUtil, DxfGroupShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil, CommentShapeUtil, DimensionShapeUtil]
 const TOOLS = [WallTool, DoorTool, WindowTool, BlockTool, CommentTool, DimensionTool]
 
 function EmptyCanvasHint({ editor }: { editor: Editor | null }) {

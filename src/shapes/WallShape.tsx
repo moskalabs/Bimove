@@ -218,7 +218,9 @@ function WallComponent({ shape }: { shape: WallShape }) {
   const shapeCount = _wallsCache.length // 이미 캐시된 wall 수 활용
   const effectiveShowDim = showDim && shapeCount < 200
 
-  const corners = computeJoinedCorners(editor, shape)
+  // DXF 임포트 shapes는 miter join 불필요 → 비싼 이웃 탐색 스킵
+  const isDxf = !!shape.meta?.dxfFingerprint
+  const corners = isDxf ? getCorners(shape) : computeJoinedCorners(editor, shape)
   const d = `M${corners[0].x},${corners[0].y} L${corners[1].x},${corners[1].y} L${corners[2].x},${corners[2].y} L${corners[3].x},${corners[3].y} Z`
 
   // DXF lineweight → strokeWidth (hundredths of mm → px)

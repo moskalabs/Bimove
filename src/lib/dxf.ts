@@ -576,6 +576,74 @@ export function commitCadImport(
   const offsetX = (minX + maxX) / 2 - vpCenterX
   const offsetY = (minY + maxY) / 2 - vpCenterY
 
+  // ── 100+ segments: 레이어별 DxfGroup shape로 묶기 (React 컴포넌트 수 대폭 감소) ──
+  if (merged.length >= 100) {
+    // 레이어별 그루핑
+    const layerGroups = new Map<string, RawSeg[]>()
+    for (const s of merged) {
+      const key = s.layer || '0'
+      let g = layerGroups.get(key)
+      if (!g) { g = []; layerGroups.set(key, g) }
+      g.push(s)
+    }
+
+    const groupShapes: unknown[] = []
+    for (const [layer, segs] of layerGroups) {
+      // 그룹 바운딩박스 계산
+      let gMinX = Infinity, gMinY = Infinity, gMaxX = -Infinity, gMaxY = -Infinity
+      for (const s of segs) {
+        gMinX = Math.min(gMinX, s.x1, s.x1 + s.dx)
+        gMinY = Math.min(gMinY, s.y1, s.y1 + s.dy)
+        gMaxX = Math.max(gMaxX, s.x1, s.x1 + s.dx)
+        gMaxY = Math.max(gMaxY, s.y1, s.y1 + s.dy)
+      }
+
+      const gx = gMinX - offsetX
+      const gy = gMinY - offsetY
+      const w = gMaxX - gMinX
+      const h = gMaxY - gMinY
+
+      // 세그먼트를 shape-local 좌표로 변환 후 SVG path 생성
+      const pathData = segs.map(s => {
+        const x1 = s.x1 - gMinX
+        const y1 = s.y1 - gMinY
+        const x2 = x1 + s.dx
+        const y2 = y1 + s.dy
+        return `M${x1.toFixed(1)},${y1.toFixed(1)}L${x2.toFixed(1)},${y2.toFixed(1)}`
+      }).join('')
+
+      // 첫 세그먼트의 색상/두께를 그룹 대표로 사용
+      const firstSeg = segs[0]
+
+      groupShapes.push({
+        id: createShapeId(),
+        type: 'dxfgroup',
+        x: gx,
+        y: gy,
+        props: { w, h, pathData, thickness: thickness * 0.3, segCount: segs.length },
+        meta: {
+          dxfFingerprint: result.fingerprint,
+          dxfLayer: layer,
+          ...(firstSeg.lineweight ? { dxfLineweight: firstSeg.lineweight } : {}),
+          ...(firstSeg.color ? { dxfColor: firstSeg.color } : {}),
+        },
+      })
+    }
+
+    editor.createShapes(groupShapes as never)
+
+    setTimeout(() => {
+      try {
+        editor.selectAll()
+        editor.zoomToFit({ animation: { duration: 0 } })
+        editor.selectNone()
+      } catch { /* ignore */ }
+    }, 200)
+
+    return merged.length
+  }
+
+  // ── 100개 미만: 기존 방식 (개별 wall shape) ──
   const shapes = merged.map((s) => ({
     id: createShapeId(),
     type: 'wall' as const,
@@ -591,36 +659,15 @@ export function commitCadImport(
   }))
 
   if (shapes.length) {
-    const BATCH_SIZE = 200
-    if (shapes.length <= 500) {
-      // 500개 이하: 한번에 생성
-      editor.createShapes(shapes as never)
-    } else {
-      // 500개 초과: 200개씩 청크로 나눠서 생성 (UI 프리즈 방지)
-      const firstBatch = shapes.slice(0, BATCH_SIZE)
-      editor.createShapes(firstBatch as never)
-      let idx = BATCH_SIZE
-      const createNextBatch = () => {
-        if (idx >= shapes.length) return
-        const batch = shapes.slice(idx, idx + BATCH_SIZE)
-        editor.createShapes(batch as never)
-        idx += BATCH_SIZE
-        if (idx < shapes.length) {
-          setTimeout(createNextBatch, 0)
-        }
-      }
-      setTimeout(createNextBatch, 0)
-    }
+    editor.createShapes(shapes as never)
 
-    // shapes 생성 후 전체 보기
-    const delay = shapes.length > 500 ? Math.ceil(shapes.length / BATCH_SIZE) * 50 + 200 : 200
     setTimeout(() => {
       try {
         editor.selectAll()
         editor.zoomToFit({ animation: { duration: 0 } })
         editor.selectNone()
       } catch { /* ignore */ }
-    }, delay)
+    }, 200)
   }
   return shapes.length
 }
