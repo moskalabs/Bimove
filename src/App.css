@@ -287,6 +287,8 @@
   flex: 1;
   position: relative;
   overflow: hidden;
+  z-index: 0;
+  isolation: isolate;
 }
 
 .canvas-3d-btn {

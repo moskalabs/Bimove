@@ -13,10 +13,24 @@ type ViewRoom = Room & {
   idx: number
   vpVerts: Pt[]
   key: string
+  _isLeaf?: boolean
 }
 
 function roomKey(r: Room): string {
   return `${Math.round(r.centroid.x / 50) * 50},${Math.round(r.centroid.y / 50) * 50}`
+}
+
+/** ray-casting point-in-polygon */
+function pointInPoly(pt: Pt, verts: Pt[]): boolean {
+  let inside = false
+  for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+    const xi = verts[i].x, yi = verts[i].y
+    const xj = verts[j].x, yj = verts[j].y
+    if ((yi > pt.y) !== (yj > pt.y) && pt.x < (xj - xi) * (pt.y - yi) / (yj - yi) + xi) {
+      inside = !inside
+    }
+  }
+  return inside
 }
 
 const FILL_COLORS = [
@@ -66,7 +80,7 @@ export function RoomOverlay() {
   const inputRef = useRef<HTMLInputElement>(null)
 
   // 방 감지 결과 캐시 (page 좌표 기준, 카메라 무관)
-  const detectedRef = useRef<Array<Room & { idx: number; key: string }>>([])
+  const detectedRef = useRef<Array<Room & { idx: number; key: string; _isLeaf?: boolean }>>([])
   const wallsFpRef = useRef('')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const rafRef = useRef<number>(0)
@@ -102,11 +116,31 @@ export function RoomOverlay() {
     const detected = detectRooms(walls)
     const scale = getScaleConfig(editor)
 
-    detectedRef.current = detected.map((r, i) => ({
+    const allRooms = detected.map((r, i) => ({
       ...r,
       idx: i + 1,
       area: r.area / (scale.pxPerMm * scale.pxPerMm),
       key: roomKey(r),
+    }))
+
+    // 큰 방이 작은 방을 포함하면 큰 방의 fill을 숨김 (leaf rooms만 fill 표시)
+    // 각 방의 centroid가 다른 방 polygon 안에 있는지 체크
+    const isLeaf = new Set(allRooms.map(r => r.key))
+    for (const big of allRooms) {
+      for (const small of allRooms) {
+        if (big.key === small.key) continue
+        if (big.area <= small.area) continue // big이 더 커야 함
+        // small의 centroid가 big의 polygon 안에 있으면 big은 leaf가 아님
+        if (pointInPoly(small.centroid, big.vertices)) {
+          isLeaf.delete(big.key)
+          break
+        }
+      }
+    }
+    // isLeaf 정보를 각 방에 저장
+    detectedRef.current = allRooms.map(r => ({
+      ...r,
+      _isLeaf: isLeaf.has(r.key),
     }))
 
     wallsFpRef.current = wallsFingerprint(editor)
@@ -173,7 +207,7 @@ export function RoomOverlay() {
             <polygon
               key={r.key}
               points={pts}
-              fill={FILL_COLORS[i % FILL_COLORS.length]}
+              fill={r._isLeaf ? FILL_COLORS[i % FILL_COLORS.length] : 'none'}
               stroke={STROKE_COLORS[i % STROKE_COLORS.length]}
               strokeWidth={1.5}
               strokeDasharray="6,3"
