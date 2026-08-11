@@ -49,9 +49,10 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
   }
 
   component(shape: DxfGroupShape) {
-    const stroke = (shape.meta?.dxfColor as string) || '#555'
+    const stroke = (shape.meta?.dxfColor as string) || '#333'
     const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
-    const strokeW = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 25, 4)) : Math.max(0.5, shape.props.thickness)
+    // CAD 도면은 가는 선으로 표시 (0.3~2px)
+    const strokeW = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
 
     return (
       <SVGContainer>

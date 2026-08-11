@@ -223,6 +223,19 @@ function WallComponent({ shape }: { shape: WallShape }) {
   const corners = isDxf ? getCorners(shape) : computeJoinedCorners(editor, shape)
   const d = `M${corners[0].x},${corners[0].y} L${corners[1].x},${corners[1].y} L${corners[2].x},${corners[2].y} L${corners[3].x},${corners[3].y} Z`
 
+  // DXF 임포트 shapes는 가는 선으로 표시 (CAD 도면 스타일)
+  if (isDxf) {
+    const dxfColor = (shape.meta?.dxfColor as string) || '#333'
+    const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
+    const sw = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
+    // 채워진 사각형이 아닌, 중심선만 렌더
+    return (
+      <SVGContainer>
+        <line x1={0} y1={0} x2={x2} y2={y2} stroke={dxfColor} strokeWidth={sw} strokeLinecap="round" />
+      </SVGContainer>
+    )
+  }
+
   // DXF lineweight → strokeWidth (hundredths of mm → px)
   const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
   const strokeW = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 25, 4)) : 1
