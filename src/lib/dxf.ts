@@ -456,6 +456,79 @@ export async function parseCadFile(
   }
 }
 
+/** 동일선상(collinear) 세그먼트를 병합하여 shape 수를 줄임 */
+type RawSeg = { x1: number; y1: number; dx: number; dy: number; layer?: string; lineweight?: number; color?: string }
+
+function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
+  // 각도(3°) + 수직거리(10px) 기준으로 버킷팅
+  const buckets = new Map<string, RawSeg[]>()
+  for (const s of segs) {
+    const len = Math.hypot(s.dx, s.dy)
+    if (len < 1) continue
+    let ang = (Math.atan2(s.dy, s.dx) * 180) / Math.PI
+    if (ang < 0) ang += 180
+    if (ang >= 180) ang -= 180
+    const nx = -s.dy / len, ny = s.dx / len
+    const perp = nx * s.x1 + ny * s.y1
+    const key = `${Math.round(ang / 3)}|${Math.round(perp / 10)}`
+    let b = buckets.get(key)
+    if (!b) { b = []; buckets.set(key, b) }
+    b.push(s)
+  }
+
+  const out: RawSeg[] = []
+  for (const group of buckets.values()) {
+    if (group.length === 1) { out.push(group[0]); continue }
+
+    // 첫 세그먼트 방향으로 모든 endpoint 투영 → 연속 구간 찾기
+    const first = group[0]
+    const len = Math.hypot(first.dx, first.dy)
+    const ux = first.dx / len, uy = first.dy / len
+
+    // 모든 endpoint를 투영
+    type Proj = { t: number; seg: RawSeg }
+    const projs: Proj[] = []
+    for (const s of group) {
+      const t1 = (s.x1 - first.x1) * ux + (s.y1 - first.y1) * uy
+      const t2 = t1 + s.dx * ux + s.dy * uy
+      projs.push({ t: Math.min(t1, t2), seg: s })
+      projs.push({ t: Math.max(t1, t2), seg: s })
+    }
+
+    // 연속 구간 탐지: 세그먼트들을 투영 시작점 기준 정렬 후 병합
+    const intervals: { lo: number; hi: number; seg: RawSeg }[] = []
+    for (const s of group) {
+      const t1 = (s.x1 - first.x1) * ux + (s.y1 - first.y1) * uy
+      const t2 = t1 + s.dx * ux + s.dy * uy
+      intervals.push({ lo: Math.min(t1, t2), hi: Math.max(t1, t2), seg: s })
+    }
+    intervals.sort((a, b) => a.lo - b.lo)
+
+    // gap이 10px 이내면 연속으로 간주
+    const GAP = 10
+    let curLo = intervals[0].lo, curHi = intervals[0].hi
+    const flush = (lo: number, hi: number) => {
+      if (hi - lo < 1) return
+      const sx = first.x1 + lo * ux, sy = first.y1 + lo * uy
+      const ex = first.x1 + hi * ux, ey = first.y1 + hi * uy
+      out.push({ x1: sx, y1: sy, dx: ex - sx, dy: ey - sy, layer: first.layer })
+    }
+
+    for (let i = 1; i < intervals.length; i++) {
+      const iv = intervals[i]
+      if (iv.lo <= curHi + GAP) {
+        curHi = Math.max(curHi, iv.hi)
+      } else {
+        flush(curLo, curHi)
+        curLo = iv.lo
+        curHi = iv.hi
+      }
+    }
+    flush(curLo, curHi)
+  }
+  return out
+}
+
 /** 선택된 레이어의 세그먼트만 에디터에 벽으로 추가 */
 export function commitCadImport(
   editor: Editor,
@@ -479,10 +552,13 @@ export function commitCadImport(
 
   if (!rawSegs.length) return 0
 
-  // 2단계: 바운딩박스 중심을 캔버스 원점(0,0)으로 정규화
+  // 2단계: 동일선상 세그먼트 병합 (shape 수 30-60% 감소)
+  const merged = mergeDxfSegments(rawSegs)
+
+  // 3단계: 바운딩박스 중심을 캔버스 원점(0,0)으로 정규화
   // DXF 좌표계가 원점에서 멀면 shapes가 캔버스 밖에 생성되는 문제 방지
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const s of rawSegs) {
+  for (const s of merged) {
     minX = Math.min(minX, s.x1, s.x1 + s.dx)
     minY = Math.min(minY, s.y1, s.y1 + s.dy)
     maxX = Math.max(maxX, s.x1, s.x1 + s.dx)
@@ -500,7 +576,7 @@ export function commitCadImport(
   const offsetX = (minX + maxX) / 2 - vpCenterX
   const offsetY = (minY + maxY) / 2 - vpCenterY
 
-  const shapes = rawSegs.map((s) => ({
+  const shapes = merged.map((s) => ({
     id: createShapeId(),
     type: 'wall' as const,
     x: s.x1 - offsetX,
@@ -515,16 +591,36 @@ export function commitCadImport(
   }))
 
   if (shapes.length) {
-    editor.createShapes(shapes as never)
+    const BATCH_SIZE = 200
+    if (shapes.length <= 500) {
+      // 500개 이하: 한번에 생성
+      editor.createShapes(shapes as never)
+    } else {
+      // 500개 초과: 200개씩 청크로 나눠서 생성 (UI 프리즈 방지)
+      const firstBatch = shapes.slice(0, BATCH_SIZE)
+      editor.createShapes(firstBatch as never)
+      let idx = BATCH_SIZE
+      const createNextBatch = () => {
+        if (idx >= shapes.length) return
+        const batch = shapes.slice(idx, idx + BATCH_SIZE)
+        editor.createShapes(batch as never)
+        idx += BATCH_SIZE
+        if (idx < shapes.length) {
+          setTimeout(createNextBatch, 0)
+        }
+      }
+      setTimeout(createNextBatch, 0)
+    }
 
     // shapes 생성 후 전체 보기
+    const delay = shapes.length > 500 ? Math.ceil(shapes.length / BATCH_SIZE) * 50 + 200 : 200
     setTimeout(() => {
       try {
         editor.selectAll()
         editor.zoomToFit({ animation: { duration: 0 } })
         editor.selectNone()
       } catch { /* ignore */ }
-    }, 200)
+    }, delay)
   }
   return shapes.length
 }

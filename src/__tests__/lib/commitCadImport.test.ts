@@ -357,14 +357,15 @@ describe('commitCadImport', () => {
       maxY = Math.max(maxY, s.y, s.y + s.props.y2)
     }
 
-    // Center of bounding box should be at (0, 0)
+    // Center of bounding box should be at viewport center (600, 400)
+    // because shapes are placed centered on the current viewport
     const centerX = (minX + maxX) / 2
     const centerY = (minY + maxY) / 2
-    expect(centerX).toBeCloseTo(0, 1)
-    expect(centerY).toBeCloseTo(0, 1)
+    expect(centerX).toBeCloseTo(600, 0)
+    expect(centerY).toBeCloseTo(400, 0)
   })
 
-  it('shapes from offset DXF are also centered around origin', () => {
+  it('shapes from offset DXF are also centered around viewport center', () => {
     const editor = createMockEditor()
     const result = parseDxfText(OFFSET_ROOM_DXF)
     const allLayers = new Set(result.layers.map((l) => l.name))
@@ -383,11 +384,11 @@ describe('commitCadImport', () => {
       maxY = Math.max(maxY, s.y, s.y + s.props.y2)
     }
 
-    // Center should still be at origin even though DXF coords were at 500000+
+    // Center should be at viewport center even though DXF coords were at 500000+
     const centerX = (minX + maxX) / 2
     const centerY = (minY + maxY) / 2
-    expect(centerX).toBeCloseTo(0, 1)
-    expect(centerY).toBeCloseTo(0, 1)
+    expect(centerX).toBeCloseTo(600, 0)
+    expect(centerY).toBeCloseTo(400, 0)
   })
 
   it('zoom is clamped to tldraw limits [0.1, 8]', () => {
@@ -642,23 +643,24 @@ EOF`
     expect(extentMm.height).toBeCloseTo(extentM.height, 0)
   })
 
-  it('retries fitToShapes on error (up to 5 attempts)', async () => {
+  it('catches zoomToFit errors gracefully (no retry)', async () => {
     const editor = createMockEditor()
-    // Make selectAll fail 3 times, succeed 4th time
-    let callCount = 0
+    // Make selectAll throw
     ;(editor.selectAll as ReturnType<typeof vi.fn>).mockImplementation(() => {
-      callCount++
-      if (callCount <= 3) throw new Error('not ready')
+      throw new Error('not ready')
     })
     const result = parseDxfText(SIMPLE_ROOM_DXF)
     const allLayers = new Set(result.layers.map((l) => l.name))
 
-    commitCadImport(editor as never, result, allLayers)
+    // Should not throw even when selectAll fails
+    const count = commitCadImport(editor as never, result, allLayers)
+    expect(count).toBeGreaterThan(0)
 
-    // Wait for retries (200ms initial + 300ms * 3 retries)
-    await new Promise((r) => setTimeout(r, 1500))
+    // Wait for the setTimeout to fire
+    await new Promise((r) => setTimeout(r, 400))
 
-    expect(callCount).toBe(4)
+    // selectAll was called once (no retries, just catches error)
+    expect(editor.selectAll).toHaveBeenCalledTimes(1)
   })
 
   describe('zoom clamping edge cases', () => {

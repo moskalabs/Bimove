@@ -61,27 +61,92 @@ function miterExtension(
 
 const JOIN_SNAP_R = 8 // page-unit radius for endpoint matching
 
+// ── Wall snapshot cache: avoid calling getCurrentPageShapes() per-wall ──
+type WallSnapshot = { id: string; x: number; y: number; props: WallShapeProps }
+let _wallsCache: WallSnapshot[] = []
+let _wallsCacheTime = -1
+
+function getWallsSnapshot(editor: Editor): WallSnapshot[] {
+  const now = performance.now()
+  // 같은 렌더 프레임(16ms) 내에서는 캐시 재사용
+  if (now - _wallsCacheTime < 16) return _wallsCache
+  _wallsCacheTime = now
+  _wallsCache = editor.getCurrentPageShapes()
+    .filter(s => s.type === 'wall')
+    .map(s => ({ id: s.id, x: s.x, y: s.y, props: s.props as WallShapeProps }))
+  return _wallsCache
+}
+
+// ── Per-shape corner cache ──
+const _cornersCache = new Map<string, { key: string; corners: Vec[] }>()
+
+function shapeHashKey(shape: WallShape): string {
+  return `${shape.x}|${shape.y}|${shape.props.x2}|${shape.props.y2}|${shape.props.thickness}`
+}
+
 function computeJoinedCorners(editor: Editor, shape: WallShape): Vec[] {
   const { x2, y2, thickness } = shape.props
   const len = Math.sqrt(x2 * x2 + y2 * y2)
   if (len < 1) return getCorners(shape)
 
+  // 캐시 확인: 자신의 geometry + 이웃 wall들의 hash가 같으면 재사용
+  const walls = getWallsSnapshot(editor)
+  const myKey = shapeHashKey(shape)
+
+  // 이웃 wall의 변경도 감지하기 위해 근접 wall들의 hash 포함
   const ux = x2 / len, uy = y2 / len
   const nx = -uy, ny = ux
   const half = thickness / 2
   const snapR = Math.max(JOIN_SNAP_R, half * 0.5)
-
   const sx = shape.x, sy = shape.y
   const ex = shape.x + x2, ey = shape.y + y2
 
+  // 근접 wall만 추려서 해시에 포함 (O(n) 1회만, 전체 shapes 순회가 아님)
+  let neighborHash = ''
+  const neighbors: WallSnapshot[] = []
+  for (const w of walls) {
+    if (w.id === shape.id) continue
+    const wp = w.props
+    const wlen = Math.hypot(wp.x2, wp.y2)
+    if (wlen < 1) continue
+
+    // 빠른 거리 체크: 두 endpoint와의 거리가 snapR 이내인 wall만 이웃
+    const dSS = Math.hypot(w.x - sx, w.y - sy)
+    const dSE = Math.hypot(w.x + wp.x2 - sx, w.y + wp.y2 - sy)
+    const dES = Math.hypot(w.x - ex, w.y - ey)
+    const dEE = Math.hypot(w.x + wp.x2 - ex, w.y + wp.y2 - ey)
+    const nearEnd = dSS < snapR || dSE < snapR || dES < snapR || dEE < snapR
+
+    // T-junction 체크도 포함
+    let nearBody = false
+    if (!nearEnd) {
+      const wux = wp.x2 / wlen, wuy = wp.y2 / wlen
+      const checkProj = (px: number, py: number) => {
+        const t = (px - w.x) * wux + (py - w.y) * wuy
+        if (t <= snapR || t >= wlen - snapR) return false
+        const projX = w.x + t * wux, projY = w.y + t * wuy
+        return Math.hypot(px - projX, py - projY) < snapR
+      }
+      nearBody = checkProj(sx, sy) || checkProj(ex, ey)
+    }
+
+    if (nearEnd || nearBody) {
+      neighbors.push(w)
+      neighborHash += `${w.id}:${w.x}|${w.y}|${wp.x2}|${wp.y2}|${wp.thickness};`
+    }
+  }
+
+  const fullKey = `${myKey}#${neighborHash}`
+  const cached = _cornersCache.get(shape.id)
+  if (cached && cached.key === fullKey) return cached.corners
+
+  // ── 실제 계산 (이웃만 순회) ──
   let startExt = 0
   let endExt = 0
 
-  for (const w of editor.getCurrentPageShapes()) {
-    if (w.type !== 'wall' || w.id === shape.id) continue
-    const wp = w.props as WallShapeProps
+  for (const w of neighbors) {
+    const wp = w.props
     const wlen = Math.hypot(wp.x2, wp.y2)
-    if (wlen < 1) continue
     const wux = wp.x2 / wlen, wuy = wp.y2 / wlen
     const wh = wp.thickness / 2
 
@@ -120,12 +185,15 @@ function computeJoinedCorners(editor: Editor, shape: WallShape): Vec[] {
     }
   }
 
-  return [
+  const corners = [
     new Vec(nx * half - ux * startExt, ny * half - uy * startExt),
     new Vec(x2 + nx * half + ux * endExt, y2 + ny * half + uy * endExt),
     new Vec(x2 - nx * half + ux * endExt, y2 - ny * half + uy * endExt),
     new Vec(-nx * half - ux * startExt, -ny * half - uy * startExt),
   ]
+
+  _cornersCache.set(shape.id, { key: fullKey, corners })
+  return corners
 }
 
 // eslint-disable-next-line react-refresh/only-export-components
