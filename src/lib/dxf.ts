@@ -515,40 +515,15 @@ export function commitCadImport(
   }))
 
   if (shapes.length) {
-    // 디버그 로그 — 콘솔에서 [DXF] 검색
-    console.log('[DXF] === commitCadImport ===')
-    console.log('[DXF] scale:', scale, 'unitToMm:', result.unitToMm, 'pxPerMm:', getScaleConfig(editor).pxPerMm)
-    console.log('[DXF] rawSegs:', rawSegs.length, '개')
-    console.log('[DXF] 원본 bbox: x', minX.toFixed(0), '~', maxX.toFixed(0), ' y', minY.toFixed(0), '~', maxY.toFixed(0))
-    console.log('[DXF] 카메라:', JSON.stringify(cam))
-    console.log('[DXF] 뷰포트:', JSON.stringify(vp))
-    console.log('[DXF] vpCenter (page좌표):', vpCenterX.toFixed(0), vpCenterY.toFixed(0))
-    console.log('[DXF] offset:', offsetX.toFixed(0), offsetY.toFixed(0))
-    const sMinX = Math.min(...shapes.map(s => s.x))
-    const sMaxX = Math.max(...shapes.map(s => s.x + s.props.x2))
-    const sMinY = Math.min(...shapes.map(s => s.y))
-    const sMaxY = Math.max(...shapes.map(s => s.y + s.props.y2))
-    console.log('[DXF] shapes 좌표: x', sMinX.toFixed(0), '~', sMaxX.toFixed(0), ' y', sMinY.toFixed(0), '~', sMaxY.toFixed(0))
-    console.log('[DXF] shapes 크기:', (sMaxX - sMinX).toFixed(0), 'x', (sMaxY - sMinY).toFixed(0), 'px')
-    console.log('[DXF] shapes 생성:', shapes.length, '개')
-
     editor.createShapes(shapes as never)
 
-    // shapes 생성 후 전체 보기 시도
+    // shapes 생성 후 전체 보기
     setTimeout(() => {
       try {
-        const allShapes = editor.getCurrentPageShapes()
-        console.log('[DXF] setTimeout: 페이지 shapes:', allShapes.length, '개')
-        console.log('[DXF] setTimeout: 카메라:', JSON.stringify(editor.getCamera()))
         editor.selectAll()
-        const sel = editor.getSelectedShapeIds()
-        console.log('[DXF] setTimeout: selected:', sel.length, '개')
         editor.zoomToFit({ animation: { duration: 0 } })
-        console.log('[DXF] setTimeout: zoomToFit 후 카메라:', JSON.stringify(editor.getCamera()))
         editor.selectNone()
-      } catch (e) {
-        console.error('[DXF] setTimeout 에러:', e)
-      }
+      } catch { /* ignore */ }
     }, 200)
   }
   return shapes.length
