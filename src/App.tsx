@@ -238,6 +238,9 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
               tools={TOOLS}
               onMount={handleMount}
               hideUi
+              cameraOptions={{
+                zoomSteps: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8],
+              }}
             />
             <EmptyCanvasHint editor={editor} />
             <CanvasPickOverlay />
