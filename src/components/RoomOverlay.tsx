@@ -190,7 +190,14 @@ export function RoomOverlay() {
     setEditing(null)
   }
 
-  if (!visible || rooms.length === 0) return null
+  // DXF 임포트가 있으면 RoomOverlay 숨김 (DXF 도면 자체에 방 정보 있음)
+  const hasDxf = editor
+    ? editor.getCurrentPageShapes().some(
+        (s) => s.type === 'dxfgroup' || !!(s.meta as Record<string, unknown>)?.dxfFingerprint
+      )
+    : false
+
+  if (!visible || rooms.length === 0 || hasDxf) return null
 
   return (
     <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 50 }}>
