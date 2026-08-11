@@ -102,12 +102,12 @@ export function RoomOverlay() {
   if (!visible || rooms.length === 0) return null
 
   return (
-    <>
+    <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 50 }}>
       {/* SVG polygon fills — behind labels */}
       <svg
         style={{
-          position: 'fixed', inset: 0, width: '100%', height: '100%',
-          pointerEvents: 'none', zIndex: 298,
+          position: 'absolute', inset: 0, width: '100%', height: '100%',
+          pointerEvents: 'none',
         }}
       >
         {rooms.map((r, i) => {
@@ -136,10 +136,10 @@ export function RoomOverlay() {
           <div
             key={r.key}
             style={{
-              position: 'fixed',
+              position: 'absolute',
               left: r.cx,
               top: r.cy,
-              zIndex: 299,
+              zIndex: 2,
               transform: 'translate(-50%, -50%)',
               background: 'rgba(255,255,255,0.88)',
               border: `1.5px solid ${color}55`,
@@ -188,7 +188,7 @@ export function RoomOverlay() {
           </div>
         )
       })}
-    </>
+    </div>
   )
 }
 
