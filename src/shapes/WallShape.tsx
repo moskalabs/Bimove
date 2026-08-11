@@ -214,6 +214,10 @@ function WallComponent({ shape }: { shape: WallShape }) {
   const { x2, y2, thickness } = shape.props
   const len = Math.sqrt(x2 * x2 + y2 * y2)
 
+  // 대량 shapes(200+)일 때 치수 라벨 자동 비활성화 (SVG 노드 3500+ 절감)
+  const shapeCount = _wallsCache.length // 이미 캐시된 wall 수 활용
+  const effectiveShowDim = showDim && shapeCount < 200
+
   const corners = computeJoinedCorners(editor, shape)
   const d = `M${corners[0].x},${corners[0].y} L${corners[1].x},${corners[1].y} L${corners[2].x},${corners[2].y} L${corners[3].x},${corners[3].y} Z`
 
@@ -229,11 +233,12 @@ function WallComponent({ shape }: { shape: WallShape }) {
   const fill = grayscale ? '#f5f5f5' : rawFill
   const stroke = grayscale ? '#333' : rawStroke
   const pattern = grayscale ? undefined : (shape.meta?.pattern as string | undefined)
-  const patId = pattern && pattern !== 'none' ? `pat-${pattern}-${shape.id.slice(-6)}` : null
-  const patternDef = patId ? renderPatternDef(pattern as PatternId, patId, stroke) : null
-  const fillAttr = patId ? `url(#${patId})` : fill
+  // 패턴 ID를 패턴 이름+색상으로 공유 (벽마다 <defs> 중복 방지)
+  const patKey = pattern && pattern !== 'none' ? `pat-${pattern}-${stroke.replace('#', '')}` : null
+  const patternDef = patKey ? renderPatternDef(pattern as PatternId, patKey, stroke) : null
+  const fillAttr = patKey ? `url(#${patKey})` : fill
 
-  if (len < 4) {
+  if (len < 4 || !effectiveShowDim) {
     return <SVGContainer>{patternDef}<path d={d} fill={fillAttr} stroke={stroke} strokeWidth={strokeW} /></SVGContainer>
   }
 
@@ -256,7 +261,7 @@ function WallComponent({ shape }: { shape: WallShape }) {
       {patternDef}
       <path d={d} fill={fillAttr} stroke={stroke} strokeWidth={strokeW} />
 
-      {showDim && (
+      {effectiveShowDim && (
         <>
           <line x1={d1.x} y1={d1.y} x2={d2.x} y2={d2.y} stroke="#1a73e8" strokeWidth={0.8} />
           <line x1={nx * (thickness / 2)} y1={ny * (thickness / 2)} x2={d1.x + nx * ex} y2={d1.y + ny * ex} stroke="#1a73e8" strokeWidth={0.8} />

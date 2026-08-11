@@ -88,7 +88,11 @@ function makeEditor(shapes: FakeShape[], zoom = 1) {
   }
 }
 
-import { snapToWallEndpoint, snapToWallLine } from '../../lib/snap'
+import { snapToWallEndpoint, snapToWallLine, _resetSnapCache } from '../../lib/snap'
+
+beforeEach(() => {
+  _resetSnapCache()
+})
 
 describe('snapToWallEndpoint', () => {
   it('returns null when no walls', () => {

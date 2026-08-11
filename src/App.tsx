@@ -140,9 +140,9 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
         // localStorage 즉시 저장
         saveSnapshot(projectId, snapshot)
         touchProject(projectId)
-        // 썸네일
+        // 썸네일 (200+ shapes일 때 스킵 — getSvgString이 너무 무거움)
         const shapes = editor.getCurrentPageShapes()
-        if (shapes.length > 0) {
+        if (shapes.length > 0 && shapes.length <= 200) {
           try {
             const result = await (editor as unknown as { getSvgString: (shapes: unknown[], opts: unknown) => Promise<{ svg: string; width: number; height: number } | undefined> })
               .getSvgString(shapes, { padding: 16, background: true })
