@@ -101,14 +101,27 @@ function computeJoinedCorners(editor: Editor, shape: WallShape): Vec[] {
   const sx = shape.x, sy = shape.y
   const ex = shape.x + x2, ey = shape.y + y2
 
-  // 근접 wall만 추려서 해시에 포함 (O(n) 1회만, 전체 shapes 순회가 아님)
-  let neighborHash = ''
+  // 근접 wall만 추려서 해시에 포함 (AABB pre-filter → distance check)
+  // AABB bounding box: shape의 양 끝점 ± snapR
+  const bbMinX = Math.min(sx, ex) - snapR
+  const bbMaxX = Math.max(sx, ex) + snapR
+  const bbMinY = Math.min(sy, ey) - snapR
+  const bbMaxY = Math.max(sy, ey) + snapR
+
+  let neighborHash = 0 // numeric hash (string concat 대신)
   const neighbors: WallSnapshot[] = []
   for (const w of walls) {
     if (w.id === shape.id) continue
     const wp = w.props
     const wlen = Math.hypot(wp.x2, wp.y2)
     if (wlen < 1) continue
+
+    // AABB pre-filter: 바운딩박스 겹침 체크 (Math.hypot 이전에 저렴한 비교)
+    const wMinX = Math.min(w.x, w.x + wp.x2)
+    const wMaxX = Math.max(w.x, w.x + wp.x2)
+    const wMinY = Math.min(w.y, w.y + wp.y2)
+    const wMaxY = Math.max(w.y, w.y + wp.y2)
+    if (wMaxX < bbMinX || wMinX > bbMaxX || wMaxY < bbMinY || wMinY > bbMaxY) continue
 
     // 빠른 거리 체크: 두 endpoint와의 거리가 snapR 이내인 wall만 이웃
     const dSS = Math.hypot(w.x - sx, w.y - sy)
@@ -132,11 +145,17 @@ function computeJoinedCorners(editor: Editor, shape: WallShape): Vec[] {
 
     if (nearEnd || nearBody) {
       neighbors.push(w)
-      neighborHash += `${w.id}:${w.x}|${w.y}|${wp.x2}|${wp.y2}|${wp.thickness};`
+      // numeric hash: 빠른 비트 연산 (string concat GC 부담 제거)
+      neighborHash = (neighborHash * 31 + (w.x * 73 | 0) + (w.y * 37 | 0) + (wp.x2 * 53 | 0) + (wp.y2 * 97 | 0) + (wp.thickness * 11 | 0)) | 0
     }
   }
 
   const fullKey = `${myKey}#${neighborHash}`
+  // cornersCache 크기 제한 (메모리 누수 방지)
+  if (_cornersCache.size > 1000) {
+    const it = _cornersCache.keys()
+    for (let i = 0; i < 500; i++) { const r = it.next(); if (r.done) break; _cornersCache.delete(r.value) }
+  }
   const cached = _cornersCache.get(shape.id)
   if (cached && cached.key === fullKey) return cached.corners
 

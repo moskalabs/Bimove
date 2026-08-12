@@ -182,11 +182,16 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
 
   useEffect(() => {
     if (!editor) return
+    let raf = 0
     const unsub = editor.store.listen(() => {
-      const state = editor.getInstanceState()
-      setGridOn(!!(state as { isGridMode?: boolean }).isGridMode)
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        const state = editor.getInstanceState()
+        setGridOn(!!(state as { isGridMode?: boolean }).isGridMode)
+      })
     })
-    return unsub
+    return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
   }, [editor])
 
   const toggleGrid = () => {
@@ -309,8 +314,12 @@ function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleC
       setDistText(`${dist} · ${angle.toFixed(1)}°`)
     }
     update()
-    const unsub = editor.store.listen(update)
-    return unsub
+    let raf = 0
+    const unsub = editor.store.listen(() => {
+      if (raf) return
+      raf = requestAnimationFrame(() => { raf = 0; update() })
+    })
+    return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
   }, [editor, scale])
 
   const zoomIn = () => { if (editor) editor.zoomIn() }

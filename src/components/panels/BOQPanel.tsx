@@ -27,24 +27,34 @@ function calcBOQ(editor: ReturnType<typeof useEditor>, useSelection = false): BO
   const shapes = useSelection ? editor.getSelectedShapes() : editor.getCurrentPageShapes()
   const scale = getScaleConfig(editor)
 
-  const walls = shapes.filter(s => s.type === 'wall')
-  const doors = shapes.filter(s => s.type === 'door')
-  const windows = shapes.filter(s => s.type === 'window')
-  const blocks = shapes.filter(s => s.type === 'block')
+  // 단일 패스로 shape 분류 (4개 filter 호출 → 1회 순회)
+  const walls: typeof shapes = []
+  let doorCount = 0
+  let windowCount = 0
+  const blocks: typeof shapes = []
+  for (const s of shapes) {
+    switch (s.type) {
+      case 'wall': walls.push(s); break
+      case 'door': doorCount++; break
+      case 'window': windowCount++; break
+      case 'block': blocks.push(s); break
+    }
+  }
 
   let wallTotalPx = 0
   const wallData: { x1: number; y1: number; x2: number; y2: number }[] = []
-  // 자재별 벽 길이 집계
+  // material presets를 ID로 인덱싱 (루프 내 .find() 제거)
+  const allPresets = loadMaterialPresets()
+  const presetById = new Map(allPresets.map(m => [m.id, m]))
   const matBuckets = new Map<string, { label: string; lenPx: number; pricePerM?: number }>()
-  loadMaterialPresets()  // ensure load (no-op)
   for (const w of walls) {
     const p = w.props as { x2: number; y2: number }
     const len = Math.sqrt(p.x2 ** 2 + p.y2 ** 2)
     wallTotalPx += len
     wallData.push({ x1: w.x, y1: w.y, x2: w.x + p.x2, y2: w.y + p.y2 })
-    // 자재 lookup (meta.fill 기준)
     const meta = (w.meta ?? {}) as { fill?: string; materialId?: string }
-    const material = meta.materialId ? loadMaterialPresets().find(m => m.id === meta.materialId) : findMaterialByFill(meta.fill)
+    // O(1) lookup 대신 O(n) find
+    const material = meta.materialId ? presetById.get(meta.materialId) : findMaterialByFill(meta.fill)
     const key = material?.id ?? '_default'
     const label = material?.label ?? '기본'
     const cur = matBuckets.get(key) ?? { label, lenPx: 0, pricePerM: material?.pricePerM }
@@ -74,7 +84,7 @@ function calcBOQ(editor: ReturnType<typeof useEditor>, useSelection = false): BO
     name: getBlock(id)?.name ?? id, count, blockId: id,
   }))
 
-  return { wallTotalLenMm: wallTotalMm, wallCount: walls.length, doorCount: doors.length, windowCount: windows.length, rooms, blockCounts, wallsByMaterial }
+  return { wallTotalLenMm: wallTotalMm, wallCount: walls.length, doorCount, windowCount, rooms, blockCounts, wallsByMaterial }
 }
 
 function fmtLen(mm: number): string {

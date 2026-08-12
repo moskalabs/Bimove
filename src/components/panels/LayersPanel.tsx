@@ -57,15 +57,24 @@ const OPACITY_ICON: Record<OpacityLevel, string> = { 1: '👁', 0.3: '🔅', 0: 
 export function LayersPanel() {
   const editor = useEditor()
   const [tab, setTab] = useState<Tab>('type')
-  const [counts, setCounts] = useState<Record<string, number>>({})
-  const [phaseCounts, setPhaseCounts] = useState<Record<string, number>>({})
-  const [materialCounts, setMaterialCounts] = useState<Record<string, number>>({})
-  const [dxfLayerCounts, setDxfLayerCounts] = useState<Record<string, number>>({})
-  const [dxfLayerLw, setDxfLayerLw] = useState<Record<string, number>>({})
+  // 단일 state 객체로 통합 (8개 setState → 1개, re-render 1회)
+  type LayerData = {
+    counts: Record<string, number>
+    phaseCounts: Record<string, number>
+    materialCounts: Record<string, number>
+    dxfLayerCounts: Record<string, number>
+    dxfLayerLw: Record<string, number>
+  }
+  const [data, setData] = useState<LayerData>({
+    counts: {}, phaseCounts: {}, materialCounts: {}, dxfLayerCounts: {}, dxfLayerLw: {},
+  })
   const [_hidden, setHidden] = useState<Set<string>>(new Set())
   const [opacityMap, setOpacityMap] = useState<Record<string, OpacityLevel>>({})
   const [isGrayscale, setIsGrayscale] = useState(getGrayscaleMode)
   const presets = loadMaterialPresets()
+
+  // destructure for easy access
+  const { counts, phaseCounts, materialCounts, dxfLayerCounts, dxfLayerLw } = data
 
   useEffect(() => {
     if (!editor) return
@@ -89,29 +98,21 @@ export function LayersPanel() {
         const op = s.opacity as number
         if (op < 1) {
           const level: OpacityLevel = op <= 0 ? 0 : 0.3
-          // type 기반
           if (!initOpacity[s.type]) initOpacity[s.type] = level
-          // dxf 기반
           if (meta.dxfLayer) {
             const dk = 'dxf:' + meta.dxfLayer
             if (!initOpacity[dk]) initOpacity[dk] = level
           }
         }
       }
-      setCounts(c)
-      setPhaseCounts(pc)
-      setMaterialCounts(mc)
-      setDxfLayerCounts(dc)
-      setDxfLayerLw(dlw)
-      // 첫 마운트 시에만 opacity 복원
+      // 단일 setState로 re-render 1회만 트리거
+      setData({ counts: c, phaseCounts: pc, materialCounts: mc, dxfLayerCounts: dc, dxfLayerLw: dlw })
       setOpacityMap(prev => Object.keys(prev).length === 0 ? initOpacity : prev)
-      // hidden 셋도 동기화
       const h = new Set<string>()
       for (const [k, v] of Object.entries(initOpacity)) { if (v === 0) h.add(k) }
       setHidden(prev => prev.size === 0 && h.size > 0 ? h : prev)
     }
     update()
-    // 디바운스 적용 (BUG 9: 성능)
     let timer = 0
     const unsub = editor.store.listen(() => {
       clearTimeout(timer)
