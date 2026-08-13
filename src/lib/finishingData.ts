@@ -28,9 +28,15 @@ export type FinishingItem = {
   id: string
   label: string            // 석고보드, 도장, 타일 등
   calcType: CalcType       // 계산 유형
+  /** 바닥 전용 (마루 등) — true이면 벽면 물량표 숨김 */
+  floorOnly?: boolean
   /** 장/box 계산용: 자재 규격 */
   itemWidthMm?: number
   itemLengthMm?: number
+  /** box 계산용: 박스당 면적 (m²/box) — itemWidth/Length 대신 사용 */
+  boxAreaM2?: number
+  /** roll 계산용: 롤당 면적 (m²/롤) */
+  rollAreaM2?: number
   /** 도장 계산용: 도포율 (m²/L) */
   coverageM2PerL?: number
   /** 발주 용량 옵션 (L) — 도장용 */
@@ -39,6 +45,8 @@ export type FinishingItem = {
   lossRate: number
   /** 기본 단위 */
   unit: string
+  /** 규격 설명 (예: "강마루 94 x 800 x 7.5T 기준 3.23 m²/box") */
+  specLabel?: string
   /** 서브 변형 탭들 */
   variants: MaterialVariant[]
 }
@@ -81,26 +89,31 @@ const DEFAULT_CATEGORIES: FinishingCategory[] = [
       {
         id: 'f-gypsum', label: '석고보드', calcType: 'sheet',
         itemWidthMm: 900, itemLengthMm: 1800, lossRate: 0.10, unit: '장',
+        specLabel: '박스당 면적 1.62 m²/box',
         variants: [createVariant('석고보드')],
       },
       {
         id: 'f-paint', label: '도장', calcType: 'paint',
         coverageM2PerL: 8, containerSizes: [1, 4, 18], lossRate: 0.05, unit: 'L',
+        specLabel: '수성 페인트 기준 8m²/L (면적 x 도포횟수 / 도포율)',
         variants: [createVariant('도장 A')],
       },
       {
         id: 'f-tile', label: '타일', calcType: 'sheet',
-        itemWidthMm: 300, itemLengthMm: 600, lossRate: 0.08, unit: '장',
-        variants: [createVariant('타일')],
+        boxAreaM2: 1.44, lossRate: 0.10, unit: 'box',
+        specLabel: '박스당 면적 1.44 m²/box',
+        variants: [createVariant('타일 A')],
       },
       {
         id: 'f-wallpaper', label: '도배', calcType: 'roll',
-        itemWidthMm: 530, itemLengthMm: 15600, lossRate: 0.10, unit: '롤',
-        variants: [createVariant('도배')],
+        rollAreaM2: 16, lossRate: 0.10, unit: '롤',
+        specLabel: '실크벽지 기준 16 m²/롤',
+        variants: [createVariant('도배(광폭)')],
       },
       {
         id: 'f-wood', label: '마루', calcType: 'sheet',
-        itemWidthMm: 1200, itemLengthMm: 190, lossRate: 0.08, unit: '장',
+        floorOnly: true, boxAreaM2: 3.23, lossRate: 0.10, unit: 'box',
+        specLabel: '강마루 94 x 800 x 7.5T 기준 3.23 m²/box',
         variants: [createVariant('마루')],
       },
     ],
@@ -137,22 +150,34 @@ export function sumTotalArea(v: MaterialVariant): number {
   return sumFloorArea(v) + sumWallArea(v)
 }
 
-/** sheet 타입 발주 수량 계산 (석고보드, 타일, 마루 등) */
+/** 자재의 단위 면적 (m²) — boxAreaM2 > rollAreaM2 > itemWidth*Length 우선순위 */
+export function unitAreaM2(item: FinishingItem): number {
+  if (item.boxAreaM2 && item.boxAreaM2 > 0) return item.boxAreaM2
+  if (item.rollAreaM2 && item.rollAreaM2 > 0) return item.rollAreaM2
+  return ((item.itemWidthMm ?? 0) * (item.itemLengthMm ?? 0)) / 1_000_000
+}
+
+/** 바닥전용 자재의 총 면적 (벽면 제외) */
+function effectiveTotalArea(item: FinishingItem, variant: MaterialVariant): number {
+  return item.floorOnly ? sumFloorArea(variant) : sumTotalArea(variant)
+}
+
+/** sheet/box 타입 발주 수량 계산 */
 export function calcSheetQty(item: FinishingItem, variant: MaterialVariant): number {
-  const total = sumTotalArea(variant)
+  const total = effectiveTotalArea(item, variant)
   if (total <= 0) return 0
-  const sheetM2 = ((item.itemWidthMm ?? 0) * (item.itemLengthMm ?? 0)) / 1_000_000
-  if (sheetM2 <= 0) return 0
-  return Math.ceil((total / sheetM2) * (1 + item.lossRate))
+  const ua = unitAreaM2(item)
+  if (ua <= 0) return 0
+  return Math.ceil((total * (1 + item.lossRate)) / ua)
 }
 
 /** roll 타입 발주 수량 계산 (도배 등) */
 export function calcRollQty(item: FinishingItem, variant: MaterialVariant): number {
-  const total = sumTotalArea(variant)
+  const total = effectiveTotalArea(item, variant)
   if (total <= 0) return 0
-  const rollM2 = ((item.itemWidthMm ?? 0) * (item.itemLengthMm ?? 0)) / 1_000_000
-  if (rollM2 <= 0) return 0
-  return Math.ceil((total / rollM2) * (1 + item.lossRate))
+  const ua = unitAreaM2(item)
+  if (ua <= 0) return 0
+  return Math.ceil((total * (1 + item.lossRate)) / ua)
 }
 
 /** 도장: 구역별 필요 용량(L) */

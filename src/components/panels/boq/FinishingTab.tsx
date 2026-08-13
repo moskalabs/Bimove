@@ -1,13 +1,13 @@
 // 마감재 Tables 탭 — 카테고리 트리 + 자재별 상세 물량표
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronRight, ChevronDown, Plus, Upload, MoreHorizontal, Trash2, Pencil } from 'lucide-react'
+import { ChevronRight, ChevronDown, Plus, Upload, MoreHorizontal, Trash2 } from 'lucide-react'
 import { useProjectId } from '../../../context/ProjectContext'
 import {
   loadFinishingData, saveFinishingData,
-  createVariant, uid,
+  createVariant, uid, unitAreaM2,
   wallAreaM2, sumFloorArea, sumWallArea, sumTotalArea,
   calcSheetQty, calcRollQty,
-  paintVolumeL, sumPaintVolume, calcPaintContainers, sheetAreaM2,
+  paintVolumeL, sumPaintVolume, calcPaintContainers,
   type FinishingTablesData, type FinishingCategory, type FinishingItem,
   type MaterialVariant, type ZoneRow,
 } from '../../../lib/finishingData'
@@ -193,10 +193,23 @@ function WallTable({ item, variant, onUpdate }: {
 
 // ── 합계 섹션 ──
 
-function TotalSection({ item, variant }: { item: FinishingItem; variant: MaterialVariant }) {
+function TotalSection({ item, variant, onSpecEdit }: {
+  item: FinishingItem; variant: MaterialVariant; onSpecEdit?: () => void
+}) {
   const isPaint = item.calcType === 'paint'
   const [containerSize, setContainerSize] = useState(item.containerSizes?.[item.containerSizes.length - 1] ?? 18)
 
+  const specNote = (
+    <div className="ft-spec-row">
+      <div className="ft-spec-note">
+        <span className="ft-spec-icon">ℹ</span>
+        <span>기본 규격 : {item.specLabel ?? ''}</span>
+      </div>
+      <button className="ft-spec-edit-btn" onClick={onSpecEdit}>자재 규격 수정 ⚙</button>
+    </div>
+  )
+
+  // ── 도장 ──
   if (isPaint) {
     const totalVolume = sumPaintVolume(variant, item.coverageM2PerL ?? 8)
     const totalArea = sumTotalArea(variant)
@@ -206,73 +219,81 @@ function TotalSection({ item, variant }: { item: FinishingItem; variant: Materia
       <div className="ft-total">
         <div className="ft-section-title">합계</div>
         <table className="ft-table ft-total-table">
-          <thead>
-            <tr>
-              <th>총 면적(m²)</th>
-              <th>총 필요 용량(L)</th>
-              <th>발주 용량 선택</th>
-              <th>발주 수량</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td className="ft-num">{totalArea.toFixed(2)}</td>
-              <td className="ft-num">{totalVolume.toFixed(2)}</td>
-              <td>
-                <select className="ft-zone-select" value={containerSize} onChange={e => setContainerSize(parseInt(e.target.value))}>
-                  {(item.containerSizes ?? [1, 4, 18]).map(s => (
-                    <option key={s} value={s}>{s} L</option>
-                  ))}
-                </select>
-              </td>
-              <td className="ft-num ft-bold">{containers}</td>
-            </tr>
-          </tbody>
+          <thead><tr>
+            <th>총 면적(m²)</th><th>총 필요 용량(L)</th><th>발주 용량 선택</th><th>발주 수량</th>
+          </tr></thead>
+          <tbody><tr>
+            <td className="ft-num">{totalArea.toFixed(2)}</td>
+            <td className="ft-num">{totalVolume.toFixed(2)}</td>
+            <td>
+              <select className="ft-zone-select" value={containerSize} onChange={e => setContainerSize(parseInt(e.target.value))}>
+                {(item.containerSizes ?? [1, 4, 18]).map(s => <option key={s} value={s}>{s} L</option>)}
+              </select>
+            </td>
+            <td className="ft-num ft-bold">{containers}</td>
+          </tr></tbody>
         </table>
-        <div className="ft-spec-note">
-          <span className="ft-spec-icon">ℹ</span>
-          기본 규격 : 수성 페인트 기준 {item.coverageM2PerL ?? 8}m²/L (면적 x 도포횟수 / 도포율)
-        </div>
+        {specNote}
       </div>
     )
   }
 
-  // sheet / roll 타입
+  // ── 바닥 전용 (마루 등) ──
+  if (item.floorOnly) {
+    const floorA = sumFloorArea(variant)
+    const lossPercent = Math.round(item.lossRate * 100)
+    const lossApplied = +(floorA * (1 + item.lossRate)).toFixed(2)
+    const qty = calcSheetQty(item, variant)
+
+    return (
+      <div className="ft-total">
+        <div className="ft-section-title">합계</div>
+        <table className="ft-table ft-total-table">
+          <thead><tr>
+            <th>총 면적(m²)</th><th>로스(%)</th><th>로스 적용면적(m²)</th><th>발주 수량({item.unit})</th>
+          </tr></thead>
+          <tbody><tr>
+            <td className="ft-num">{floorA.toFixed(1)}</td>
+            <td>
+              <select className="ft-zone-select" value={lossPercent} disabled>
+                <option value={lossPercent}>{lossPercent}</option>
+              </select>
+            </td>
+            <td className="ft-num">{lossApplied.toFixed(2)}</td>
+            <td className="ft-num ft-bold">{qty}</td>
+          </tr></tbody>
+        </table>
+        {specNote}
+      </div>
+    )
+  }
+
+  // ── 일반 (석고보드, 타일, 도배 등) ──
   const floorA = sumFloorArea(variant)
   const wallA = sumWallArea(variant)
   const totalA = floorA + wallA
   const qty = item.calcType === 'roll' ? calcRollQty(item, variant) : calcSheetQty(item, variant)
-  const spec = sheetAreaM2(item)
 
   return (
     <div className="ft-total">
       <div className="ft-section-title">합계</div>
       <table className="ft-table ft-total-table">
-        <thead>
-          <tr>
-            <th>평면 면적(m²)</th>
-            <th>벽면 면적(m²)</th>
-            <th>총 시공면적(m²)</th>
-            <th>로스(%)</th>
-            <th>발주 수량({item.unit})</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td className="ft-num">{floorA.toFixed(1)}</td>
-            <td className="ft-num">{wallA.toFixed(2)}</td>
-            <td className="ft-num">{totalA.toFixed(2)}</td>
-            <td className="ft-num">{Math.round(item.lossRate * 100)}</td>
-            <td className="ft-num ft-bold">{qty}</td>
-          </tr>
-        </tbody>
+        <thead><tr>
+          <th>평면 면적(m²)</th><th>벽면 면적(m²)</th><th>총 시공면적(m²)</th><th>로스(%)</th><th>발주 수량({item.unit})</th>
+        </tr></thead>
+        <tbody><tr>
+          <td className="ft-num">{floorA.toFixed(1)}</td>
+          <td className="ft-num">{wallA.toFixed(2)}</td>
+          <td className="ft-num">{totalA.toFixed(2)}</td>
+          <td>
+            <select className="ft-zone-select" value={Math.round(item.lossRate * 100)} disabled>
+              <option>{Math.round(item.lossRate * 100)}</option>
+            </select>
+          </td>
+          <td className="ft-num ft-bold">{qty}</td>
+        </tr></tbody>
       </table>
-      {spec > 0 && (
-        <div className="ft-spec-note">
-          <span className="ft-spec-icon">ℹ</span>
-          기본 규격 : {item.itemWidthMm} x {item.itemLengthMm} ({spec.toFixed(2)} m²/{item.unit})
-        </div>
-      )}
+      {specNote}
     </div>
   )
 }
@@ -347,7 +368,9 @@ function MaterialDetail({
       {/* 물량표 평면 + 벽면 */}
       <div className="ft-tables-scroll">
         <FloorTable item={item} variant={variant} onUpdate={updateZones} />
-        <WallTable item={item} variant={variant} onUpdate={updateZones} />
+        {!item.floorOnly && (
+          <WallTable item={item} variant={variant} onUpdate={updateZones} />
+        )}
         <TotalSection item={item} variant={variant} />
       </div>
     </div>
