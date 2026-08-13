@@ -5,6 +5,7 @@ import {
   Copy, Move, RotateCw,
   Ruler, Type,
 } from 'lucide-react'
+import { PageRecordType } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
 
 /* ── 커스텀 SVG 아이콘 (건축 특화, 모노톤) ── */
@@ -134,21 +135,59 @@ function ToolGroup({ tools, activeTool, onSelect }: { tools: ToolDef[]; activeTo
 export function TopBar() {
   const editor = useEditor()
   const [activeTool, setActiveTool] = useState('select')
-  const [projectName] = useState('Drawing 1')
   const [showDropdown, setShowDropdown] = useState(false)
+
+  // ── 페이지(Drawing) 목록 + 현재 페이지 추적 ──
+  const [pages, setPages] = useState<Array<{ id: string; name: string }>>([])
+  const [currentPageId, setCurrentPageId] = useState<string>('')
 
   useEffect(() => {
     if (!editor) return
+    // 초기값
+    const syncPages = () => {
+      const ps = editor.getPages().map(p => ({ id: p.id, name: p.name }))
+      setPages(ps)
+      setCurrentPageId(editor.getCurrentPageId())
+    }
+    syncPages()
+
     let prevTool = ''
+    let prevPageId = editor.getCurrentPageId()
+    let prevPageCount = editor.getPages().length
     const unsub = editor.store.listen(() => {
+      // 도구 변경 추적
       const current = editor.getCurrentToolId()
-      if (current === prevTool) return // 변경 없으면 스킵
-      prevTool = current
-      const reverseMap = Object.entries(TOOL_MAP).find(([, v]) => v === current)
-      if (reverseMap) setActiveTool(reverseMap[0])
+      if (current !== prevTool) {
+        prevTool = current
+        const reverseMap = Object.entries(TOOL_MAP).find(([, v]) => v === current)
+        if (reverseMap) setActiveTool(reverseMap[0])
+      }
+      // 페이지 변경만 추적 (매번 sync 방지)
+      const curPageId = editor.getCurrentPageId()
+      const curPageCount = editor.getPages().length
+      if (curPageId !== prevPageId || curPageCount !== prevPageCount) {
+        prevPageId = curPageId
+        prevPageCount = curPageCount
+        syncPages()
+      }
     })
     return unsub
   }, [editor])
+
+  const switchPage = (pageId: string) => {
+    if (!editor) return
+    editor.setCurrentPage(pageId as never)
+    setShowDropdown(false)
+  }
+
+  const addPage = () => {
+    if (!editor) return
+    const num = editor.getPages().length + 1
+    const newPageId = PageRecordType.createId()
+    editor.createPage({ name: `Drawing ${num}`, id: newPageId })
+    editor.setCurrentPage(newPageId)
+    setShowDropdown(false)
+  }
 
   const selectTool = (id: string) => {
     setActiveTool(id)
@@ -167,18 +206,32 @@ export function TopBar() {
     }
   }
 
+  const currentPageName = pages.find(p => p.id === currentPageId)?.name || 'Drawing 1'
+
   return (
     <div className="topbar">
       {/* 기본 */}
       <div className="topbar-group">
         <div className="topbar-project-tab" onClick={() => setShowDropdown(!showDropdown)}>
-          <span className="topbar-project-name">{projectName}</span>
+          <span className="topbar-project-name">{currentPageName}</span>
           <ChevronDown size={14} strokeWidth={2} />
           {showDropdown && (
             <div className="topbar-dropdown">
-              <div className="topbar-dropdown-item active">Drawing 1</div>
-              <div className="topbar-dropdown-item">Drawing 2</div>
-              <div className="topbar-dropdown-item topbar-dropdown-add">+ 새 도면</div>
+              {pages.map(p => (
+                <div
+                  key={p.id}
+                  className={`topbar-dropdown-item${p.id === currentPageId ? ' active' : ''}`}
+                  onClick={(e) => { e.stopPropagation(); switchPage(p.id) }}
+                >
+                  {p.name}
+                </div>
+              ))}
+              <div
+                className="topbar-dropdown-item topbar-dropdown-add"
+                onClick={(e) => { e.stopPropagation(); addPage() }}
+              >
+                + 새 도면
+              </div>
             </div>
           )}
         </div>
