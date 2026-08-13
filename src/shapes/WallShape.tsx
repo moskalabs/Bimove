@@ -246,11 +246,14 @@ function WallComponent({ shape }: { shape: WallShape }) {
   if (isDxf) {
     const dxfColor = (shape.meta?.dxfColor as string) || '#333'
     const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
-    const sw = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
+    const baseSw = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
+    // 줌에 따른 최소 화면 0.5px 보장
+    const zoom = editor.getZoomLevel()
+    const sw = Math.max(baseSw, 0.5 / Math.max(zoom, 0.001))
     // 채워진 사각형이 아닌, 중심선만 렌더
     return (
       <SVGContainer>
-        <line x1={0} y1={0} x2={x2} y2={y2} stroke={dxfColor} strokeWidth={sw} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        <line x1={0} y1={0} x2={x2} y2={y2} stroke={dxfColor} strokeWidth={sw} strokeLinecap="round" />
       </SVGContainer>
     )
   }
