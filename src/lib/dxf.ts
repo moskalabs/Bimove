@@ -15,7 +15,7 @@ type Seg = { x1: number; y1: number; x2: number; y2: number }
 const ACI_TO_HEX: Record<number, string> = {
   // ── Standard colors 1-9 ──
   1: '#ff0000', 2: '#ffff00', 3: '#00ff00', 4: '#00ffff',
-  5: '#0000ff', 6: '#ff00ff', 7: '#ffffff', 8: '#808080', 9: '#c0c0c0',
+  5: '#0000ff', 6: '#ff00ff', 7: '#000000', 8: '#808080', 9: '#c0c0c0',
   // ── Main hues (10-249): 24 hue groups × 5 shades each + 2 tint rows ──
   10: '#ff0000', 11: '#ff7f7f', 12: '#cc0000', 13: '#cc6666', 14: '#990000',
   15: '#994c4c', 16: '#7f0000', 17: '#7f3f3f', 18: '#4c0000', 19: '#4c2626',

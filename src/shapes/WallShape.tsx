@@ -19,6 +19,14 @@ import { getShowWallLengths, getGrayscaleMode } from '../lib/settings'
 import { renderPatternDef } from '../lib/wallPatterns'
 import type { PatternId } from '../lib/materialPresets'
 
+/** #ffffff 등 배경과 구분 안 되는 밝은 색 감지 */
+function isNearWhite(hex: string): boolean {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+  if (!m) return false
+  const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16)
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.85
+}
+
 export type WallShapeProps = {
   x2: number
   y2: number
@@ -244,7 +252,8 @@ function WallComponent({ shape }: { shape: WallShape }) {
 
   // DXF 임포트 shapes는 가는 선으로 표시 (CAD 도면 스타일)
   if (isDxf) {
-    const dxfColor = (shape.meta?.dxfColor as string) || '#333'
+    const rawDxf = (shape.meta?.dxfColor as string) || '#333'
+    const dxfColor = isNearWhite(rawDxf) ? '#333' : rawDxf
     const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
     const baseSw = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
     // 줌에 따른 최소 화면 0.5px 보장
@@ -264,7 +273,8 @@ function WallComponent({ shape }: { shape: WallShape }) {
 
   // Grayscale 모드: 패턴 OFF, 흑백 선
   // DXF 색상이 있으면 fill/stroke 대신 사용 (BUG 8)
-  const dxfColor = shape.meta?.dxfColor as string | undefined
+  const dxfColorRaw = shape.meta?.dxfColor as string | undefined
+  const dxfColor = dxfColorRaw && isNearWhite(dxfColorRaw) ? '#333' : dxfColorRaw
   const rawFill = (shape.meta?.fill as string) ?? dxfColor ?? '#555'
   const rawStroke = (shape.meta?.stroke as string) ?? dxfColor ?? '#222'
   const fill = grayscale ? '#f5f5f5' : rawFill

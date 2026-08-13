@@ -13,6 +13,15 @@ import {
   useEditor,
 } from 'tldraw'
 
+/** #ffffff 등 배경과 구분 안 되는 밝은 색 감지 */
+function isNearWhite(hex: string): boolean {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+  if (!m) return false
+  const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16)
+  // relative luminance > 0.85 → 배경(흰색)과 구분 어려움
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.85
+}
+
 export type DxfGroupShapeProps = {
   w: number       // bounding width
   h: number       // bounding height
@@ -46,7 +55,9 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
     return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
   }, [editor])
 
-  const stroke = (shape.meta?.dxfColor as string) || '#333'
+  // ACI 7 = #ffffff 등 밝은 색은 라이트 배경에서 안 보이므로 보정
+  const rawColor = (shape.meta?.dxfColor as string) || '#333'
+  const stroke = isNearWhite(rawColor) ? '#333' : rawColor
   const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
   const baseStrokeW = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
   // 줌에 따른 최소 화면 0.5px 보장: zoom 1%에서 strokeW = 50 (50*0.01 = 0.5px 화면)

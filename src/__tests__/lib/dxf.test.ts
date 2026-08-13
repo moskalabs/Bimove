@@ -350,8 +350,8 @@ describe('parseDxfSegments', () => {
     const doorSeg = segs.find(s => s.layer === 'DOOR')
     const windowSeg = segs.find(s => s.layer === 'WINDOW')
 
-    // ACI 7 = #ffffff, 3 = #00ff00, 4 = #00ffff
-    expect(wallSeg?.color).toBe('#ffffff')
+    // ACI 7 = #000000 (AutoCAD contrast color — 밝은 배경에선 검정)
+    expect(wallSeg?.color).toBe('#000000')
     expect(doorSeg?.color).toBe('#00ff00')
     expect(windowSeg?.color).toBe('#00ffff')
   })
