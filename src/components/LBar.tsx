@@ -174,7 +174,7 @@ export function LBar({ onBack }: { onBack?: () => void }) {
           <button
             className="lbar-icon"
             title="정보 · 도움말"
-            onClick={() => window.open('https://bimove.vercel.app/help', '_blank')}
+            onClick={() => window.open('https://bimova.vercel.app/help', '_blank')}
           >
             <Info size={18} strokeWidth={1.75} />
           </button>

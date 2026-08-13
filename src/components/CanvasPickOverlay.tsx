@@ -18,8 +18,8 @@ export function CanvasPickOverlay() {
       setActive(detail.active)
       setTarget(detail.active ? detail.target : null)
     }
-    window.addEventListener('bimove:pick-mode', handler)
-    return () => window.removeEventListener('bimove:pick-mode', handler)
+    window.addEventListener('bimova:pick-mode', handler)
+    return () => window.removeEventListener('bimova:pick-mode', handler)
   }, [])
 
   // 컴포넌트 언마운트 시 pick 모드 정리 (BUG 2)

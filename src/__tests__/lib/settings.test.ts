@@ -98,7 +98,7 @@ describe('room names', () => {
   })
 
   it('handles corrupted localStorage gracefully', () => {
-    localStorage.setItem('bimove_room_names', 'NOT_JSON')
+    localStorage.setItem('bimova_room_names', 'NOT_JSON')
     expect(getRoomNames()).toEqual({})
   })
 })

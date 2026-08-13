@@ -16,7 +16,7 @@ describe('loadPriceConfig', () => {
   })
 
   it('merges partial saved with defaults', () => {
-    localStorage.setItem('bimove_price_config_v1', JSON.stringify({ wallPerM: 99999 }))
+    localStorage.setItem('bimova_price_config_v1', JSON.stringify({ wallPerM: 99999 }))
     const config = loadPriceConfig()
     expect(config.wallPerM).toBe(99999) // overridden
     expect(config.doorPerEa).toBe(300000) // default
@@ -24,7 +24,7 @@ describe('loadPriceConfig', () => {
   })
 
   it('merges block overrides with defaults', () => {
-    localStorage.setItem('bimove_price_config_v1', JSON.stringify({
+    localStorage.setItem('bimova_price_config_v1', JSON.stringify({
       blocks: { desk: 999999, custom_item: 50000 },
     }))
     const config = loadPriceConfig()
@@ -34,7 +34,7 @@ describe('loadPriceConfig', () => {
   })
 
   it('handles corrupted localStorage', () => {
-    localStorage.setItem('bimove_price_config_v1', 'NOT_JSON')
+    localStorage.setItem('bimova_price_config_v1', 'NOT_JSON')
     const config = loadPriceConfig()
     expect(config.wallPerM).toBe(50000) // defaults
   })

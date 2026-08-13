@@ -87,8 +87,8 @@ export function RoomOverlay() {
 
   useEffect(() => {
     const onSettings = () => { setVisible(getShowRoomAreas()); setNames(getRoomNames()) }
-    window.addEventListener('bimove:settings', onSettings)
-    return () => window.removeEventListener('bimove:settings', onSettings)
+    window.addEventListener('bimova:settings', onSettings)
+    return () => window.removeEventListener('bimova:settings', onSettings)
   }, [])
 
   // viewport 좌표 업데이트 (카메라 변경 시 호출 - 가벼운 연산)

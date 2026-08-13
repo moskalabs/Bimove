@@ -226,8 +226,8 @@ function WallComponent({ shape }: { shape: WallShape }) {
       setShowDim(getShowWallLengths())
       setGrayscale(getGrayscaleMode())
     }
-    window.addEventListener('bimove:settings', onSettings)
-    return () => window.removeEventListener('bimove:settings', onSettings)
+    window.addEventListener('bimova:settings', onSettings)
+    return () => window.removeEventListener('bimova:settings', onSettings)
   }, [])
 
   const { x2, y2, thickness } = shape.props

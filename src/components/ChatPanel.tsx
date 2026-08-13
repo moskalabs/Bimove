@@ -7,8 +7,8 @@ type Message = {
   ts: number
 }
 
-const STORAGE_KEY = 'bimove_chat_v1'
-const AUTHOR_KEY = 'bimove_chat_author'
+const STORAGE_KEY = 'bimova_chat_v1'
+const AUTHOR_KEY = 'bimova_chat_author'
 
 function loadMessages(): Message[] {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') } catch { return [] }

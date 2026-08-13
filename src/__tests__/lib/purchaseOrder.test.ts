@@ -164,7 +164,7 @@ describe('loadPurchaseOrder / savePurchaseOrder', () => {
   })
 
   it('handles corrupted localStorage', () => {
-    localStorage.setItem('bimove_po_bad', 'NOT_JSON')
+    localStorage.setItem('bimova_po_bad', 'NOT_JSON')
     const po = loadPurchaseOrder('bad')
     expect(po.tables).toEqual([])
   })

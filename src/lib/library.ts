@@ -4,7 +4,7 @@ import { loadPriceConfig, savePriceConfig, type PriceConfig } from './priceConfi
 import { loadMaterialPresets, saveMaterialPresets, type MaterialPreset } from './materialPresets'
 
 export type LibraryFile = {
-  format: 'bimove-library'
+  format: 'bimova-library'
   version: '1.0'
   name: string
   createdAt: number
@@ -16,7 +16,7 @@ export type LibraryFile = {
 
 export function exportLibrary(name: string, meta?: { company?: string; note?: string }): LibraryFile {
   return {
-    format: 'bimove-library',
+    format: 'bimova-library',
     version: '1.0',
     name,
     createdAt: Date.now(),
@@ -32,7 +32,7 @@ export function downloadLibrary(file: LibraryFile) {
   const blob = new Blob([json], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
-  a.download = `${sanitizeFilename(file.name)}.bimove-lib.json`
+  a.download = `${sanitizeFilename(file.name)}.bimova-lib.json`
   a.href = url
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 5000)
@@ -48,8 +48,8 @@ export function pickAndImportLibrary(onLoaded: (file: LibraryFile) => void) {
     try {
       const text = await f.text()
       const parsed = JSON.parse(text) as LibraryFile
-      if (parsed.format !== 'bimove-library') {
-        alert('형식이 다른 파일입니다. (bimove-library만 지원)')
+      if (parsed.format !== 'bimova-library') {
+        alert('형식이 다른 파일입니다. (bimova-library만 지원)')
         return
       }
       onLoaded(parsed)

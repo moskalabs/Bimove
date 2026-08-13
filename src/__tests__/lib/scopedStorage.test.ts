@@ -91,41 +91,41 @@ describe('scopedStorage', () => {
   describe('migration', () => {
     it('migrates global keys to scoped keys on first setCurrentUserId', () => {
       // Set up legacy (global) data
-      localStorage.setItem('bimove_projects_v1', '[]')
-      localStorage.setItem('bimove_price_config_v1', '{"wallPerM":50000}')
-      localStorage.setItem('bimove_snap_enabled', 'true')
+      localStorage.setItem('bimova_projects_v1', '[]')
+      localStorage.setItem('bimova_price_config_v1', '{"wallPerM":50000}')
+      localStorage.setItem('bimova_snap_enabled', 'true')
 
       // Login triggers migration
       setCurrentUserId('user1')
 
       // Global keys should now have scoped copies
-      expect(localStorage.getItem('u:user1:bimove_projects_v1')).toBe('[]')
-      expect(localStorage.getItem('u:user1:bimove_price_config_v1')).toBe('{"wallPerM":50000}')
-      expect(localStorage.getItem('u:user1:bimove_snap_enabled')).toBe('true')
+      expect(localStorage.getItem('u:user1:bimova_projects_v1')).toBe('[]')
+      expect(localStorage.getItem('u:user1:bimova_price_config_v1')).toBe('{"wallPerM":50000}')
+      expect(localStorage.getItem('u:user1:bimova_snap_enabled')).toBe('true')
     })
 
     it('does not overwrite existing scoped data', () => {
       // Scoped key already has data
-      localStorage.setItem('u:user1:bimove_snap_enabled', 'false')
+      localStorage.setItem('u:user1:bimova_snap_enabled', 'false')
       // Global key has different data
-      localStorage.setItem('bimove_snap_enabled', 'true')
+      localStorage.setItem('bimova_snap_enabled', 'true')
 
       setCurrentUserId('user1')
 
       // Scoped value should remain 'false', not overwritten by global 'true'
-      expect(localStorage.getItem('u:user1:bimove_snap_enabled')).toBe('false')
+      expect(localStorage.getItem('u:user1:bimova_snap_enabled')).toBe('false')
     })
 
     it('only migrates once per user (flag set)', () => {
-      localStorage.setItem('bimove_snap_enabled', 'true')
+      localStorage.setItem('bimova_snap_enabled', 'true')
 
       // First login
       setCurrentUserId('user1')
-      expect(localStorage.getItem('bimove_migrated_user1')).toBe('1')
+      expect(localStorage.getItem('bimova_migrated_user1')).toBe('1')
 
       // Clear the migrated value and set new global
-      localStorage.removeItem('u:user1:bimove_snap_enabled')
-      localStorage.setItem('bimove_snap_enabled', 'changed')
+      localStorage.removeItem('u:user1:bimova_snap_enabled')
+      localStorage.setItem('bimova_snap_enabled', 'changed')
 
       // Re-login — migration should NOT run again
       vi.resetModules()
@@ -133,30 +133,30 @@ describe('scopedStorage', () => {
       import('../../lib/scopedStorage').then((mod) => {
         mod.setCurrentUserId('user1')
         // Should still be null because migration was already done
-        expect(localStorage.getItem('u:user1:bimove_snap_enabled')).toBeNull()
+        expect(localStorage.getItem('u:user1:bimova_snap_enabled')).toBeNull()
       })
     })
 
     it('migrates per-project keys when projects exist', () => {
       const projects = [{ id: 'proj1' }, { id: 'proj2' }]
-      localStorage.setItem('bimove_projects_v1', JSON.stringify(projects))
-      localStorage.setItem('bimove_project_proj1', '{"data":"snapshot1"}')
-      localStorage.setItem('bimove_po_proj2', '{"items":[]}')
-      localStorage.setItem('bimove_versions_proj1', '[1,2,3]')
+      localStorage.setItem('bimova_projects_v1', JSON.stringify(projects))
+      localStorage.setItem('bimova_project_proj1', '{"data":"snapshot1"}')
+      localStorage.setItem('bimova_po_proj2', '{"items":[]}')
+      localStorage.setItem('bimova_versions_proj1', '[1,2,3]')
 
       setCurrentUserId('user1')
 
-      expect(localStorage.getItem('u:user1:bimove_project_proj1')).toBe('{"data":"snapshot1"}')
-      expect(localStorage.getItem('u:user1:bimove_po_proj2')).toBe('{"items":[]}')
-      expect(localStorage.getItem('u:user1:bimove_versions_proj1')).toBe('[1,2,3]')
+      expect(localStorage.getItem('u:user1:bimova_project_proj1')).toBe('{"data":"snapshot1"}')
+      expect(localStorage.getItem('u:user1:bimova_po_proj2')).toBe('{"items":[]}')
+      expect(localStorage.getItem('u:user1:bimova_versions_proj1')).toBe('[1,2,3]')
     })
 
     it('does not migrate when setCurrentUserId(null)', () => {
-      localStorage.setItem('bimove_snap_enabled', 'true')
+      localStorage.setItem('bimova_snap_enabled', 'true')
       setCurrentUserId(null)
 
       // No scoped key should exist
-      expect(localStorage.getItem('bimove_migrated_null')).toBeNull()
+      expect(localStorage.getItem('bimova_migrated_null')).toBeNull()
     })
   })
 

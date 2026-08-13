@@ -23,12 +23,12 @@ export function enterPickMode(
   drawingState.pickTarget = target
   drawingState.pickCallback = callback
   drawingState.pickItemId = itemId ?? null
-  window.dispatchEvent(new CustomEvent('bimove:pick-mode', { detail: { active: true, target } }))
+  window.dispatchEvent(new CustomEvent('bimova:pick-mode', { detail: { active: true, target } }))
 }
 
 export function exitPickMode() {
   drawingState.pickTarget = null
   drawingState.pickCallback = null
   drawingState.pickItemId = null
-  window.dispatchEvent(new CustomEvent('bimove:pick-mode', { detail: { active: false } }))
+  window.dispatchEvent(new CustomEvent('bimova:pick-mode', { detail: { active: false } }))
 }

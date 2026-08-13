@@ -8,13 +8,13 @@ export async function saveProject(editor: Editor, filename = 'untitled') {
   const json = JSON.stringify(snapshot, null, 2)
 
   if (isDesktop()) {
-    const path = await saveFileDialog(`${filename}.bimove`)
+    const path = await saveFileDialog(`${filename}.bimova`)
     if (!path) return
     await writeTextFile(path, json)
   } else {
     const blob = new Blob([json], { type: 'application/json' })
     const a = document.createElement('a')
-    a.download = `${filename}.bimove`
+    a.download = `${filename}.bimova`
     a.href = URL.createObjectURL(blob)
     a.click()
     setTimeout(() => URL.revokeObjectURL(a.href), 5000)
@@ -23,7 +23,7 @@ export async function saveProject(editor: Editor, filename = 'untitled') {
 
 export async function openProject(editor: Editor) {
   if (isDesktop()) {
-    const path = await openFileDialog([{ name: 'bimove 도면', extensions: ['bimove', 'json'] }])
+    const path = await openFileDialog([{ name: 'bimova 도면', extensions: ['bimova', 'json'] }])
     if (!path) return
     try {
       const text = await readTextFile(path)
@@ -35,7 +35,7 @@ export async function openProject(editor: Editor) {
   } else {
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = '.bimove,.json'
+    input.accept = '.bimova,.json'
     input.onchange = async () => {
       const file = input.files?.[0]
       if (!file) return

@@ -93,7 +93,7 @@ export function printQuotePdf(lines: CostLine[], opts: QuoteOptions) {
     <tr class="grand"><td>총 견적 금액</td><td class="value">${fmtKRW(total)}</td></tr>
   </table></div>
 
-  <div class="footer">본 견적은 ${date} 기준이며, 시공 조건/자재 변동에 따라 조정될 수 있습니다. — bimove</div>
+  <div class="footer">본 견적은 ${date} 기준이며, 시공 조건/자재 변동에 따라 조정될 수 있습니다. — bimova</div>
 </body>
 </html>`
 

@@ -8,8 +8,8 @@ export type Project = {
   thumbnail?: string
 }
 
-const LIST_KEY = 'bimove_projects_v1'
-const snapshotKey = (id: string) => `bimove_project_${id}`
+const LIST_KEY = 'bimova_projects_v1'
+const snapshotKey = (id: string) => `bimova_project_${id}`
 
 export function getProjects(): Project[] {
   try { return JSON.parse(scopedGet(LIST_KEY) ?? '[]') } catch { return [] }
@@ -37,7 +37,7 @@ export function deleteProject(id: string) {
   scopedRemove(snapshotKey(id))
   // 버전 히스토리도 함께 정리
   try {
-    const versionsKey = `bimove_versions_${id}`
+    const versionsKey = `bimova_versions_${id}`
     scopedRemove(versionsKey)
   } catch { /* ignore */ }
 }
@@ -73,7 +73,7 @@ export function saveThumbnail(id: string, dataUrl: string) {
 
 /** One-time migration: moves old single-project data into project list. */
 export function migrateOldData() {
-  const OLD_KEY = 'bimove_snapshot_v1'
+  const OLD_KEY = 'bimova_snapshot_v1'
   const old = localStorage.getItem(OLD_KEY)
   if (!old || getProjects().length > 0) return
   const project = createProject('기존 프로젝트')

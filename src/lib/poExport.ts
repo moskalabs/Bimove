@@ -241,7 +241,7 @@ function buildPOBodyHtml(po: PurchaseOrder) {
     </div>
   </div>
   <div class="footer">
-    본 발주서는 ${dateStr} 기준 작성되었습니다. | bimove
+    본 발주서는 ${dateStr} 기준 작성되었습니다. | bimova
   </div>`
 
   return { bodyHtml, docNo, dateStr }

@@ -11,7 +11,7 @@ export type Version = {
 }
 
 const MAX_VERSIONS = 30
-const versionsKey = (projectId: string) => `bimove_versions_${projectId}`
+const versionsKey = (projectId: string) => `bimova_versions_${projectId}`
 
 function readList(projectId: string): Version[] {
   try {

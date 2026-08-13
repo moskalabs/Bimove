@@ -46,13 +46,13 @@ describe('loadMaterialPresets', () => {
   })
 
   it('handles corrupted data', () => {
-    localStorage.setItem('bimove_materials_v2', 'BROKEN')
+    localStorage.setItem('bimova_materials_v2', 'BROKEN')
     const presets = loadMaterialPresets()
     expect(presets.length).toBe(7) // falls back to defaults
   })
 
   it('handles empty array', () => {
-    localStorage.setItem('bimove_materials_v2', '[]')
+    localStorage.setItem('bimova_materials_v2', '[]')
     const presets = loadMaterialPresets()
     expect(presets.length).toBe(7) // falls back to defaults
   })
@@ -65,7 +65,7 @@ describe('saveMaterialPresets', () => {
       { id: 'b', label: 'B', fill: '#222', stroke: '#333' },
     ]
     saveMaterialPresets(custom)
-    const raw = localStorage.getItem('bimove_materials_v2')
+    const raw = localStorage.getItem('bimova_materials_v2')
     expect(raw).toBeTruthy()
     const parsed = JSON.parse(raw!)
     expect(parsed.length).toBe(2)

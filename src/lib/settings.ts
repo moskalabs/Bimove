@@ -1,9 +1,9 @@
 import { scopedGet, scopedSet } from './scopedStorage'
 
-const THICKNESS_MM_KEY = 'bimove_wall_thickness_mm'
-const WALL_HEIGHT_KEY = 'bimove_wall_height_mm'
-const SHOW_WALL_LENGTHS_KEY = 'bimove_show_wall_lengths'
-const SHOW_ROOM_AREAS_KEY = 'bimove_show_room_areas'
+const THICKNESS_MM_KEY = 'bimova_wall_thickness_mm'
+const WALL_HEIGHT_KEY = 'bimova_wall_height_mm'
+const SHOW_WALL_LENGTHS_KEY = 'bimova_show_wall_lengths'
+const SHOW_ROOM_AREAS_KEY = 'bimova_show_room_areas'
 
 /** Default wall thickness in mm (physical units, scale-independent). */
 export function getDefaultWallThicknessMm(): number {
@@ -37,7 +37,7 @@ export function setShowRoomAreas(v: boolean) {
   scopedSet(SHOW_ROOM_AREAS_KEY, String(v))
 }
 
-const SNAP_ENABLED_KEY = 'bimove_snap_enabled'
+const SNAP_ENABLED_KEY = 'bimova_snap_enabled'
 
 /** Orthogonal angle snap while drawing walls/dimensions (Shift inverts). */
 export function getSnapEnabled(): boolean {
@@ -47,7 +47,7 @@ export function setSnapEnabled(v: boolean) {
   scopedSet(SNAP_ENABLED_KEY, String(v))
 }
 
-const GRAYSCALE_KEY = 'bimove_grayscale'
+const GRAYSCALE_KEY = 'bimova_grayscale'
 
 /** Grayscale (CAD 흑백) 렌더링 모드 */
 export function getGrayscaleMode(): boolean {
@@ -57,7 +57,7 @@ export function setGrayscaleMode(v: boolean) {
   scopedSet(GRAYSCALE_KEY, String(v))
   // body data attr for CSS filter
   document.body.dataset.grayscale = v ? 'true' : ''
-  window.dispatchEvent(new Event('bimove:settings'))
+  window.dispatchEvent(new Event('bimova:settings'))
 }
 
 /** 초기화 시 body attr 동기화 */
@@ -65,7 +65,7 @@ export function initGrayscaleAttr() {
   document.body.dataset.grayscale = getGrayscaleMode() ? 'true' : ''
 }
 
-const DARK_MODE_KEY = 'bimove_dark_mode'
+const DARK_MODE_KEY = 'bimova_dark_mode'
 
 /** 다크모드 */
 export function getDarkMode(): boolean {
@@ -74,7 +74,7 @@ export function getDarkMode(): boolean {
 export function setDarkMode(v: boolean) {
   scopedSet(DARK_MODE_KEY, String(v))
   document.documentElement.dataset.dark = v ? 'true' : ''
-  window.dispatchEvent(new Event('bimove:settings'))
+  window.dispatchEvent(new Event('bimova:settings'))
 }
 
 /** 초기화 시 dark attr 동기화 */
@@ -82,7 +82,7 @@ export function initDarkAttr() {
   document.documentElement.dataset.dark = getDarkMode() ? 'true' : ''
 }
 
-const ROOM_NAMES_KEY = 'bimove_room_names'
+const ROOM_NAMES_KEY = 'bimova_room_names'
 
 export function getRoomNames(): Record<string, string> {
   try { return JSON.parse(scopedGet(ROOM_NAMES_KEY) ?? '{}') } catch { return {} }

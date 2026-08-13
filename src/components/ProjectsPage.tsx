@@ -275,7 +275,7 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) =
       }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-            <span style={{ fontSize: 22, fontWeight: 800, color: '#111', letterSpacing: -0.5 }}>bimove</span>
+            <span style={{ fontSize: 22, fontWeight: 800, color: '#111', letterSpacing: -0.5 }}>bimova</span>
             <span style={{ fontSize: 12, background: '#f0f0f0', color: '#888', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>
               프로젝트
             </span>

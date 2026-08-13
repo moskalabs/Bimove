@@ -132,7 +132,7 @@ export function uid(): string {
 
 import { scopedGet, scopedSet } from './scopedStorage'
 
-const PO_KEY = (projectId: string) => `bimove_po_${projectId}`
+const PO_KEY = (projectId: string) => `bimova_po_${projectId}`
 
 export function loadPurchaseOrder(projectId: string): PurchaseOrder {
   try {

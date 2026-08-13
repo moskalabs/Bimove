@@ -30,7 +30,7 @@ const DEFAULTS: PriceConfig = {
 
 import { scopedGet, scopedSet, scopedRemove } from './scopedStorage'
 
-const KEY = 'bimove_price_config_v1'
+const KEY = 'bimova_price_config_v1'
 
 export function loadPriceConfig(): PriceConfig {
   try {

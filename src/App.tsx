@@ -236,9 +236,9 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
   return (
     <ProjectContext.Provider value={projectId}>
     <EditorContext.Provider value={editor}>
-      <div className="bimove-layout">
+      <div className="bimova-layout">
         <TopBar />
-        <div className="bimove-body">
+        <div className="bimova-body">
           <LBar onBack={onBack} />
           <main className="canvas-area">
             <ToolOverlay />

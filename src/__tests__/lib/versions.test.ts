@@ -51,7 +51,7 @@ describe('listVersions', () => {
   })
 
   it('handles corrupted localStorage', () => {
-    localStorage.setItem('bimove_versions_bad', 'NOT_JSON')
+    localStorage.setItem('bimova_versions_bad', 'NOT_JSON')
     expect(listVersions('bad')).toEqual([])
   })
 })

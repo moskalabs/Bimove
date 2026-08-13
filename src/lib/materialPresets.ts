@@ -26,7 +26,7 @@ export const DEFAULT_MATERIAL_PRESETS: MaterialPreset[] = [
 
 import { scopedGet, scopedSet, scopedRemove } from './scopedStorage'
 
-const KEY = 'bimove_materials_v2'
+const KEY = 'bimova_materials_v2'
 
 export function loadMaterialPresets(): MaterialPreset[] {
   try {

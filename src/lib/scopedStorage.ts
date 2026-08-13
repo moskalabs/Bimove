@@ -37,19 +37,19 @@ export function scopedRemove(key: string): void {
 // ── 기존 데이터 마이그레이션 ──
 // 로그인 시 한 번만 실행: 기존 글로벌 키 → 유저 스코프 키로 복사
 
-const MIGRATE_FLAG = (uid: string) => `bimove_migrated_${uid}`
+const MIGRATE_FLAG = (uid: string) => `bimova_migrated_${uid}`
 
 const MIGRATABLE_KEYS = [
-  'bimove_projects_v1',
-  'bimove_price_config_v1',
-  'bimove_materials_v2',
-  'bimove_wall_thickness_mm',
-  'bimove_wall_height_mm',
-  'bimove_show_wall_lengths',
-  'bimove_show_room_areas',
-  'bimove_snap_enabled',
-  'bimove_grayscale',
-  'bimove_room_names',
+  'bimova_projects_v1',
+  'bimova_price_config_v1',
+  'bimova_materials_v2',
+  'bimova_wall_thickness_mm',
+  'bimova_wall_height_mm',
+  'bimova_show_wall_lengths',
+  'bimova_show_room_areas',
+  'bimova_snap_enabled',
+  'bimova_grayscale',
+  'bimova_room_names',
 ]
 
 function migrateOldKeys(uid: string) {
@@ -65,12 +65,12 @@ function migrateOldKeys(uid: string) {
   }
 
   // 프로젝트별 키도 마이그레이션 (snapshot, po, versions)
-  const projectsRaw = localStorage.getItem('bimove_projects_v1')
+  const projectsRaw = localStorage.getItem('bimova_projects_v1')
   if (projectsRaw) {
     try {
       const projects = JSON.parse(projectsRaw) as { id: string }[]
       for (const p of projects) {
-        for (const prefix of ['bimove_project_', 'bimove_po_', 'bimove_versions_']) {
+        for (const prefix of ['bimova_project_', 'bimova_po_', 'bimova_versions_']) {
           const oldKey = prefix + p.id
           const scopedKey = `u:${uid}:${oldKey}`
           const val = localStorage.getItem(oldKey)

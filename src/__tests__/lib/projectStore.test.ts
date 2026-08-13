@@ -12,7 +12,7 @@ describe('getProjects', () => {
   })
 
   it('handles corrupted localStorage gracefully', () => {
-    localStorage.setItem('bimove_projects_v1', 'INVALID')
+    localStorage.setItem('bimova_projects_v1', 'INVALID')
     expect(getProjects()).toEqual([])
   })
 })
@@ -140,7 +140,7 @@ describe('loadSnapshot / saveSnapshot', () => {
   })
 
   it('handles corrupted snapshot gracefully', () => {
-    localStorage.setItem('bimove_project_bad-id', 'INVALID JSON')
+    localStorage.setItem('bimova_project_bad-id', 'INVALID JSON')
     expect(loadSnapshot('bad-id')).toBeNull()
   })
 
@@ -154,7 +154,7 @@ describe('loadSnapshot / saveSnapshot', () => {
 
 describe('migrateOldData', () => {
   it('migrates old snapshot to new project', () => {
-    localStorage.setItem('bimove_snapshot_v1', JSON.stringify({ shapes: [] }))
+    localStorage.setItem('bimova_snapshot_v1', JSON.stringify({ shapes: [] }))
     migrateOldData()
     const projects = getProjects()
     expect(projects).toHaveLength(1)
@@ -163,7 +163,7 @@ describe('migrateOldData', () => {
 
   it('does not migrate when projects already exist', () => {
     createProject('Existing')
-    localStorage.setItem('bimove_snapshot_v1', JSON.stringify({ shapes: [] }))
+    localStorage.setItem('bimova_snapshot_v1', JSON.stringify({ shapes: [] }))
     migrateOldData()
     expect(getProjects()).toHaveLength(1) // still just 1
   })
@@ -174,8 +174,8 @@ describe('migrateOldData', () => {
   })
 
   it('removes old key after migration', () => {
-    localStorage.setItem('bimove_snapshot_v1', JSON.stringify({ shapes: [] }))
+    localStorage.setItem('bimova_snapshot_v1', JSON.stringify({ shapes: [] }))
     migrateOldData()
-    expect(localStorage.getItem('bimove_snapshot_v1')).toBeNull()
+    expect(localStorage.getItem('bimova_snapshot_v1')).toBeNull()
   })
 })
