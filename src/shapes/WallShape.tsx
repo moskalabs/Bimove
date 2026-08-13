@@ -250,7 +250,7 @@ function WallComponent({ shape }: { shape: WallShape }) {
     // 채워진 사각형이 아닌, 중심선만 렌더
     return (
       <SVGContainer>
-        <line x1={0} y1={0} x2={x2} y2={y2} stroke={dxfColor} strokeWidth={sw} strokeLinecap="round" />
+        <line x1={0} y1={0} x2={x2} y2={y2} stroke={dxfColor} strokeWidth={sw} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
       </SVGContainer>
     )
   }

@@ -52,6 +52,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
     const stroke = (shape.meta?.dxfColor as string) || '#333'
     const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
     // CAD 도면은 가는 선으로 표시 (0.3~2px)
+    // non-scaling-stroke로 줌 레벨과 무관하게 화면상 일정 굵기 유지
     const strokeW = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
 
     return (
@@ -62,6 +63,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
           stroke={stroke}
           strokeWidth={strokeW}
           strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
         />
       </SVGContainer>
     )
