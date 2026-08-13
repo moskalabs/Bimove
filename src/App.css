@@ -2663,3 +2663,299 @@ html[data-dark="true"] .cad-layer-cancel {
   transform: translate(-50%, 0);
   font-variant-numeric: tabular-nums;
 }
+
+/* ══════════════════════════════════════════
+   마감재 Tables (FinishingTab)
+   ══════════════════════════════════════════ */
+
+.ft-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── 카테고리 트리 ── */
+
+.ft-tree {
+  border-bottom: 1px solid #eee;
+  padding: 8px 0;
+  flex-shrink: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.ft-tree-cat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+  user-select: none;
+}
+.ft-tree-cat:hover { background: #f8f8f8; }
+
+.ft-tree-item {
+  padding: 5px 12px 5px 32px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #555;
+  user-select: none;
+}
+.ft-tree-item:hover { background: #f5f5f5; }
+.ft-tree-item.active {
+  background: #e8f0fe;
+  color: #1a73e8;
+  font-weight: 600;
+}
+
+/* ── 자재 상세 영역 ── */
+
+.ft-detail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ft-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.ft-detail-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: #222;
+}
+
+.ft-detail-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.ft-icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  color: #666;
+}
+.ft-icon-btn:hover { background: #f0f0f0; }
+
+/* ── 변형 탭 ── */
+
+.ft-variant-tabs {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid #eee;
+  padding: 0 8px;
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.ft-variant-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #666;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  user-select: none;
+}
+.ft-variant-tab.active {
+  color: #1a73e8;
+  border-bottom-color: #1a73e8;
+  font-weight: 600;
+}
+.ft-variant-tab:hover { background: #f8f8f8; }
+
+.ft-variant-del {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 1px;
+  color: #bbb;
+  line-height: 1;
+}
+.ft-variant-del:hover { color: #e53e3e; }
+
+.ft-variant-add {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px 8px;
+  color: #999;
+}
+.ft-variant-add:hover { color: #1a73e8; }
+
+/* ── 물량표 섹션 ── */
+
+.ft-tables-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px 12px;
+}
+
+.ft-section {
+  margin-top: 12px;
+}
+
+.ft-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #333;
+  padding: 6px 4px;
+  background: #f7f7f7;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+/* ── 테이블 ── */
+
+.ft-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.ft-table th {
+  text-align: left;
+  padding: 4px 4px;
+  color: #888;
+  font-weight: 500;
+  font-size: 10px;
+  border-bottom: 1px solid #eee;
+  white-space: nowrap;
+}
+
+.ft-table td {
+  padding: 3px 4px;
+  border-bottom: 1px solid #f5f5f5;
+  vertical-align: middle;
+}
+
+.ft-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #444;
+}
+
+.ft-bold { font-weight: 700; }
+
+.ft-zone-label {
+  color: #666;
+  font-size: 11px;
+}
+
+/* ── 인풋 ── */
+
+.ft-zone-input {
+  width: 100%;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 11px;
+  background: #fafafa;
+  outline: none;
+  font-variant-numeric: tabular-nums;
+}
+.ft-zone-input:focus {
+  border-color: #1a73e8;
+  background: #fff;
+}
+
+.ft-zone-select {
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+  background: #fafafa;
+  outline: none;
+}
+
+/* ── 행 추가/삭제 ── */
+
+.ft-add-row {
+  width: 100%;
+  padding: 6px 0;
+  border: 1px dashed #ddd;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: #999;
+  margin-top: 4px;
+}
+.ft-add-row:hover { border-color: #1a73e8; color: #1a73e8; }
+
+.ft-row-del {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  color: #ccc;
+  line-height: 1;
+}
+.ft-row-del:hover { color: #e53e3e; }
+
+/* ── 합계 ── */
+
+.ft-total {
+  margin-top: 16px;
+  background: #f9f9f9;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.ft-total-table td {
+  background: #fff;
+  border: 1px solid #eee;
+  text-align: center;
+  padding: 6px 4px;
+  font-size: 11px;
+}
+
+.ft-total-table th {
+  text-align: center;
+}
+
+.ft-spec-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: #f0f4ff;
+  border-radius: 4px;
+  font-size: 10px;
+  color: #555;
+  line-height: 1.4;
+}
+
+.ft-spec-icon {
+  color: #1a73e8;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ── 빈 상태 ── */
+
+.ft-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  color: #aaa;
+  font-size: 12px;
+}
