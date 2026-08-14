@@ -32,3 +32,35 @@ export function exitPickMode() {
   drawingState.pickItemId = null
   window.dispatchEvent(new CustomEvent('bimova:pick-mode', { detail: { active: false } }))
 }
+
+// ── 면적 측정 모드 ──
+
+export type AreaMeasureResult = {
+  areaM2: number
+  perimeterM: number
+}
+
+export const areaMeasureState = {
+  active: false,
+  callback: null as ((result: AreaMeasureResult) => void) | null,
+}
+
+export function startAreaMeasure(cb: (result: AreaMeasureResult) => void) {
+  areaMeasureState.active = true
+  areaMeasureState.callback = cb
+  window.dispatchEvent(new CustomEvent('bimova:area-measure', { detail: { active: true } }))
+}
+
+export function completeAreaMeasure(result: AreaMeasureResult) {
+  const cb = areaMeasureState.callback
+  areaMeasureState.active = false
+  areaMeasureState.callback = null
+  window.dispatchEvent(new CustomEvent('bimova:area-measure', { detail: { active: false } }))
+  cb?.(result)
+}
+
+export function cancelAreaMeasure() {
+  areaMeasureState.active = false
+  areaMeasureState.callback = null
+  window.dispatchEvent(new CustomEvent('bimova:area-measure', { detail: { active: false } }))
+}

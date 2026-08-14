@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useEditor } from '../../context/EditorContext'
 import { loadMaterialPresets } from '../../lib/materialPresets'
 import { exportLibrary, downloadLibrary, pickAndImportLibrary, applyLibrary } from '../../lib/library'
+import type { TLShape } from 'tldraw'
 
 /* ── 벽 선택 가이드 ── */
 function WallSelectGuide({ onClickSelect }: { onClickSelect: () => void }) {
@@ -53,9 +54,27 @@ function WallSelectGuide({ onClickSelect }: { onClickSelect: () => void }) {
 
 export function MaterialsPanel() {
   const editor = useEditor()
-  const selected = editor?.getSelectedShapes() ?? []
-  const walls = selected.filter(s => s.type === 'wall')
+  const [walls, setWalls] = useState<TLShape[]>([])
   const [presets, setPresets] = useState(() => loadMaterialPresets())
+
+  // 선택 변경 감지 — store.listen + rAF 스로틀
+  useEffect(() => {
+    if (!editor) return
+    let raf = 0
+    const update = () => {
+      const sel = editor.getSelectedShapes()
+      setWalls(sel.filter(s => s.type === 'wall'))
+    }
+    update() // 초기 상태
+    const unsub = editor.store.listen(() => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        update()
+      })
+    })
+    return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
+  }, [editor])
 
   const applyColor = (fill: string, stroke: string, materialId?: string, pattern?: string) => {
     if (!editor || walls.length === 0) return

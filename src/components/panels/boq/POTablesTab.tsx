@@ -16,6 +16,7 @@ import {
 import { fetchPurchaseOrder, syncPurchaseOrder } from '../../../lib/supabaseSync'
 import type { BOQTemplate } from '../../../lib/boqTemplates'
 import { createItemFromTemplate } from '../../../lib/boqTemplates'
+import { getFinishingAreaForPO } from '../../../lib/finishingData'
 import { POTemplateSelector } from './POTemplateSelector'
 import { POTableCard } from './POTableCard'
 
@@ -148,12 +149,72 @@ export function POTablesTab() {
     return () => { unsub(); clearTimeout(timer) }
   }, [editor])
 
+  /** 도면 데이터로 아이템 자동 채우기 (마감재 Tables 데이터 우선) */
+  const autoFillItem = (
+    item: import('../../../lib/purchaseOrder').BOQItem,
+    roomIdx = 0,
+    templateId?: string,
+  ) => {
+    const method = item.calcMethod ?? 'area'
+    if (method !== 'area') return item
+
+    const filled = { ...item }
+
+    // 1) 마감재 Tables 데이터가 있으면 우선 사용
+    if (templateId && projectId) {
+      const fd = getFinishingAreaForPO(projectId, templateId)
+      if (fd && fd.totalAreaM2 > 0) {
+        // totalAreaM2를 widthMm × heightMm로 변환 (heightMm=1000 기준)
+        filled.widthMm = Math.round(fd.totalAreaM2 * 1000)
+        filled.heightMm = 1000
+        // 마감재 규격 동기화
+        if (fd.itemWidthMm) filled.itemWidthMm = fd.itemWidthMm
+        if (fd.itemLengthMm) filled.itemLengthMm = fd.itemLengthMm
+        filled.lossRate = fd.lossRate
+        filled.unit = fd.unit
+        if (!filled.name.includes('(')) filled.name = `${filled.name} (마감재 연동)`
+        return filled
+      }
+    }
+
+    // 2) 도면 데이터 폴백
+    const wallHeight = getWallHeightMm()
+
+    if (drawingData.roomPerimeters.length > 0) {
+      const room = drawingData.roomPerimeters[roomIdx % drawingData.roomPerimeters.length]
+      filled.widthMm = Math.round(room.mm)
+      if (!filled.name.includes('(')) filled.name = `${filled.name} (${room.label})`
+    } else if (drawingData.wallLengths.length > 0) {
+      const total = drawingData.wallLengths.reduce((s, w) => s + w.mm, 0)
+      filled.widthMm = Math.round(total)
+    }
+
+    // 높이 미설정이면 벽 높이 사용
+    if (!filled.heightMm) filled.heightMm = wallHeight
+
+    return filled
+  }
+
   const handleAddTable = (template: BOQTemplate) => {
+    const rooms = drawingData.roomPerimeters
+
+    // 마감재 Tables에 데이터가 있으면 단일 아이템 (이미 합산됨)
+    let items: import('../../../lib/purchaseOrder').BOQItem[]
+    const fd = projectId ? getFinishingAreaForPO(projectId, template.id) : null
+    if (fd && fd.totalAreaM2 > 0) {
+      items = [autoFillItem(createItemFromTemplate(template), 0, template.id)]
+    } else if (rooms.length > 1) {
+      // 마감재 없으면 방 개수만큼 아이템 자동 생성
+      items = rooms.map((_, i) => autoFillItem(createItemFromTemplate(template), i, template.id))
+    } else {
+      items = [autoFillItem(createItemFromTemplate(template), 0, template.id)]
+    }
+
     const newTable: BOQTable = {
       id: uid(),
       templateId: template.id,
       label: template.label,
-      items: [createItemFromTemplate(template)],
+      items,
       createdAt: Date.now(),
     }
     setPo(prev => addTable(prev, newTable))
@@ -220,6 +281,7 @@ export function POTablesTab() {
               table={table}
               onUpdate={items => handleUpdateItems(table.id, items)}
               onDelete={() => handleDeleteTable(table.id)}
+              onAutoFill={(item, roomIdx) => autoFillItem(item, roomIdx, table.templateId)}
               wallLengths={drawingData.wallLengths}
               roomPerimeters={drawingData.roomPerimeters}
               doors={drawingData.doors}

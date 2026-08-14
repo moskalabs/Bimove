@@ -8,6 +8,7 @@ import { RBar } from './components/RBar'
 import { ToolOverlay } from './components/ToolOverlay'
 import { RoomOverlay } from './components/RoomOverlay'
 import { CanvasPickOverlay } from './components/CanvasPickOverlay'
+import { AreaMeasureOverlay } from './components/AreaMeasureOverlay'
 import { ScaleRuler } from './components/ScaleRuler'
 import { ChatPanel } from './components/ChatPanel'
 import { ProjectsPage } from './components/ProjectsPage'
@@ -251,6 +252,7 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
             />
             <EmptyCanvasHint editor={editor} />
             <CanvasPickOverlay />
+            <AreaMeasureOverlay />
             <RoomOverlay />
             <ScaleRuler />
             <ChatPanel />

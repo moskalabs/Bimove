@@ -1,10 +1,11 @@
 // 마감재 Tables 탭 — 카테고리 트리 + 자재별 상세 물량표
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronRight, ChevronDown, Plus, Upload, MoreHorizontal, Trash2 } from 'lucide-react'
+import { ChevronRight, ChevronDown, Plus, Upload, MoreHorizontal, Trash2, Pencil } from 'lucide-react'
+import { startAreaMeasure } from '../../../lib/drawingState'
 import { useProjectId } from '../../../context/ProjectContext'
 import {
   loadFinishingData, saveFinishingData,
-  createVariant, uid, unitAreaM2,
+  createVariant, uid,
   wallAreaM2, sumFloorArea, sumWallArea, sumTotalArea,
   calcSheetQty, calcRollQty,
   paintVolumeL, sumPaintVolume, calcPaintContainers,
@@ -81,6 +82,13 @@ function FloorTable({ item, variant, onUpdate }: {
   const addZone = () => onUpdate([...variant.zones, { id: uid(), label: '', floorAreaM2: 0, wallLengthM: 0, wallHeightM: 2.4 }])
   const removeZone = (idx: number) => onUpdate(variant.zones.filter((_, i) => i !== idx))
 
+  /** 펜 클릭 → 면적 측정 모드 (면적 + 둘레 자동 계산) */
+  const handleMeasure = (idx: number) => {
+    startAreaMeasure(({ areaM2, perimeterM }) => {
+      updateZone(idx, { floorAreaM2: areaM2, wallLengthM: perimeterM })
+    })
+  }
+
   return (
     <div className="ft-section">
       <div className="ft-section-title">물량표 평면</div>
@@ -91,7 +99,7 @@ function FloorTable({ item, variant, onUpdate }: {
             <th>면적(m²)</th>
             {isPaint && <th>도포 횟수</th>}
             {isPaint && <th>필요 용량(L)</th>}
-            <th style={{ width: 28 }}></th>
+            <th style={{ width: 52 }}></th>
           </tr>
         </thead>
         <tbody>
@@ -117,7 +125,14 @@ function FloorTable({ item, variant, onUpdate }: {
               {isPaint && (
                 <td className="ft-num">{paintVolumeL(z, item.coverageM2PerL ?? 8, 'floor')}</td>
               )}
-              <td>
+              <td className="ft-row-actions">
+                <button
+                  className="ft-measure-btn"
+                  onClick={() => handleMeasure(i)}
+                  title="도면에서 면적 측정"
+                >
+                  <Pencil size={12} />
+                </button>
                 <button className="ft-row-del" onClick={() => removeZone(i)}><Trash2 size={12} /></button>
               </td>
             </tr>
