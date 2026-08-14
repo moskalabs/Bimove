@@ -1,87 +1,126 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
+import { PageRecordType } from 'tldraw'
+import { Plus } from 'lucide-react'
 import { useEditor } from '../../context/EditorContext'
-import { getScaleConfig, setScaleConfig, SCALE_PRESETS, type ScaleUnit } from '../../lib/scaleConfig'
+
+type PageThumb = {
+  id: string
+  name: string
+  index: number
+  dataUrl: string | null
+}
 
 export function LayoutPanel() {
   const editor = useEditor()
-  const [grid, setGrid] = useState(() => editor ? editor.getInstanceState().isGridMode : false)
-  const [scale, setScale] = useState(() => editor ? getScaleConfig(editor) : null)
+  const [pages, setPages] = useState<PageThumb[]>([])
+  const [currentPageId, setCurrentPageId] = useState('')
+
+  /* ── 페이지 목록 + 썸네일 생성 ── */
+  const syncPages = useCallback(async () => {
+    if (!editor) return
+    const allPages = editor.getPages()
+    setCurrentPageId(editor.getCurrentPageId())
+
+    const thumbs: PageThumb[] = []
+    const savedPageId = editor.getCurrentPageId()
+
+    for (let i = 0; i < allPages.length; i++) {
+      const p = allPages[i]
+      let dataUrl: string | null = null
+
+      try {
+        // 해당 페이지로 잠시 전환해서 shapes 가져오기
+        editor.setCurrentPage(p.id)
+        const shapes = editor.getCurrentPageShapes()
+
+        if (shapes.length > 0 && shapes.length <= 300) {
+          const result = await (editor as unknown as {
+            getSvgString: (shapes: unknown[], opts: unknown) => Promise<{ svg: string; width: number; height: number } | undefined>
+          }).getSvgString(shapes, { padding: 16, background: true })
+
+          if (result?.svg) {
+            dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(result.svg)))
+          }
+        }
+      } catch {
+        // 썸네일 생성 실패 시 무시
+      }
+
+      thumbs.push({ id: p.id, name: p.name, index: i + 1, dataUrl })
+    }
+
+    // 원래 페이지로 복귀
+    editor.setCurrentPage(savedPageId as never)
+    setPages(thumbs)
+  }, [editor])
 
   useEffect(() => {
     if (!editor) return
-    // 외부 변경 추적 (다른 컴포넌트가 isGridMode 변경 시)
+    syncPages()
+
+    let prevPageId = editor.getCurrentPageId()
+    let prevPageCount = editor.getPages().length
     const unsub = editor.store.listen(() => {
-      const nextGrid = editor.getInstanceState().isGridMode
-      setGrid(prev => prev === nextGrid ? prev : nextGrid)
-      const nextScale = getScaleConfig(editor)
-      setScale(prev => prev?.pxPerMm === nextScale.pxPerMm && prev?.unit === nextScale.unit ? prev : nextScale)
+      const curId = editor.getCurrentPageId()
+      const curCount = editor.getPages().length
+      if (curId !== prevPageId || curCount !== prevPageCount) {
+        prevPageId = curId
+        prevPageCount = curCount
+        setCurrentPageId(curId)
+        // 페이지 수 변경 시 썸네일 재생성
+        if (curCount !== pages.length) {
+          syncPages()
+        }
+      }
     })
     return unsub
-  }, [editor])
+  }, [editor, syncPages, pages.length])
 
-  const toggleGrid = () => {
+  const switchPage = (pageId: string) => {
     if (!editor) return
-    const next = !grid
-    editor.updateInstanceState({ isGridMode: next })
-    setGrid(next)
+    editor.setCurrentPage(pageId as never)
+    setCurrentPageId(pageId)
   }
 
-  const applyPreset = (pxPerMm: number) => {
+  const addPage = () => {
     if (!editor) return
-    const unit: ScaleUnit = pxPerMm >= 0.1 ? 'mm' : pxPerMm >= 0.001 ? 'cm' : 'm'
-    setScaleConfig(editor, { pxPerMm, unit })
-    setScale(getScaleConfig(editor))
+    const num = editor.getPages().length + 1
+    const newPageId = PageRecordType.createId()
+    editor.createPage({ name: `Drawing ${num}`, id: newPageId })
+    editor.setCurrentPage(newPageId)
+    syncPages()
   }
-
-  const zoomFit = () => editor?.zoomToFit()
-  const zoomReset = () => editor?.resetZoom()
 
   return (
     <div className="lbar-panel">
-      <div className="lbar-panel-header">배치 설정</div>
-      <div className="lbar-panel-body" style={{ padding: '16px 20px' }}>
-
-        <div className="panel-section-title">뷰</div>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <button className="action-btn" style={{ flex: 1 }} onClick={zoomFit}>맞춤</button>
-          <button className="action-btn" style={{ flex: 1 }} onClick={zoomReset}>100%</button>
-        </div>
-
-        <div className="panel-section-title">그리드</div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <span style={{ fontSize: 12, color: '#555' }}>그리드 표시</span>
-          <button
-            onClick={toggleGrid}
-            style={{
-              width: 40, height: 22, borderRadius: 11, border: 'none', cursor: 'pointer',
-              background: grid ? '#3b82f6' : '#ccc', position: 'relative', transition: 'background 0.2s',
-            }}
+      <div className="lbar-panel-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span>배치</span>
+        <button
+          className="ft-measure-btn"
+          title="새 페이지"
+          onClick={addPage}
+          style={{ marginRight: 0 }}
+        >
+          <Plus size={16} />
+        </button>
+      </div>
+      <div className="lbar-panel-body layout-page-list">
+        {pages.map(p => (
+          <div
+            key={p.id}
+            className={`layout-page-card${p.id === currentPageId ? ' active' : ''}`}
+            onClick={() => switchPage(p.id)}
           >
-            <span style={{
-              position: 'absolute', top: 3, left: grid ? 21 : 3, width: 16, height: 16,
-              borderRadius: '50%', background: '#fff', transition: 'left 0.2s',
-            }} />
-          </button>
-        </div>
-
-        <div className="panel-section-title">축척</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {SCALE_PRESETS.map(p => (
-            <button
-              key={p.label}
-              className="action-btn"
-              style={{
-                width: '100%', textAlign: 'center',
-                background: scale?.pxPerMm === p.pxPerMm ? '#eff6ff' : undefined,
-                borderColor: scale?.pxPerMm === p.pxPerMm ? '#3b82f6' : undefined,
-                color: scale?.pxPerMm === p.pxPerMm ? '#1d4ed8' : undefined,
-              }}
-              onClick={() => applyPreset(p.pxPerMm)}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
+            <div className="layout-page-thumb">
+              {p.dataUrl ? (
+                <img src={p.dataUrl} alt={p.name} draggable={false} />
+              ) : (
+                <div className="layout-page-empty">빈 페이지</div>
+              )}
+            </div>
+            <div className="layout-page-label">{p.index} - Page</div>
+          </div>
+        ))}
       </div>
     </div>
   )
