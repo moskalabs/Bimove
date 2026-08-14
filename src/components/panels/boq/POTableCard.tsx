@@ -10,6 +10,7 @@ type Props = {
   table: BOQTable
   onUpdate: (items: BOQItem[]) => void
   onDelete: () => void
+  onAutoFill?: (item: BOQItem, roomIdx?: number) => BOQItem
   wallLengths: { label: string; mm: number }[]
   roomPerimeters: { label: string; mm: number }[]
   doors: { id: string; label: string; widthMm: number; heightMm: number }[]
@@ -17,7 +18,7 @@ type Props = {
 }
 
 export function POTableCard({
-  table, onUpdate, onDelete,
+  table, onUpdate, onDelete, onAutoFill,
   wallLengths, roomPerimeters, doors, windows,
 }: Props) {
   const [showMenu, setShowMenu] = useState(false)
@@ -26,7 +27,8 @@ export function POTableCard({
 
   const addItem = () => {
     if (!template) return
-    const item = createItemFromTemplate(template)
+    let item = createItemFromTemplate(template)
+    if (onAutoFill) item = onAutoFill(item, table.items.length)
     onUpdate([...table.items, item])
   }
 
@@ -110,8 +112,8 @@ export function POTableCard({
         ))
       )}
 
-      {/* 합계 */}
-      {table.items.length > 0 && (
+      {/* 합계 (2개 이상일 때만 표시) */}
+      {table.items.length > 1 && (
         <div className="po-table-total">
           <span>합계</span>
           <span className="po-total-amount">{fmtKRW(total)}</span>

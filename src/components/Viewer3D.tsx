@@ -43,6 +43,17 @@ function roomKey(cx: number, cy: number) {
   return `${Math.round(cx / 50) * 50},${Math.round(cy / 50) * 50}`
 }
 
+/** DXF pathData ("M0,0L100,50M...") → 세그먼트 배열로 파싱 */
+function parseDxfPath(d: string): Array<{ x1: number; y1: number; x2: number; y2: number }> {
+  const segs: Array<{ x1: number; y1: number; x2: number; y2: number }> = []
+  const re = /M([\d.eE+-]+),([\d.eE+-]+)L([\d.eE+-]+),([\d.eE+-]+)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(d)) !== null) {
+    segs.push({ x1: +m[1], y1: +m[2], x2: +m[3], y2: +m[4] })
+  }
+  return segs
+}
+
 function buildScene(editor: ReturnType<typeof useEditor>): Scene {
   const empty: Scene = { walls: [], floors: [], height: 2.4, empty: true, camDist: 8, camY: 5 }
   if (!editor) return empty
@@ -54,14 +65,20 @@ function buildScene(editor: ReturnType<typeof useEditor>): Scene {
   const names = getRoomNames()
 
   const wallShapes = shapes.filter(s => s.type === 'wall')
-  if (wallShapes.length === 0) return empty
+  const dxfShapes = shapes.filter(s => s.type === 'dxfgroup')
+  if (wallShapes.length === 0 && dxfShapes.length === 0) return empty
 
-  // Bounding box for re-centering
+  // Bounding box for re-centering (wall shapes + DXF shapes)
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
   for (const s of wallShapes) {
     const p = s.props as { x2: number; y2: number }
     minX = Math.min(minX, s.x, s.x + p.x2); maxX = Math.max(maxX, s.x, s.x + p.x2)
     minY = Math.min(minY, s.y, s.y + p.y2); maxY = Math.max(maxY, s.y, s.y + p.y2)
+  }
+  for (const s of dxfShapes) {
+    const p = s.props as { w: number; h: number }
+    minX = Math.min(minX, s.x); maxX = Math.max(maxX, s.x + p.w)
+    minY = Math.min(minY, s.y); maxY = Math.max(maxY, s.y + p.h)
   }
   const ccx = (minX + maxX) / 2, ccy = (minY + maxY) / 2
   const cx = (px: number) => toM(px - ccx)
@@ -90,6 +107,30 @@ function buildScene(editor: ReturnType<typeof useEditor>): Scene {
       openings: [],
     }
     wallMap.set(s.id, wall)
+  }
+
+  // DXF group shapes → Wall3D 변환
+  let dxfIdx = 0
+  for (const s of dxfShapes) {
+    const p = s.props as { w: number; h: number; pathData: string; thickness: number }
+    const segs = parseDxfPath(p.pathData)
+    const thickM = Math.max(toM(p.thickness || 2), 0.04)
+    const color = '#d0ccc4'
+    for (const seg of segs) {
+      const wx1 = s.x + seg.x1, wy1 = s.y + seg.y1
+      const wx2 = s.x + seg.x2, wy2 = s.y + seg.y2
+      const lenPx = Math.hypot(wx2 - wx1, wy2 - wy1)
+      if (lenPx < 1) continue
+      const rotY = -Math.atan2(wy2 - wy1, wx2 - wx1)
+      const wall: Wall3D = {
+        id: `dxf-${dxfIdx++}`,
+        cx: cx((wx1 + wx2) / 2), cz: cz((wy1 + wy2) / 2),
+        startX: cx(wx1), startZ: cz(wy1),
+        len: toM(lenPx), thick: thickM, rotY, color,
+        openings: [],
+      }
+      wallMap.set(wall.id, wall)
+    }
   }
 
   // Attach doors/windows to their walls

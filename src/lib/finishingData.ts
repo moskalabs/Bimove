@@ -67,6 +67,8 @@ export type FinishingCategory = {
 export type FinishingTablesData = {
   categories: FinishingCategory[]
   updatedAt: number
+  /** 기본 데이터 버전 — 올리면 사용자 커스텀 없는 항목은 새 defaults로 갱신 */
+  schemaVersion?: number
 }
 
 // ── UUID ──
@@ -102,13 +104,13 @@ const DEFAULT_CATEGORIES: FinishingCategory[] = [
         id: 'f-tile', label: '타일', calcType: 'sheet',
         boxAreaM2: 1.44, lossRate: 0.10, unit: 'box',
         specLabel: '박스당 면적 1.44 m²/box',
-        variants: [createVariant('타일 A')],
+        variants: [createVariant('타일 A'), createVariant('타일 B'), createVariant('타일 C')],
       },
       {
         id: 'f-wallpaper', label: '도배', calcType: 'roll',
         rollAreaM2: 16, lossRate: 0.10, unit: '롤',
         specLabel: '실크벽지 기준 16 m²/롤',
-        variants: [createVariant('도배(광폭)')],
+        variants: [createVariant('국산'), createVariant('수입')],
       },
       {
         id: 'f-wood', label: '마루', calcType: 'sheet',
@@ -206,23 +208,125 @@ export function sheetAreaM2(item: FinishingItem): number {
   return ((item.itemWidthMm ?? 0) * (item.itemLengthMm ?? 0)) / 1_000_000
 }
 
+// ── 발주서 연동: 마감재 → 발주서 매핑 ──
+
+/** 발주서 templateId → 마감재 finishingItemId 매핑 */
+const PO_TO_FINISHING: Record<string, string> = {
+  'ceil-gypsum': 'f-gypsum',
+  'wall-wallpaper': 'f-wallpaper',
+  'wall-paint': 'f-paint',
+  'wall-tile': 'f-tile',
+  'floor-tile': 'f-tile',
+  'floor-wood': 'f-wood',
+}
+
+/** 마감재 Tables에서 특정 아이템의 총 시공면적(m²)을 가져온다 */
+export function getFinishingAreaForPO(
+  projectId: string,
+  poTemplateId: string,
+): { totalAreaM2: number; floorAreaM2: number; wallAreaM2: number; qty: number; unit: string; lossRate: number; itemWidthMm?: number; itemLengthMm?: number } | null {
+  const finishingId = PO_TO_FINISHING[poTemplateId]
+  if (!finishingId) return null
+
+  const data = loadFinishingData(projectId)
+  const item = data.categories.flatMap(c => c.items).find(i => i.id === finishingId)
+  if (!item || item.variants.length === 0) return null
+
+  // 전체 variants 합산
+  let totalFloor = 0, totalWall = 0, totalQty = 0
+  for (const v of item.variants) {
+    totalFloor += sumFloorArea(v)
+    totalWall += item.floorOnly ? 0 : sumWallArea(v)
+    if (item.calcType === 'roll') totalQty += calcRollQty(item, v)
+    else totalQty += calcSheetQty(item, v)
+  }
+
+  const totalArea = totalFloor + totalWall
+  if (totalArea <= 0) return null
+
+  return {
+    totalAreaM2: totalArea,
+    floorAreaM2: totalFloor,
+    wallAreaM2: totalWall,
+    qty: totalQty,
+    unit: item.unit,
+    lossRate: item.lossRate,
+    itemWidthMm: item.itemWidthMm,
+    itemLengthMm: item.itemLengthMm,
+  }
+}
+
 // ── localStorage CRUD ──
 
 const STORAGE_KEY = 'bimova_finishing_tables_v1'
+/** 이 숫자를 올리면 저장된 데이터에 새 defaults가 병합됨 */
+const SCHEMA_VERSION = 2
+
+/** 저장된 데이터에 새 defaults를 병합 (사용자 입력값은 유지) */
+function mergeDefaults(saved: FinishingTablesData): FinishingTablesData {
+  const defaults = structuredClone(DEFAULT_CATEGORIES)
+  for (const defCat of defaults) {
+    const savedCat = saved.categories.find(c => c.key === defCat.key)
+    if (!savedCat) {
+      // 새 카테고리 추가
+      saved.categories.push(defCat)
+      continue
+    }
+    for (const defItem of defCat.items) {
+      const savedItem = savedCat.items.find(i => i.id === defItem.id)
+      if (!savedItem) {
+        // 새 아이템 추가
+        savedCat.items.push(defItem)
+      } else {
+        // 기존 아이템: defaults의 메타 업데이트 (variants는 defaults로 교체 - 사용자 zone 데이터가 비어있을 때만)
+        savedItem.calcType = defItem.calcType
+        savedItem.floorOnly = defItem.floorOnly
+        savedItem.boxAreaM2 = defItem.boxAreaM2
+        savedItem.rollAreaM2 = defItem.rollAreaM2
+        savedItem.coverageM2PerL = defItem.coverageM2PerL
+        savedItem.containerSizes = defItem.containerSizes
+        savedItem.lossRate = defItem.lossRate
+        savedItem.unit = defItem.unit
+        savedItem.specLabel = defItem.specLabel
+        savedItem.itemWidthMm = defItem.itemWidthMm
+        savedItem.itemLengthMm = defItem.itemLengthMm
+        // variants: 사용자가 zone 데이터를 입력하지 않았으면 defaults로 교체
+        const hasUserData = savedItem.variants.some(v =>
+          v.zones.some(z => z.floorAreaM2 > 0 || z.wallLengthM > 0 || z.label !== '')
+        )
+        if (!hasUserData) {
+          savedItem.variants = defItem.variants
+        }
+      }
+    }
+  }
+  saved.schemaVersion = SCHEMA_VERSION
+  return saved
+}
 
 export function loadFinishingData(projectId: string): FinishingTablesData {
   try {
     const raw = scopedGet(`${STORAGE_KEY}_${projectId}`)
-    if (raw) return JSON.parse(raw) as FinishingTablesData
+    if (raw) {
+      const saved = JSON.parse(raw) as FinishingTablesData
+      // 버전이 낮으면 새 defaults 병합
+      if ((saved.schemaVersion ?? 0) < SCHEMA_VERSION) {
+        const merged = mergeDefaults(saved)
+        saveFinishingData(projectId, merged)
+        return merged
+      }
+      return saved
+    }
   } catch { /* ignore */ }
-  return { categories: structuredClone(DEFAULT_CATEGORIES), updatedAt: Date.now() }
+  return { categories: structuredClone(DEFAULT_CATEGORIES), updatedAt: Date.now(), schemaVersion: SCHEMA_VERSION }
 }
 
 export function saveFinishingData(projectId: string, data: FinishingTablesData): void {
   data.updatedAt = Date.now()
+  data.schemaVersion = SCHEMA_VERSION
   try { scopedSet(`${STORAGE_KEY}_${projectId}`, JSON.stringify(data)) } catch { /* full */ }
 }
 
 export function resetFinishingData(): FinishingTablesData {
-  return { categories: structuredClone(DEFAULT_CATEGORIES), updatedAt: Date.now() }
+  return { categories: structuredClone(DEFAULT_CATEGORIES), updatedAt: Date.now(), schemaVersion: SCHEMA_VERSION }
 }
