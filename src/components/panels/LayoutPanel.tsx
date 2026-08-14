@@ -10,47 +10,32 @@ type PageThumb = {
   dataUrl: string | null
 }
 
-/** 현재 페이지의 SVG 썸네일을 생성 */
-/** SVG string → 래스터 PNG thumbnail (canvas 경유, 확실하게 작은 이미지) */
-function svgToPng(svgStr: string, maxW = 300): Promise<string | null> {
-  return new Promise(resolve => {
-    // SVG에 viewBox 보장 + 작은 dimensions 설정
-    let svg = svgStr
-    const wM = svg.match(/width="([^"]+)"/)
-    const hM = svg.match(/height="([^"]+)"/)
-    const origW = wM ? parseFloat(wM[1]) : 0
-    const origH = hM ? parseFloat(hM[1]) : 0
-    if (!origW || !origH) { resolve(null); return }
+/** SVG dimensions를 축소해서 브라우저가 렌더 가능한 data URL 반환 */
+function shrinkSvg(svgStr: string, maxW = 400): string {
+  let svg = svgStr
+  const wM = svg.match(/width="([^"]+)"/)
+  const hM = svg.match(/height="([^"]+)"/)
+  const origW = wM ? parseFloat(wM[1]) : 0
+  const origH = hM ? parseFloat(hM[1]) : 0
+  if (!origW || !origH) return svg
 
-    if (!svg.includes('viewBox')) {
-      svg = svg.replace('<svg ', `<svg viewBox="0 0 ${origW} ${origH}" `)
-    }
-    const aspect = origH / origW
-    const tw = maxW
-    const th = Math.round(tw * aspect)
-    svg = svg.replace(/width="[^"]*"/, `width="${tw}"`)
-    svg = svg.replace(/height="[^"]*"/, `height="${th}"`)
-
-    const img = new Image()
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = tw
-      canvas.height = th
-      const ctx = canvas.getContext('2d')
-      if (!ctx) { resolve(null); return }
-      ctx.fillStyle = '#fff'
-      ctx.fillRect(0, 0, tw, th)
-      ctx.drawImage(img, 0, 0, tw, th)
-      resolve(canvas.toDataURL('image/png'))
-    }
-    img.onerror = () => resolve(null)
-    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)))
-  })
+  // viewBox 보장
+  if (!svg.includes('viewBox')) {
+    svg = svg.replace('<svg ', `<svg viewBox="0 0 ${origW} ${origH}" `)
+  }
+  // 작은 dimensions으로 교체
+  const aspect = origH / origW
+  svg = svg.replace(/width="[^"]*"/, `width="${maxW}"`)
+  svg = svg.replace(/height="[^"]*"/, `height="${Math.round(maxW * aspect)}"`)
+  // foreignObject 제거 (img 태그 렌더링 차단 원인)
+  svg = svg.replace(/<foreignObject[\s\S]*?<\/foreignObject>/g, '')
+  return svg
 }
 
 async function generateThumb(editor: ReturnType<typeof useEditor>): Promise<string | null> {
   if (!editor) return null
   const shapes = editor.getCurrentPageShapes()
+  console.log('[thumb] shapes:', shapes.length)
   if (shapes.length === 0 || shapes.length > 2000) return null
   try {
     const result = await editor.getSvgString(shapes, {
@@ -58,10 +43,13 @@ async function generateThumb(editor: ReturnType<typeof useEditor>): Promise<stri
       background: true,
     })
     if (result?.svg) {
-      return await svgToPng(result.svg)
+      console.log('[thumb] svg ok:', result.width.toFixed(0), 'x', result.height.toFixed(0))
+      const svg = shrinkSvg(result.svg)
+      return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)))
     }
+    console.log('[thumb] svg null')
   } catch (e) {
-    console.warn('[LayoutPanel] getSvgString failed:', e)
+    console.warn('[thumb] fail:', e)
   }
   return null
 }
