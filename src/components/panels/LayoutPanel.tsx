@@ -11,30 +11,41 @@ type PageThumb = {
 }
 
 /** 현재 페이지의 SVG 썸네일을 생성 */
-/** SVG의 width/height를 썸네일 크기로 축소 (viewBox 유지) */
-function shrinkSvgDimensions(svg: string, maxW = 400): string {
-  // width/height 추출
-  const wMatch = svg.match(/width="([^"]+)"/)
-  const hMatch = svg.match(/height="([^"]+)"/)
-  if (!wMatch || !hMatch) return svg
+/** SVG string → 래스터 PNG thumbnail (canvas 경유, 확실하게 작은 이미지) */
+function svgToPng(svgStr: string, maxW = 300): Promise<string | null> {
+  return new Promise(resolve => {
+    // SVG에 viewBox 보장 + 작은 dimensions 설정
+    let svg = svgStr
+    const wM = svg.match(/width="([^"]+)"/)
+    const hM = svg.match(/height="([^"]+)"/)
+    const origW = wM ? parseFloat(wM[1]) : 0
+    const origH = hM ? parseFloat(hM[1]) : 0
+    if (!origW || !origH) { resolve(null); return }
 
-  const origW = parseFloat(wMatch[1])
-  const origH = parseFloat(hMatch[1])
-  if (!origW || !origH) return svg
+    if (!svg.includes('viewBox')) {
+      svg = svg.replace('<svg ', `<svg viewBox="0 0 ${origW} ${origH}" `)
+    }
+    const aspect = origH / origW
+    const tw = maxW
+    const th = Math.round(tw * aspect)
+    svg = svg.replace(/width="[^"]*"/, `width="${tw}"`)
+    svg = svg.replace(/height="[^"]*"/, `height="${th}"`)
 
-  const aspect = origH / origW
-  const thumbW = maxW
-  const thumbH = Math.round(thumbW * aspect)
-
-  // viewBox가 없으면 추가
-  if (!svg.includes('viewBox')) {
-    svg = svg.replace('<svg ', `<svg viewBox="0 0 ${origW} ${origH}" `)
-  }
-
-  // width/height를 작은 값으로 교체
-  svg = svg.replace(/width="[^"]*"/, `width="${thumbW}"`)
-  svg = svg.replace(/height="[^"]*"/, `height="${thumbH}"`)
-  return svg
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = tw
+      canvas.height = th
+      const ctx = canvas.getContext('2d')
+      if (!ctx) { resolve(null); return }
+      ctx.fillStyle = '#fff'
+      ctx.fillRect(0, 0, tw, th)
+      ctx.drawImage(img, 0, 0, tw, th)
+      resolve(canvas.toDataURL('image/png'))
+    }
+    img.onerror = () => resolve(null)
+    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)))
+  })
 }
 
 async function generateThumb(editor: ReturnType<typeof useEditor>): Promise<string | null> {
@@ -47,8 +58,7 @@ async function generateThumb(editor: ReturnType<typeof useEditor>): Promise<stri
       background: true,
     })
     if (result?.svg) {
-      const svg = shrinkSvgDimensions(result.svg)
-      return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)))
+      return await svgToPng(result.svg)
     }
   } catch (e) {
     console.warn('[LayoutPanel] getSvgString failed:', e)
