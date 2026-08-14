@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { PageRecordType } from 'tldraw'
 import { Plus } from 'lucide-react'
 import { useEditor } from '../../context/EditorContext'
@@ -10,85 +10,133 @@ type PageThumb = {
   dataUrl: string | null
 }
 
+/** 현재 페이지의 SVG 썸네일을 생성 (페이지 전환 없이) */
+async function generateThumb(editor: ReturnType<typeof useEditor>): Promise<string | null> {
+  if (!editor) return null
+  const shapes = editor.getCurrentPageShapes()
+  if (shapes.length === 0 || shapes.length > 300) return null
+  try {
+    const result = await (editor as unknown as {
+      getSvgString: (s: unknown[], o: unknown) => Promise<{ svg: string; width: number; height: number } | undefined>
+    }).getSvgString(shapes, { padding: 16, background: true })
+    if (result?.svg) {
+      return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(result.svg)))
+    }
+  } catch { /* ignore */ }
+  return null
+}
+
 export function LayoutPanel() {
   const editor = useEditor()
   const [pages, setPages] = useState<PageThumb[]>([])
   const [currentPageId, setCurrentPageId] = useState('')
+  // 썸네일 캐시: pageId → dataUrl (페이지 전환 없이 캐시 유지)
+  const thumbCache = useRef<Map<string, string | null>>(new Map())
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  /* ── 페이지 목록 + 썸네일 생성 ── */
-  const syncPages = useCallback(async () => {
+  /* ── 현재 페이지 썸네일만 갱신 (페이지 전환 X) ── */
+  const refreshCurrentThumb = useCallback(async () => {
+    if (!editor) return
+    const pageId = editor.getCurrentPageId()
+    const dataUrl = await generateThumb(editor)
+    thumbCache.current.set(pageId, dataUrl)
+
+    // state 갱신
+    const allPages = editor.getPages()
+    setPages(allPages.map((p, i) => ({
+      id: p.id,
+      name: p.name,
+      index: i + 1,
+      dataUrl: thumbCache.current.get(p.id) ?? null,
+    })))
+    setCurrentPageId(pageId)
+  }, [editor])
+
+  /* ── 전체 페이지 목록 동기화 (캐시 기반, 페이지 전환 X) ── */
+  const syncPageList = useCallback(() => {
     if (!editor) return
     const allPages = editor.getPages()
-    setCurrentPageId(editor.getCurrentPageId())
-
-    const thumbs: PageThumb[] = []
-    const savedPageId = editor.getCurrentPageId()
-
-    for (let i = 0; i < allPages.length; i++) {
-      const p = allPages[i]
-      let dataUrl: string | null = null
-
-      try {
-        // 해당 페이지로 잠시 전환해서 shapes 가져오기
-        editor.setCurrentPage(p.id)
-        const shapes = editor.getCurrentPageShapes()
-
-        if (shapes.length > 0 && shapes.length <= 300) {
-          const result = await (editor as unknown as {
-            getSvgString: (shapes: unknown[], opts: unknown) => Promise<{ svg: string; width: number; height: number } | undefined>
-          }).getSvgString(shapes, { padding: 16, background: true })
-
-          if (result?.svg) {
-            dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(result.svg)))
-          }
-        }
-      } catch {
-        // 썸네일 생성 실패 시 무시
-      }
-
-      thumbs.push({ id: p.id, name: p.name, index: i + 1, dataUrl })
-    }
-
-    // 원래 페이지로 복귀
-    editor.setCurrentPage(savedPageId as never)
-    setPages(thumbs)
+    const pageId = editor.getCurrentPageId()
+    setCurrentPageId(pageId)
+    setPages(allPages.map((p, i) => ({
+      id: p.id,
+      name: p.name,
+      index: i + 1,
+      dataUrl: thumbCache.current.get(p.id) ?? null,
+    })))
   }, [editor])
 
   useEffect(() => {
     if (!editor) return
-    syncPages()
+
+    // 초기: 현재 페이지 썸네일 생성
+    refreshCurrentThumb()
 
     let prevPageId = editor.getCurrentPageId()
     let prevPageCount = editor.getPages().length
+    let prevShapeCount = editor.getCurrentPageShapes().length
+
     const unsub = editor.store.listen(() => {
-      const curId = editor.getCurrentPageId()
-      const curCount = editor.getPages().length
-      if (curId !== prevPageId || curCount !== prevPageCount) {
-        prevPageId = curId
-        prevPageCount = curCount
-        setCurrentPageId(curId)
-        // 페이지 수 변경 시 썸네일 재생성
-        if (curCount !== pages.length) {
-          syncPages()
+      const curPageId = editor.getCurrentPageId()
+      const curPageCount = editor.getPages().length
+      const curShapeCount = editor.getCurrentPageShapes().length
+
+      // 페이지 전환 시: 이전 페이지 캐시 유지, 새 페이지 썸네일 생성
+      if (curPageId !== prevPageId) {
+        prevPageId = curPageId
+        prevShapeCount = curShapeCount
+        setCurrentPageId(curPageId)
+        // 새 페이지 썸네일이 캐시에 없으면 생성
+        if (!thumbCache.current.has(curPageId)) {
+          refreshCurrentThumb()
+        } else {
+          syncPageList()
         }
+        return
+      }
+
+      // 페이지 수 변경 (추가/삭제)
+      if (curPageCount !== prevPageCount) {
+        prevPageCount = curPageCount
+        syncPageList()
+        return
+      }
+
+      // shape 수 변경 (DXF import, 그리기 등) → debounce로 썸네일 갱신
+      if (curShapeCount !== prevShapeCount) {
+        prevShapeCount = curShapeCount
+        if (debounceRef.current) clearTimeout(debounceRef.current)
+        debounceRef.current = setTimeout(() => {
+          refreshCurrentThumb()
+        }, 500)
       }
     })
-    return unsub
-  }, [editor, syncPages, pages.length])
+
+    return () => {
+      unsub()
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [editor, refreshCurrentThumb, syncPageList])
 
   const switchPage = (pageId: string) => {
-    if (!editor) return
-    editor.setCurrentPage(pageId as never)
-    setCurrentPageId(pageId)
+    if (!editor || pageId === currentPageId) return
+    // 현재 페이지 썸네일 캐시 저장 후 전환
+    generateThumb(editor).then(url => {
+      thumbCache.current.set(currentPageId, url)
+      editor.setCurrentPage(pageId as never)
+    })
   }
 
   const addPage = () => {
     if (!editor) return
     const num = editor.getPages().length + 1
     const newPageId = PageRecordType.createId()
-    editor.createPage({ name: `Drawing ${num}`, id: newPageId })
-    editor.setCurrentPage(newPageId)
-    syncPages()
+    // 현재 페이지 썸네일 먼저 캐시
+    generateThumb(editor).then(url => {
+      thumbCache.current.set(editor.getCurrentPageId(), url)
+      editor.createPage({ name: `Drawing ${num}`, id: newPageId })
+      editor.setCurrentPage(newPageId)
+    })
   }
 
   return (
