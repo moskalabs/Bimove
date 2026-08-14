@@ -73,4 +73,26 @@ export class DoorShapeUtil extends ShapeUtil<DoorShape> {
       </SVGContainer>
     )
   }
+
+  override toSvg(shape: DoorShape) {
+    const { width, thickness, swing, flipped } = shape.props
+    const hw = width / 2, ht = thickness / 2
+    const f = flipped ? -1 : 1
+    const hingeX = -hw * f
+    const freeX = hw * f
+    const sweepFlag = (swing > 0 ? 1 : 0) ^ (flipped ? 1 : 0)
+
+    return (
+      <g>
+        <rect x={-hw} y={-ht} width={width} height={thickness} fill="white" stroke="none" />
+        <line x1={-hw} y1={-ht} x2={-hw} y2={ht} stroke="#222" strokeWidth={2} />
+        <line x1={hw} y1={-ht} x2={hw} y2={ht} stroke="#222" strokeWidth={2} />
+        <line x1={hingeX} y1={0} x2={hingeX} y2={swing * width} stroke="#444" strokeWidth={1} />
+        <path
+          d={`M${hingeX},${swing * width} A${width},${width} 0 0,${sweepFlag} ${freeX},0`}
+          stroke="#666" strokeWidth={0.8} strokeDasharray="3,2" fill="none"
+        />
+      </g>
+    )
+  }
 }

@@ -57,4 +57,20 @@ export class WindowShapeUtil extends ShapeUtil<WindowShape> {
       </SVGContainer>
     )
   }
+
+  override toSvg(shape: WindowShape) {
+    const { width, thickness } = shape.props
+    const hw = width / 2, ht = thickness / 2
+    const gap = ht * 0.4
+
+    return (
+      <g>
+        <rect x={-hw} y={-ht} width={width} height={thickness} fill="white" stroke="none" />
+        <line x1={-hw} y1={-ht} x2={-hw} y2={ht} stroke="#222" strokeWidth={2} />
+        <line x1={hw} y1={-ht} x2={hw} y2={ht} stroke="#222" strokeWidth={2} />
+        <line x1={-hw} y1={-gap} x2={hw} y2={-gap} stroke="#55aaff" strokeWidth={1.5} />
+        <line x1={-hw} y1={gap} x2={hw} y2={gap} stroke="#55aaff" strokeWidth={1.5} />
+      </g>
+    )
+  }
 }

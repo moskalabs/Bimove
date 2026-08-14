@@ -14,7 +14,7 @@ type PageThumb = {
 async function generateThumb(editor: ReturnType<typeof useEditor>): Promise<string | null> {
   if (!editor) return null
   const shapes = editor.getCurrentPageShapes()
-  if (shapes.length === 0 || shapes.length > 300) return null
+  if (shapes.length === 0 || shapes.length > 1000) return null
   try {
     const result = await (editor as unknown as {
       getSvgString: (s: unknown[], o: unknown) => Promise<{ svg: string; width: number; height: number } | undefined>

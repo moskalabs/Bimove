@@ -119,4 +119,23 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
       />
     )
   }
+
+  override toSvg(shape: DxfGroupShape) {
+    const rawColor = (shape.meta?.dxfColor as string) || '#333'
+    const stroke = isNearWhite(rawColor) ? '#333' : rawColor
+    const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
+    const strokeW = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
+
+    return (
+      <g>
+        <path
+          d={shape.props.pathData}
+          fill="none"
+          stroke={stroke}
+          strokeWidth={strokeW}
+          strokeLinecap="round"
+        />
+      </g>
+    )
+  }
 }

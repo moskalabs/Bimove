@@ -386,4 +386,25 @@ export class WallShapeUtil extends ShapeUtil<WallShape> {
   }
 
   onResize = (shape: WallShape, _info: TLResizeInfo<WallShape>) => shape
+
+  override toSvg(shape: WallShape) {
+    const { x2, y2 } = shape.props
+    const isDxf = !!shape.meta?.dxfFingerprint
+
+    if (isDxf) {
+      const rawDxf = (shape.meta?.dxfColor as string) || '#333'
+      const color = isNearWhite(rawDxf) ? '#333' : rawDxf
+      const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
+      const sw = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
+      return <line x1={0} y1={0} x2={x2} y2={y2} stroke={color} strokeWidth={sw} strokeLinecap="round" />
+    }
+
+    const corners = getCorners(shape)
+    const d = `M${corners[0].x},${corners[0].y} L${corners[1].x},${corners[1].y} L${corners[2].x},${corners[2].y} L${corners[3].x},${corners[3].y} Z`
+    const rawFill = (shape.meta?.fill as string) ?? '#555'
+    const rawStroke = (shape.meta?.stroke as string) ?? '#222'
+    const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
+    const sw = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 25, 4)) : 1
+    return <path d={d} fill={rawFill} stroke={rawStroke} strokeWidth={sw} />
+  }
 }
