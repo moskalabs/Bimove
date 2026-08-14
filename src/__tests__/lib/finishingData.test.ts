@@ -183,19 +183,26 @@ describe('defaults', () => {
     expect(wp.variants.map(v => v.label)).toEqual(['국산', '수입'])
   })
 
-  it('마루는 floorOnly', () => {
+  it('목재는 floorOnly', () => {
     const data = resetFinishingData()
     const wood = data.categories.flatMap(c => c.items).find(i => i.id === 'f-wood')!
+    expect(wood.label).toBe('목재')
     expect(wood.floorOnly).toBe(true)
     expect(wood.boxAreaM2).toBe(3.23)
   })
 
-  it('석고보드 규격 900×1800', () => {
+  it('벽지 국산/수입', () => {
     const data = resetFinishingData()
-    const gyp = data.categories.flatMap(c => c.items).find(i => i.id === 'f-gypsum')!
-    expect(gyp.itemWidthMm).toBe(900)
-    expect(gyp.itemLengthMm).toBe(1800)
-    expect(unitAreaM2(gyp)).toBeCloseTo(1.62, 2)
+    const wp = data.categories.flatMap(c => c.items).find(i => i.id === 'f-wallpaper')!
+    expect(wp.label).toBe('벽지')
+  })
+
+  it('필름 항목 존재', () => {
+    const data = resetFinishingData()
+    const film = data.categories.flatMap(c => c.items).find(i => i.id === 'f-film')!
+    expect(film).toBeDefined()
+    expect(film.label).toBe('필름')
+    expect(film.calcType).toBe('roll')
   })
 
   it('도장 coverageM2PerL = 8', () => {
@@ -295,7 +302,7 @@ describe('loadFinishingData / saveFinishingData', () => {
           boxAreaM2: 1, lossRate: 0.05, unit: 'box',
           variants: [createVariant('타일')],
         }],
-        // 석고보드, 도장, 도배, 마루가 없음
+        // 도장, 벽지, 목재, 필름이 없음
       }],
       // lighting, furniture, kitchen 카테고리 없음
       updatedAt: Date.now(),
@@ -307,10 +314,10 @@ describe('loadFinishingData / saveFinishingData', () => {
     const finishing = loaded.categories.find(c => c.key === 'finishing')!
 
     // 빠진 아이템들 추가됨
-    expect(finishing.items.find(i => i.id === 'f-gypsum')).toBeDefined()
     expect(finishing.items.find(i => i.id === 'f-paint')).toBeDefined()
     expect(finishing.items.find(i => i.id === 'f-wallpaper')).toBeDefined()
     expect(finishing.items.find(i => i.id === 'f-wood')).toBeDefined()
+    expect(finishing.items.find(i => i.id === 'f-film')).toBeDefined()
 
     // 빠진 카테고리들 추가됨
     expect(loaded.categories.find(c => c.key === 'lighting')).toBeDefined()

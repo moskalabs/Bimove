@@ -89,16 +89,10 @@ const DEFAULT_CATEGORIES: FinishingCategory[] = [
     key: 'finishing', label: '마감재', expanded: true,
     items: [
       {
-        id: 'f-gypsum', label: '석고보드', calcType: 'sheet',
-        itemWidthMm: 900, itemLengthMm: 1800, lossRate: 0.10, unit: '장',
-        specLabel: '박스당 면적 1.62 m²/box',
-        variants: [createVariant('석고보드')],
-      },
-      {
-        id: 'f-paint', label: '도장', calcType: 'paint',
-        coverageM2PerL: 8, containerSizes: [1, 4, 18], lossRate: 0.05, unit: 'L',
-        specLabel: '수성 페인트 기준 8m²/L (면적 x 도포횟수 / 도포율)',
-        variants: [createVariant('도장 A')],
+        id: 'f-wood', label: '목재', calcType: 'sheet',
+        floorOnly: true, boxAreaM2: 3.23, lossRate: 0.10, unit: 'box',
+        specLabel: '강마루 94 x 800 x 7.5T 기준 3.23 m²/box',
+        variants: [createVariant('목재')],
       },
       {
         id: 'f-tile', label: '타일', calcType: 'sheet',
@@ -107,16 +101,22 @@ const DEFAULT_CATEGORIES: FinishingCategory[] = [
         variants: [createVariant('타일 A'), createVariant('타일 B'), createVariant('타일 C')],
       },
       {
-        id: 'f-wallpaper', label: '도배', calcType: 'roll',
+        id: 'f-paint', label: '도장', calcType: 'paint',
+        coverageM2PerL: 8, containerSizes: [1, 4, 18], lossRate: 0.05, unit: 'L',
+        specLabel: '수성 페인트 기준 8m²/L (면적 x 도포횟수 / 도포율)',
+        variants: [createVariant('도장 A')],
+      },
+      {
+        id: 'f-wallpaper', label: '벽지', calcType: 'roll',
         rollAreaM2: 16, lossRate: 0.10, unit: '롤',
         specLabel: '실크벽지 기준 16 m²/롤',
         variants: [createVariant('국산'), createVariant('수입')],
       },
       {
-        id: 'f-wood', label: '마루', calcType: 'sheet',
-        floorOnly: true, boxAreaM2: 3.23, lossRate: 0.10, unit: 'box',
-        specLabel: '강마루 94 x 800 x 7.5T 기준 3.23 m²/box',
-        variants: [createVariant('마루')],
+        id: 'f-film', label: '필름', calcType: 'roll',
+        rollAreaM2: 2.4, lossRate: 0.10, unit: '롤',
+        specLabel: '인테리어 필름 1220mm x 50m 기준 2.4 m²/롤',
+        variants: [createVariant('필름')],
       },
     ],
   },
@@ -212,12 +212,14 @@ export function sheetAreaM2(item: FinishingItem): number {
 
 /** 발주서 templateId → 마감재 finishingItemId 매핑 */
 const PO_TO_FINISHING: Record<string, string> = {
-  'ceil-gypsum': 'f-gypsum',
   'wall-wallpaper': 'f-wallpaper',
   'wall-paint': 'f-paint',
   'wall-tile': 'f-tile',
+  'wall-film': 'f-film',
   'floor-tile': 'f-tile',
   'floor-wood': 'f-wood',
+  'flooring': 'f-wood',
+  'film': 'f-film',
 }
 
 /** 마감재 Tables에서 특정 아이템의 총 시공면적(m²)을 가져온다 */
@@ -260,7 +262,7 @@ export function getFinishingAreaForPO(
 
 const STORAGE_KEY = 'bimova_finishing_tables_v1'
 /** 이 숫자를 올리면 저장된 데이터에 새 defaults가 병합됨 */
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 
 /** 저장된 데이터에 새 defaults를 병합 (사용자 입력값은 유지) */
 function mergeDefaults(saved: FinishingTablesData): FinishingTablesData {
