@@ -14,14 +14,21 @@ type PageThumb = {
 async function generateThumb(editor: ReturnType<typeof useEditor>): Promise<string | null> {
   if (!editor) return null
   const shapes = editor.getCurrentPageShapes()
-  if (shapes.length === 0 || shapes.length > 2000) return null
+  console.log('[LayoutPanel] shapes:', shapes.length, 'types:', [...new Set(shapes.map(s => s.type))])
+  if (shapes.length === 0 || shapes.length > 2000) {
+    console.log('[LayoutPanel] skipped: count', shapes.length)
+    return null
+  }
   try {
     const result = await editor.getSvgString(shapes, {
       padding: 16,
       background: true,
     })
+    console.log('[LayoutPanel] getSvgString result:', result ? `${result.width}x${result.height}, svg ${result.svg.length} chars` : 'null')
     if (result?.svg) {
-      return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(result.svg)))
+      const dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(result.svg)))
+      console.log('[LayoutPanel] thumbnail generated, dataUrl length:', dataUrl.length)
+      return dataUrl
     }
   } catch (e) {
     console.warn('[LayoutPanel] getSvgString failed:', e)
