@@ -88,11 +88,18 @@ const DEFAULT_CATEGORIES: FinishingCategory[] = [
   {
     key: 'finishing', label: '마감재', expanded: true,
     items: [
+      // ── 기본 항목 ──
       {
-        id: 'f-wood', label: '목재', calcType: 'sheet',
-        floorOnly: true, boxAreaM2: 3.23, lossRate: 0.10, unit: 'box',
-        specLabel: '강마루 94 x 800 x 7.5T 기준 3.23 m²/box',
-        variants: [createVariant('목재')],
+        id: 'f-gypsum', label: '석고보드', calcType: 'sheet',
+        boxAreaM2: 2.98, lossRate: 0.05, unit: '매',
+        specLabel: '9.5T 900x1800 기준 2.98 m²/매',
+        variants: [createVariant('석고보드')],
+      },
+      {
+        id: 'f-paint', label: '도장', calcType: 'paint',
+        coverageM2PerL: 8, containerSizes: [1, 4, 18], lossRate: 0.05, unit: 'L',
+        specLabel: '수성 페인트 기준 8m²/L',
+        variants: [createVariant('도장')],
       },
       {
         id: 'f-tile', label: '타일', calcType: 'sheet',
@@ -101,28 +108,79 @@ const DEFAULT_CATEGORIES: FinishingCategory[] = [
         variants: [createVariant('타일 A'), createVariant('타일 B'), createVariant('타일 C')],
       },
       {
-        id: 'f-paint', label: '도장', calcType: 'paint',
-        coverageM2PerL: 8, containerSizes: [1, 4, 18], lossRate: 0.05, unit: 'L',
-        specLabel: '수성 페인트 기준 8m²/L (면적 x 도포횟수 / 도포율)',
-        variants: [createVariant('도장 A')],
-      },
-      {
-        id: 'f-wallpaper', label: '벽지', calcType: 'roll',
+        id: 'f-wallpaper', label: '도배', calcType: 'roll',
         rollAreaM2: 16, lossRate: 0.10, unit: '롤',
         specLabel: '실크벽지 기준 16 m²/롤',
         variants: [createVariant('국산'), createVariant('수입')],
       },
       {
+        id: 'f-wood', label: '마루', calcType: 'sheet',
+        floorOnly: true, boxAreaM2: 3.23, lossRate: 0.10, unit: 'box',
+        specLabel: '강마루 94 x 800 x 7.5T 기준 3.23 m²/box',
+        variants: [createVariant('마루')],
+      },
+      // ── 추가 선택 항목 ──
+      {
+        id: 'f-tex', label: '텍스', calcType: 'sheet',
+        boxAreaM2: 0.59, lossRate: 0.05, unit: '매',
+        specLabel: '텍스 600x600 기준',
+        variants: [createVariant('텍스')],
+      },
+      {
         id: 'f-film', label: '필름', calcType: 'roll',
         rollAreaM2: 2.4, lossRate: 0.10, unit: '롤',
-        specLabel: '인테리어 필름 1220mm x 50m 기준 2.4 m²/롤',
+        specLabel: '인테리어 필름 1220mm x 50m 기준',
         variants: [createVariant('필름')],
+      },
+      {
+        id: 'f-louver', label: '루버', calcType: 'length',
+        lossRate: 0.05, unit: 'M',
+        specLabel: '루버 M당 산출',
+        variants: [createVariant('루버')],
+      },
+      {
+        id: 'f-panel', label: '판넬', calcType: 'sheet',
+        boxAreaM2: 2.88, lossRate: 0.05, unit: '매',
+        specLabel: '판넬 1200x2400 기준',
+        variants: [createVariant('판넬')],
+      },
+      {
+        id: 'f-decotile', label: '데코타일', calcType: 'sheet',
+        boxAreaM2: 3.34, lossRate: 0.10, unit: 'box',
+        specLabel: '데코타일 박스당 3.34 m²/box',
+        floorOnly: true,
+        variants: [createVariant('데코타일')],
+      },
+      {
+        id: 'f-jangpan', label: '장판', calcType: 'roll',
+        rollAreaM2: 3.6, lossRate: 0.05, unit: '롤',
+        specLabel: '장판 1800mm 롤 기준',
+        floorOnly: true,
+        variants: [createVariant('장판')],
+      },
+      {
+        id: 'f-ceil-mold', label: '천정몰딩', calcType: 'length',
+        lossRate: 0.05, unit: 'M',
+        specLabel: '천정몰딩 M당 산출',
+        variants: [createVariant('천정몰딩')],
+      },
+      {
+        id: 'f-baseboard', label: '걸레받이', calcType: 'length',
+        lossRate: 0.05, unit: 'M',
+        specLabel: '걸레받이 M당 산출',
+        variants: [createVariant('걸레받이')],
+      },
+      {
+        id: 'f-finish-mold', label: '마감몰딩', calcType: 'length',
+        lossRate: 0.05, unit: 'M',
+        specLabel: '마감몰딩 M당 산출',
+        variants: [createVariant('마감몰딩')],
       },
     ],
   },
   { key: 'lighting', label: '조명', expanded: false, items: [] },
   { key: 'furniture', label: '이동 집기', expanded: false, items: [] },
-  { key: 'kitchen', label: '주방 집기', expanded: false, items: [] },
+  { key: 'appliance', label: '가전', expanded: false, items: [] },
 ]
 
 // ── 계산 함수 ──
@@ -220,6 +278,15 @@ const PO_TO_FINISHING: Record<string, string> = {
   'floor-wood': 'f-wood',
   'flooring': 'f-wood',
   'film': 'f-film',
+  'ceil-gypsum': 'f-gypsum',
+  'floor-decotile': 'f-decotile',
+  'floor-jangpan': 'f-jangpan',
+  'ceil-mold': 'f-ceil-mold',
+  'baseboard': 'f-baseboard',
+  'finish-mold': 'f-finish-mold',
+  'louver': 'f-louver',
+  'panel': 'f-panel',
+  'tex': 'f-tex',
 }
 
 /** 마감재 Tables에서 특정 아이템의 총 시공면적(m²)을 가져온다 */
@@ -262,7 +329,7 @@ export function getFinishingAreaForPO(
 
 const STORAGE_KEY = 'bimova_finishing_tables_v1'
 /** 이 숫자를 올리면 저장된 데이터에 새 defaults가 병합됨 */
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
 
 /** 저장된 데이터에 새 defaults를 병합 (사용자 입력값은 유지) */
 function mergeDefaults(saved: FinishingTablesData): FinishingTablesData {

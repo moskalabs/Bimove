@@ -183,18 +183,34 @@ describe('defaults', () => {
     expect(wp.variants.map(v => v.label)).toEqual(['국산', '수입'])
   })
 
-  it('목재는 floorOnly', () => {
+  it('마루는 floorOnly', () => {
     const data = resetFinishingData()
     const wood = data.categories.flatMap(c => c.items).find(i => i.id === 'f-wood')!
-    expect(wood.label).toBe('목재')
+    expect(wood.label).toBe('마루')
     expect(wood.floorOnly).toBe(true)
     expect(wood.boxAreaM2).toBe(3.23)
   })
 
-  it('벽지 국산/수입', () => {
+  it('도배 국산/수입', () => {
     const data = resetFinishingData()
     const wp = data.categories.flatMap(c => c.items).find(i => i.id === 'f-wallpaper')!
-    expect(wp.label).toBe('벽지')
+    expect(wp.label).toBe('도배')
+  })
+
+  it('석고보드 항목 존재', () => {
+    const data = resetFinishingData()
+    const g = data.categories.flatMap(c => c.items).find(i => i.id === 'f-gypsum')!
+    expect(g).toBeDefined()
+    expect(g.label).toBe('석고보드')
+    expect(g.calcType).toBe('sheet')
+  })
+
+  it('추가 항목 (텍스, 루버, 판넬, 데코타일, 장판, 천정몰딩, 걸레받이, 마감몰딩)', () => {
+    const data = resetFinishingData()
+    const items = data.categories.flatMap(c => c.items)
+    for (const id of ['f-tex', 'f-louver', 'f-panel', 'f-decotile', 'f-jangpan', 'f-ceil-mold', 'f-baseboard', 'f-finish-mold']) {
+      expect(items.find(i => i.id === id)).toBeDefined()
+    }
   })
 
   it('필름 항목 존재', () => {
@@ -302,9 +318,9 @@ describe('loadFinishingData / saveFinishingData', () => {
           boxAreaM2: 1, lossRate: 0.05, unit: 'box',
           variants: [createVariant('타일')],
         }],
-        // 도장, 벽지, 목재, 필름이 없음
+        // 도장, 도배, 마루, 필름이 없음
       }],
-      // lighting, furniture, kitchen 카테고리 없음
+      // lighting, furniture, appliance 카테고리 없음
       updatedAt: Date.now(),
       schemaVersion: 1,
     }
@@ -322,7 +338,7 @@ describe('loadFinishingData / saveFinishingData', () => {
     // 빠진 카테고리들 추가됨
     expect(loaded.categories.find(c => c.key === 'lighting')).toBeDefined()
     expect(loaded.categories.find(c => c.key === 'furniture')).toBeDefined()
-    expect(loaded.categories.find(c => c.key === 'kitchen')).toBeDefined()
+    expect(loaded.categories.find(c => c.key === 'appliance')).toBeDefined()
   })
 })
 
