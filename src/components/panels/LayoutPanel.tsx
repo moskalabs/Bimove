@@ -11,24 +11,44 @@ type PageThumb = {
 }
 
 /** 현재 페이지의 SVG 썸네일을 생성 */
+/** SVG의 width/height를 썸네일 크기로 축소 (viewBox 유지) */
+function shrinkSvgDimensions(svg: string, maxW = 400): string {
+  // width/height 추출
+  const wMatch = svg.match(/width="([^"]+)"/)
+  const hMatch = svg.match(/height="([^"]+)"/)
+  if (!wMatch || !hMatch) return svg
+
+  const origW = parseFloat(wMatch[1])
+  const origH = parseFloat(hMatch[1])
+  if (!origW || !origH) return svg
+
+  const aspect = origH / origW
+  const thumbW = maxW
+  const thumbH = Math.round(thumbW * aspect)
+
+  // viewBox가 없으면 추가
+  if (!svg.includes('viewBox')) {
+    svg = svg.replace('<svg ', `<svg viewBox="0 0 ${origW} ${origH}" `)
+  }
+
+  // width/height를 작은 값으로 교체
+  svg = svg.replace(/width="[^"]*"/, `width="${thumbW}"`)
+  svg = svg.replace(/height="[^"]*"/, `height="${thumbH}"`)
+  return svg
+}
+
 async function generateThumb(editor: ReturnType<typeof useEditor>): Promise<string | null> {
   if (!editor) return null
   const shapes = editor.getCurrentPageShapes()
-  console.log('[LayoutPanel] shapes:', shapes.length, 'types:', [...new Set(shapes.map(s => s.type))])
-  if (shapes.length === 0 || shapes.length > 2000) {
-    console.log('[LayoutPanel] skipped: count', shapes.length)
-    return null
-  }
+  if (shapes.length === 0 || shapes.length > 2000) return null
   try {
     const result = await editor.getSvgString(shapes, {
       padding: 16,
       background: true,
     })
-    console.log('[LayoutPanel] getSvgString result:', result ? `${result.width}x${result.height}, svg ${result.svg.length} chars` : 'null')
     if (result?.svg) {
-      const dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(result.svg)))
-      console.log('[LayoutPanel] thumbnail generated, dataUrl length:', dataUrl.length)
-      return dataUrl
+      const svg = shrinkSvgDimensions(result.svg)
+      return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)))
     }
   } catch (e) {
     console.warn('[LayoutPanel] getSvgString failed:', e)
