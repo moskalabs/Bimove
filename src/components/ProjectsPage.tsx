@@ -17,58 +17,158 @@ type Project = {
   updated_at: string
 }
 
+type NavSection = 'recent' | 'favorites' | 'all' | 'team'
+
 function formatDate(ts: string) {
   const d = new Date(ts)
   return d.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-function NewProjectCard({ onCreate }: { onCreate: (name: string) => void }) {
-  const [active, setActive] = useState(false)
-  const [name, setName] = useState('')
-  const [error, setError] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
+/* ── Icons (inline SVG) ── */
+const Icons = {
+  clock: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" />
+    </svg>
+  ),
+  star: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+    </svg>
+  ),
+  grid: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+      <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
+    </svg>
+  ),
+  users: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  ),
+  plus: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  ),
+  settings: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  ),
+}
 
-  const open = () => { setActive(true); setTimeout(() => inputRef.current?.focus(), 50) }
-  const confirm = () => {
-    if (name.trim()) { onCreate(name); setName(''); setActive(false); setError(false) }
-    else { setError(true); inputRef.current?.focus() }
-  }
-  const cancel = () => { setName(''); setActive(false); setError(false) }
-
-  if (!active) return (
-    <button onClick={open} style={cardStyle(true)}>
-      <span style={{ fontSize: 32, color: '#bbb', lineHeight: 1 }}>+</span>
-      <span style={{ color: '#888', fontSize: 13, marginTop: 8 }}>새 프로젝트</span>
-    </button>
-  )
+/* ── Sidebar ── */
+function DashboardSidebar({
+  active, onNav, email, onSettings, onSignOut,
+}: {
+  active: NavSection
+  onNav: (s: NavSection) => void
+  email: string
+  onSettings: () => void
+  onSignOut: () => void
+}) {
+  const items: { key: NavSection; label: string; icon: React.ReactNode }[] = [
+    { key: 'recent', label: '최근 프로젝트', icon: Icons.clock },
+    { key: 'favorites', label: '즐겨찾기', icon: Icons.star },
+    { key: 'all', label: '전체 프로젝트', icon: Icons.grid },
+    { key: 'team', label: '팀', icon: Icons.users },
+  ]
 
   return (
-    <div style={cardStyle(false)}>
-      <div style={{ fontSize: 28, marginBottom: 8 }}>🏠</div>
-      <input
-        ref={inputRef}
-        value={name}
-        onChange={e => { setName(e.target.value); if (error) setError(false) }}
-        onKeyDown={e => { if (e.key === 'Enter') confirm(); if (e.key === 'Escape') cancel() }}
-        placeholder="프로젝트 이름"
-        style={{
-          width: '100%', border: 'none',
-          borderBottom: `2px solid ${error ? '#ef4444' : '#3b82f6'}`,
-          outline: 'none', fontSize: 14, fontWeight: 600, textAlign: 'center',
-          background: 'transparent', padding: '2px 0',
-        }}
-      />
-      {error && (
-        <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4 }}>이름을 입력해주세요</div>
-      )}
-      <div style={{ display: 'flex', gap: 8, marginTop: 12, width: '100%' }}>
-        <button onClick={confirm} style={miniBtn('#3b82f6', '#fff')}>만들기</button>
-        <button onClick={cancel} style={miniBtn('#f0f0f0', '#555')}>취소</button>
+    <aside className="dash-sidebar">
+      <div className="dash-sidebar-logo">bimova</div>
+      <nav className="dash-sidebar-nav">
+        {items.map(it => (
+          <button
+            key={it.key}
+            className={`dash-nav-item${active === it.key ? ' active' : ''}`}
+            onClick={() => onNav(it.key)}
+          >
+            {it.icon}
+            {it.label}
+          </button>
+        ))}
+      </nav>
+      <div className="dash-sidebar-footer">
+        <div className="dash-user-email">{email}</div>
+        <div className="dash-footer-btns">
+          <button className="dash-footer-btn" onClick={onSettings}>설정</button>
+          <button className="dash-footer-btn" onClick={onSignOut}>로그아웃</button>
+        </div>
+      </div>
+    </aside>
+  )
+}
+
+/* ── New Project Modal ── */
+function NewProjectModal({ onClose, onCreate }: {
+  onClose: () => void
+  onCreate: (name: string) => void
+}) {
+  const [name, setName] = useState('')
+  const [error, setError] = useState(false)
+  const [template, setTemplate] = useState<'blank' | 'import'>('blank')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    setTimeout(() => inputRef.current?.focus(), 100)
+  }, [])
+
+  const confirm = () => {
+    if (!name.trim()) { setError(true); inputRef.current?.focus(); return }
+    onCreate(name.trim())
+    onClose()
+  }
+
+  return (
+    <div className="dash-modal-overlay" onClick={onClose}>
+      <div className="dash-modal" onClick={e => e.stopPropagation()}>
+        <div className="dash-modal-title">새 프로젝트</div>
+
+        <div className="dash-modal-label">프로젝트 이름</div>
+        <input
+          ref={inputRef}
+          className={`dash-modal-input${error ? ' error' : ''}`}
+          value={name}
+          onChange={e => { setName(e.target.value); if (error) setError(false) }}
+          onKeyDown={e => { if (e.key === 'Enter') confirm(); if (e.key === 'Escape') onClose() }}
+          placeholder="예: 강남 카페 인테리어"
+        />
+        {error && <div className="dash-modal-error">프로젝트 이름을 입력해주세요</div>}
+
+        <div className="dash-modal-templates">
+          <button
+            className={`dash-template-card${template === 'blank' ? ' selected' : ''}`}
+            onClick={() => setTemplate('blank')}
+          >
+            <span className="dash-template-icon">📐</span>
+            <span className="dash-template-label">빈 프로젝트</span>
+            <span className="dash-template-desc">처음부터 새로 시작</span>
+          </button>
+          <button
+            className={`dash-template-card${template === 'import' ? ' selected' : ''}`}
+            onClick={() => setTemplate('import')}
+          >
+            <span className="dash-template-icon">📁</span>
+            <span className="dash-template-label">DWG 불러오기</span>
+            <span className="dash-template-desc">기존 도면에서 시작</span>
+          </button>
+        </div>
+
+        <div className="dash-modal-actions">
+          <button className="dash-modal-btn secondary" onClick={onClose}>취소</button>
+          <button className="dash-modal-btn primary" onClick={confirm}>만들기</button>
+        </div>
       </div>
     </div>
   )
 }
 
+/* ── Project Card ── */
 function ProjectCard({ project, onOpen, onDelete, onRename }: {
   project: Project
   onOpen: () => void
@@ -78,7 +178,6 @@ function ProjectCard({ project, onOpen, onDelete, onRename }: {
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState(project.name)
   const inputRef = useRef<HTMLInputElement>(null)
-  const [hovered, setHovered] = useState(false)
 
   const startEdit = (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -93,106 +192,50 @@ function ProjectCard({ project, onOpen, onDelete, onRename }: {
   }
 
   return (
-    <div
-      onClick={onOpen}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        ...cardStyle(false),
-        cursor: 'pointer',
-        boxShadow: hovered ? '0 4px 20px rgba(0,0,0,0.12)' : '0 1px 4px rgba(0,0,0,0.07)',
-        transform: hovered ? 'translateY(-2px)' : 'none',
-        transition: 'all 0.15s ease',
-        position: 'relative',
-      }}
-    >
-      {/* thumbnail */}
-      <div style={{
-        width: '100%', height: 90, borderRadius: 8, background: '#f5f5f5',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        marginBottom: 10, overflow: 'hidden',
-      }}>
+    <div className="dash-card" onClick={onOpen}>
+      <div className="dash-card-thumb">
         {project.thumbnail
-          ? <img src={project.thumbnail} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-          : <span style={{ fontSize: 28, opacity: 0.4 }}>🏗️</span>
+          ? <img src={project.thumbnail} alt="" />
+          : <span className="dash-card-thumb-empty">🏗️</span>
         }
       </div>
-
-      {editing ? (
-        <input
-          ref={inputRef}
-          value={editName}
-          onChange={e => setEditName(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditing(false) }}
-          onBlur={commitEdit}
-          onClick={e => e.stopPropagation()}
-          style={{
-            width: '100%', border: 'none', borderBottom: '2px solid #3b82f6',
-            outline: 'none', fontSize: 13, fontWeight: 600, textAlign: 'center',
-            background: 'transparent', padding: '2px 0',
-          }}
-        />
-      ) : (
-        <div
-          onDoubleClick={startEdit}
-          title="더블클릭으로 이름 변경"
-          style={{ fontSize: 13, fontWeight: 600, color: '#222', textAlign: 'center', wordBreak: 'break-all' }}
-        >
-          {project.name}
+      <div className="dash-card-info">
+        <div className="dash-card-name">
+          {editing ? (
+            <input
+              ref={inputRef}
+              value={editName}
+              onChange={e => setEditName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditing(false) }}
+              onBlur={commitEdit}
+              onClick={e => e.stopPropagation()}
+            />
+          ) : (
+            <span onDoubleClick={startEdit} title="더블클릭으로 이름 변경">
+              {project.name}
+            </span>
+          )}
         </div>
-      )}
-
-      <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>
-        수정 {formatDate(project.updated_at)}
+        <div className="dash-card-date">수정 {formatDate(project.updated_at)}</div>
       </div>
-
-      {/* delete button */}
       <button
+        className="dash-card-delete"
         onClick={e => { e.stopPropagation(); onDelete() }}
-        style={{
-          position: 'absolute', top: 8, right: 8,
-          background: hovered ? '#fee2e2' : 'transparent',
-          border: 'none', borderRadius: 6, width: 26, height: 26,
-          cursor: 'pointer', fontSize: 13, color: '#ef4444',
-          opacity: hovered ? 1 : 0, transition: 'opacity 0.15s',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}
         title="삭제"
       >✕</button>
     </div>
   )
 }
 
-function cardStyle(dashed: boolean): React.CSSProperties {
-  return {
-    width: 160,
-    minHeight: 180,
-    borderRadius: 12,
-    border: dashed ? '2px dashed #ddd' : '1.5px solid #e8e8e8',
-    background: '#fff',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '14px 12px',
-    cursor: dashed ? 'pointer' : 'default',
-  }
-}
-
-function miniBtn(bg: string, color: string): React.CSSProperties {
-  return {
-    flex: 1, padding: '6px 4px', borderRadius: 6, border: 'none',
-    background: bg, color, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-    lineHeight: 1.4, textAlign: 'center', whiteSpace: 'nowrap',
-  }
-}
-
+/* ── Main Page ── */
 export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) => void }) {
   const { user, signOut } = useAuth()
   const { toast } = useToast()
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [showProfile, setShowProfile] = useState(false)
+  const [showNewModal, setShowNewModal] = useState(false)
+  const [navSection, setNavSection] = useState<NavSection>('all')
 
   const loadProjects = async () => {
     if (!user) return
@@ -209,7 +252,7 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) =
 
   useEffect(() => {
     void loadProjects()
-    // 공유 링크로 들어왔으면 새 프로젝트로 임포트
+    // handle share link import
     void (async () => {
       if (!user) return
       if (!window.location.hash.startsWith('#share=')) return
@@ -261,71 +304,139 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) =
     await loadProjects()
   }
 
-  return (
-    <div style={{
-      minHeight: '100vh', background: '#f8f8f8',
-      display: 'flex', flexDirection: 'column',
-    }}>
-      {/* header */}
-      <div style={{
-        padding: '32px 40px 24px',
-        borderBottom: '1px solid #e8e8e8',
-        background: '#fff',
-        display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-      }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-            <span style={{ fontSize: 22, fontWeight: 800, color: '#111', letterSpacing: -0.5 }}>bimova</span>
-            <span style={{ fontSize: 12, background: '#f0f0f0', color: '#888', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>
-              프로젝트
-            </span>
-          </div>
-          <p style={{ margin: 0, fontSize: 13, color: '#999' }}>
-            {loading ? '로딩 중...' : projects.length > 0 ? `${projects.length}개의 프로젝트` : '아직 프로젝트가 없어요'}
-          </p>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 12, color: '#999' }}>{user?.email}</span>
-          <button
-            onClick={() => setShowProfile(true)}
-            style={{
-              padding: '6px 14px', borderRadius: 8, border: '1px solid #e0e0e0',
-              background: '#fff', fontSize: 12, fontWeight: 600, color: '#666',
-              cursor: 'pointer',
-            }}
-          >
-            설정
-          </button>
-          <button
-            onClick={signOut}
-            style={{
-              padding: '6px 14px', borderRadius: 8, border: '1px solid #e0e0e0',
-              background: '#fff', fontSize: 12, fontWeight: 600, color: '#666',
-              cursor: 'pointer',
-            }}
-          >
-            로그아웃
-          </button>
-        </div>
-      </div>
+  // Filter projects by nav section
+  const filteredProjects = (() => {
+    switch (navSection) {
+      case 'recent': {
+        const sorted = [...projects].sort((a, b) =>
+          new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+        )
+        return sorted.slice(0, 6)
+      }
+      case 'favorites':
+        return [] // TODO: implement favorites
+      case 'team':
+        return [] // TODO: implement team
+      case 'all':
+      default:
+        return projects
+    }
+  })()
 
-      {/* grid */}
-      <div style={{
-        padding: '32px 40px',
-        display: 'flex', flexWrap: 'wrap', gap: 16,
-        alignContent: 'flex-start',
-      }}>
-        <NewProjectCard onCreate={handleCreate} />
-        {projects.map(p => (
-          <ProjectCard
-            key={p.id}
-            project={p}
-            onOpen={() => onOpen(p.id, p.name)}
-            onDelete={() => handleDelete(p.id, p.name)}
-            onRename={name => handleRename(p.id, name)}
-          />
-        ))}
-      </div>
+  // Recent projects for the header section (top 3)
+  const recentProjects = [...projects]
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+    .slice(0, 3)
+
+  const sectionTitle = (() => {
+    switch (navSection) {
+      case 'recent': return '최근 프로젝트'
+      case 'favorites': return '즐겨찾기'
+      case 'team': return '팀 프로젝트'
+      case 'all':
+      default: return '전체 프로젝트'
+    }
+  })()
+
+  return (
+    <div className="dashboard">
+      <DashboardSidebar
+        active={navSection}
+        onNav={setNavSection}
+        email={user?.email ?? ''}
+        onSettings={() => setShowProfile(true)}
+        onSignOut={signOut}
+      />
+
+      <main className="dash-main">
+        {/* Header */}
+        <div className="dash-header">
+          <div className="dash-header-title">
+            {loading ? '로딩 중...' : `${projects.length}개의 프로젝트`}
+          </div>
+          <div className="dash-header-actions">
+            <button className="dash-btn-primary" onClick={() => setShowNewModal(true)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              새 프로젝트
+            </button>
+            <button className="dash-btn-icon" onClick={() => setShowProfile(true)} title="설정">
+              {Icons.settings}
+            </button>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="dash-loading">
+            <div className="dash-spinner" />
+            프로젝트 불러오는 중...
+          </div>
+        ) : projects.length === 0 ? (
+          <div className="dash-empty">
+            <div className="dash-empty-icon">📐</div>
+            <div className="dash-empty-text">아직 프로젝트가 없어요</div>
+            <div className="dash-empty-sub">새 프로젝트를 만들어 시작해보세요</div>
+          </div>
+        ) : (
+          <>
+            {/* Recent section (only on 'all' view) */}
+            {navSection === 'all' && recentProjects.length > 0 && (
+              <section className="dash-section">
+                <div className="dash-section-title">최근 프로젝트</div>
+                <div className="dash-grid">
+                  {recentProjects.map(p => (
+                    <ProjectCard
+                      key={p.id}
+                      project={p}
+                      onOpen={() => onOpen(p.id, p.name)}
+                      onDelete={() => handleDelete(p.id, p.name)}
+                      onRename={name => handleRename(p.id, name)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Main section */}
+            <section className="dash-section">
+              <div className="dash-section-title">
+                {navSection === 'all' ? '전체 프로젝트' : sectionTitle}
+              </div>
+              {filteredProjects.length === 0 ? (
+                <div className="dash-empty">
+                  <div className="dash-empty-icon">
+                    {navSection === 'favorites' ? '⭐' : '👥'}
+                  </div>
+                  <div className="dash-empty-text">
+                    {navSection === 'favorites' ? '즐겨찾기한 프로젝트가 없어요' : '팀 프로젝트가 없어요'}
+                  </div>
+                  <div className="dash-empty-sub">곧 지원될 예정이에요</div>
+                </div>
+              ) : (
+                <div className="dash-grid">
+                  {filteredProjects.map(p => (
+                    <ProjectCard
+                      key={p.id}
+                      project={p}
+                      onOpen={() => onOpen(p.id, p.name)}
+                      onDelete={() => handleDelete(p.id, p.name)}
+                      onRename={name => handleRename(p.id, name)}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          </>
+        )}
+      </main>
+
+      {showNewModal && (
+        <NewProjectModal
+          onClose={() => setShowNewModal(false)}
+          onCreate={handleCreate}
+        />
+      )}
 
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
     </div>
