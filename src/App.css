@@ -714,7 +714,7 @@ html[data-dark="true"] .canvas-3d-btn:hover {
 
 /* ── L-bar panel ── */
 .lbar-panel {
-  width: 260px;
+  width: 320px;
   height: 100%;
   background: #ffffff;
   border-right: 1px solid #e0e0e0;
@@ -2361,7 +2361,7 @@ html[data-dark="true"] ::-webkit-scrollbar-thumb:hover { background: #555; }
 /* ── 태블릿 (≤1024px): 우측바 축소 ── */
 @media (max-width: 1024px) {
   .rbar { width: 220px; }
-  .lbar-panel { width: 220px; }
+  .lbar-panel { width: 280px; }
   .topbar-project-name { max-width: 80px; }
 }
 

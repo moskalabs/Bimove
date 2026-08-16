@@ -5,6 +5,7 @@ import { useEditor } from '../context/EditorContext'
 import { cancelAreaMeasure, completeAreaMeasure } from '../lib/drawingState'
 import { getScaleConfig } from '../lib/scaleConfig'
 import { shoelaceArea, pxAreaToM2, measurePolygon, type Pt } from '../lib/areaMeasure'
+import { snapToWallEndpoint } from '../lib/snap'
 
 const SNAP_DIST = 12 // px — 첫 점 근처에서 클릭하면 폴리곤 닫기
 
@@ -14,6 +15,7 @@ export function AreaMeasureOverlay() {
   const [pagePoints, setPagePoints] = useState<Pt[]>([]) // page 좌표 (px)
   const [vpPoints, setVpPoints] = useState<Pt[]>([])      // viewport 좌표 (렌더링용)
   const [cursorVp, setCursorVp] = useState<Pt | null>(null)
+  const [snapVp, setSnapVp] = useState<Pt | null>(null) // 스냅 포인트 (viewport 좌표)
   const overlayRef = useRef<HTMLDivElement>(null)
 
   // 이벤트 수신
@@ -74,7 +76,11 @@ export function AreaMeasureOverlay() {
     e.stopPropagation()
     e.preventDefault()
 
-    const pagePt = editor.screenToPage({ x: e.clientX, y: e.clientY })
+    const rawPt = editor.screenToPage({ x: e.clientX, y: e.clientY })
+
+    // 객체 스냅: 벽 끝점에 자동 흡착
+    const snapped = snapToWallEndpoint(editor, rawPt)
+    const pagePt: Pt = snapped ? { x: snapped.x, y: snapped.y } : { x: rawPt.x, y: rawPt.y }
 
     // 첫 점 근처 클릭 → 폴리곤 닫기
     if (pagePoints.length >= 3) {
@@ -100,12 +106,21 @@ export function AreaMeasureOverlay() {
     }
   }, [pagePoints])
 
-  // 마우스 이동: 커서 위치 표시
+  // 마우스 이동: 커서 위치 표시 + 스냅 감지
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!editor || !active) return
-    const pagePt = editor.screenToPage({ x: e.clientX, y: e.clientY })
-    const vpPt = editor.pageToViewport(pagePt)
-    setCursorVp(vpPt)
+    const rawPt = editor.screenToPage({ x: e.clientX, y: e.clientY })
+
+    // 객체 스냅 감지
+    const snapped = snapToWallEndpoint(editor, rawPt)
+    if (snapped) {
+      const snapPage: Pt = { x: snapped.x, y: snapped.y }
+      setSnapVp(editor.pageToViewport(snapPage))
+      setCursorVp(editor.pageToViewport(snapPage))
+    } else {
+      setSnapVp(null)
+      setCursorVp(editor.pageToViewport(rawPt))
+    }
   }, [editor, active])
 
   // 우클릭: 마지막 점 삭제
@@ -200,32 +215,38 @@ export function AreaMeasureOverlay() {
 
         {/* 꼭짓점 */}
         {vpPoints.map((p, i) => (
-          <g key={`pt-${i}`}>
-            <circle
-              cx={p.x} cy={p.y} r={5}
-              fill={i === 0 ? '#1a73e8' : '#fff'}
-              stroke="#1a73e8"
-              strokeWidth={2}
-            />
-            {/* 꼭짓점 라벨 */}
-            <text
-              x={p.x + 8} y={p.y - 8}
-              fill="#1a73e8"
-              fontSize={11}
-              fontWeight={600}
-              fontFamily="sans-serif"
-            >
-              {String.fromCharCode(97 + i)}
-            </text>
-          </g>
+          <circle
+            key={`pt-${i}`}
+            cx={p.x} cy={p.y} r={5}
+            fill={i === 0 ? '#1a73e8' : '#fff'}
+            stroke="#1a73e8"
+            strokeWidth={2}
+          />
         ))}
+
+        {/* 스냅 인디케이터 */}
+        {snapVp && (
+          <g>
+            <circle
+              cx={snapVp.x} cy={snapVp.y} r={10}
+              fill="none"
+              stroke="#f59e0b"
+              strokeWidth={2}
+              opacity={0.8}
+            />
+            <circle
+              cx={snapVp.x} cy={snapVp.y} r={4}
+              fill="#f59e0b"
+              opacity={0.9}
+            />
+          </g>
+        )}
       </svg>
 
       {/* 상단 배너 */}
       <div className="area-measure-banner">
         <span className="area-measure-message">
           📐 도면에서 꼭짓점을 클릭하세요
-          {pagePoints.length > 0 && ` (${pagePoints.length}점)`}
           {previewArea && ` · ${previewArea}`}
         </span>
         <span className="area-measure-hint">
