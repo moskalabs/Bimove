@@ -7,12 +7,14 @@ type PageThumb = {
   id: string
   name: string
   index: number
-  dataUrl: string | null
+  svgHtml: string | null
 }
 
-/** SVG dimensions를 축소해서 브라우저가 렌더 가능한 data URL 반환 */
-function shrinkSvg(svgStr: string, maxW = 400): string {
+/** SVG를 썸네일용으로 축소: width/height → 100%, viewBox 보장, foreignObject 제거 */
+function prepareSvgForThumb(svgStr: string): string {
   let svg = svgStr
+
+  // width/height 추출
   const wM = svg.match(/width="([^"]+)"/)
   const hM = svg.match(/height="([^"]+)"/)
   const origW = wM ? parseFloat(wM[1]) : 0
@@ -23,19 +25,29 @@ function shrinkSvg(svgStr: string, maxW = 400): string {
   if (!svg.includes('viewBox')) {
     svg = svg.replace('<svg ', `<svg viewBox="0 0 ${origW} ${origH}" `)
   }
-  // 작은 dimensions으로 교체
-  const aspect = origH / origW
-  svg = svg.replace(/width="[^"]*"/, `width="${maxW}"`)
-  svg = svg.replace(/height="[^"]*"/, `height="${Math.round(maxW * aspect)}"`)
-  // foreignObject 제거 (img 태그 렌더링 차단 원인)
+
+  // width/height를 100%로 변경 (컨테이너에 맞추기)
+  svg = svg.replace(/width="[^"]*"/, 'width="100%"')
+  svg = svg.replace(/height="[^"]*"/, 'height="100%"')
+
+  // preserveAspectRatio 추가
+  if (!svg.includes('preserveAspectRatio')) {
+    svg = svg.replace('<svg ', '<svg preserveAspectRatio="xMidYMid meet" ')
+  }
+
+  // foreignObject 제거 (렌더링 차단 원인)
   svg = svg.replace(/<foreignObject[\s\S]*?<\/foreignObject>/g, '')
+
+  // style 태그 내 font-face/import 제거 (외부 리소스 로드 차단)
+  svg = svg.replace(/@font-face\s*\{[^}]*\}/g, '')
+  svg = svg.replace(/@import[^;]*;/g, '')
+
   return svg
 }
 
 async function generateThumb(editor: ReturnType<typeof useEditor>): Promise<string | null> {
   if (!editor) return null
   const shapes = editor.getCurrentPageShapes()
-  console.log('[thumb] shapes:', shapes.length)
   if (shapes.length === 0 || shapes.length > 2000) return null
   try {
     const result = await editor.getSvgString(shapes, {
@@ -43,11 +55,8 @@ async function generateThumb(editor: ReturnType<typeof useEditor>): Promise<stri
       background: true,
     })
     if (result?.svg) {
-      console.log('[thumb] svg ok:', result.width.toFixed(0), 'x', result.height.toFixed(0))
-      const svg = shrinkSvg(result.svg)
-      return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)))
+      return prepareSvgForThumb(result.svg)
     }
-    console.log('[thumb] svg null')
   } catch (e) {
     console.warn('[thumb] fail:', e)
   }
@@ -66,20 +75,20 @@ export function LayoutPanel() {
   const refreshCurrentThumb = useCallback(async () => {
     if (!editor) return
     const pageId = editor.getCurrentPageId()
-    const dataUrl = await generateThumb(editor)
-    thumbCache.current.set(pageId, dataUrl)
+    const svgHtml = await generateThumb(editor)
+    thumbCache.current.set(pageId, svgHtml)
 
     const allPages = editor.getPages()
     setPages(allPages.map((p, i) => ({
       id: p.id,
       name: p.name,
       index: i + 1,
-      dataUrl: thumbCache.current.get(p.id) ?? null,
+      svgHtml: thumbCache.current.get(p.id) ?? null,
     })))
     setCurrentPageId(pageId)
 
-    // 썸네일 생성 실패 시 재시도 (shapes가 아직 렌더링 안 됐을 수 있음)
-    if (!dataUrl && editor.getCurrentPageShapes().length > 0) {
+    // 썸네일 생성 실패 시 재시도
+    if (!svgHtml && editor.getCurrentPageShapes().length > 0) {
       if (retryRef.current) clearTimeout(retryRef.current)
       retryRef.current = setTimeout(() => refreshCurrentThumb(), 2000)
     }
@@ -95,7 +104,7 @@ export function LayoutPanel() {
       id: p.id,
       name: p.name,
       index: i + 1,
-      dataUrl: thumbCache.current.get(p.id) ?? null,
+      svgHtml: thumbCache.current.get(p.id) ?? null,
     })))
   }, [editor])
 
@@ -149,8 +158,8 @@ export function LayoutPanel() {
 
   const switchPage = (pageId: string) => {
     if (!editor || pageId === currentPageId) return
-    generateThumb(editor).then(url => {
-      thumbCache.current.set(currentPageId, url)
+    generateThumb(editor).then(svg => {
+      thumbCache.current.set(currentPageId, svg)
       editor.setCurrentPage(pageId as never)
     })
   }
@@ -159,8 +168,8 @@ export function LayoutPanel() {
     if (!editor) return
     const num = editor.getPages().length + 1
     const newPageId = PageRecordType.createId()
-    generateThumb(editor).then(url => {
-      thumbCache.current.set(editor.getCurrentPageId(), url)
+    generateThumb(editor).then(svg => {
+      thumbCache.current.set(editor.getCurrentPageId(), svg)
       editor.createPage({ name: `Drawing ${num}`, id: newPageId })
       editor.setCurrentPage(newPageId)
     })
@@ -187,8 +196,16 @@ export function LayoutPanel() {
             onClick={() => switchPage(p.id)}
           >
             <div className="layout-page-thumb">
-              {p.dataUrl ? (
-                <img src={p.dataUrl} alt={p.name} draggable={false} />
+              {p.svgHtml ? (
+                <div
+                  dangerouslySetInnerHTML={{ __html: p.svgHtml }}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    overflow: 'hidden',
+                    pointerEvents: 'none',
+                  }}
+                />
               ) : (
                 <div className="layout-page-empty">빈 페이지</div>
               )}
