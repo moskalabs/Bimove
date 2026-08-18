@@ -714,7 +714,7 @@ html[data-dark="true"] .canvas-3d-btn:hover {
 
 /* ── L-bar panel ── */
 .lbar-panel {
-  width: 320px;
+  width: 420px;
   height: 100%;
   background: #ffffff;
   border-right: 1px solid #e0e0e0;
@@ -2361,7 +2361,7 @@ html[data-dark="true"] ::-webkit-scrollbar-thumb:hover { background: #555; }
 /* ── 태블릿 (≤1024px): 우측바 축소 ── */
 @media (max-width: 1024px) {
   .rbar { width: 220px; }
-  .lbar-panel { width: 280px; }
+  .lbar-panel { width: 360px; }
   .topbar-project-name { max-width: 80px; }
 }
 
@@ -2813,6 +2813,7 @@ html[data-dark="true"] .cad-layer-cancel {
 .ft-tables-scroll {
   flex: 1;
   overflow-y: auto;
+  overflow-x: auto;
   padding: 0 8px 12px;
 }
 
@@ -2931,12 +2932,14 @@ html[data-dark="true"] .cad-layer-cancel {
   background: #fff;
   border: 1px solid #eee;
   text-align: center;
-  padding: 6px 4px;
+  padding: 6px 6px;
   font-size: 11px;
+  white-space: nowrap;
 }
 
 .ft-total-table th {
   text-align: center;
+  white-space: nowrap;
 }
 
 .ft-spec-row {
