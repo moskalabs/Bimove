@@ -11,7 +11,7 @@ type PageThumb = {
 }
 
 /** SVG를 썸네일용으로 축소: width/height → 100%, viewBox 보장, foreignObject 제거 */
-function prepareSvgForThumb(svgStr: string): string {
+export function prepareSvgForThumb(svgStr: string): string {
   let svg = svgStr
 
   // width/height 추출
@@ -38,9 +38,8 @@ function prepareSvgForThumb(svgStr: string): string {
   // foreignObject 제거 (렌더링 차단 원인)
   svg = svg.replace(/<foreignObject[\s\S]*?<\/foreignObject>/g, '')
 
-  // style 태그 내 font-face/import 제거 (외부 리소스 로드 차단)
-  svg = svg.replace(/@font-face\s*\{[^}]*\}/g, '')
-  svg = svg.replace(/@import[^;]*;/g, '')
+  // style 태그 전체 제거 (CSS 오염 방지 + 외부 리소스 차단)
+  svg = svg.replace(/<style[\s\S]*?<\/style>/g, '')
 
   return svg
 }
