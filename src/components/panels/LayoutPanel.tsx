@@ -38,8 +38,9 @@ export function prepareSvgForThumb(svgStr: string): string {
   // foreignObject 제거 (렌더링 차단 원인)
   svg = svg.replace(/<foreignObject[\s\S]*?<\/foreignObject>/g, '')
 
-  // style 태그 전체 제거 (CSS 오염 방지 + 외부 리소스 차단)
-  svg = svg.replace(/<style[\s\S]*?<\/style>/g, '')
+  // 외부 리소스만 제거 (CSS 클래스는 유지해야 셰이프가 보임)
+  svg = svg.replace(/@font-face\s*\{[^}]*\}/g, '')
+  svg = svg.replace(/@import[^;]*;/g, '')
 
   return svg
 }

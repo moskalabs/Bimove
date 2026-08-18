@@ -61,21 +61,22 @@ describe('prepareSvgForThumb', () => {
     expect(result).toContain('<rect/>')
   })
 
-  it('style 태그 전체 제거 (CSS 오염 방지)', () => {
+  it('@font-face 제거하되 CSS 클래스는 유지', () => {
     const input = '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="300"><style>@font-face { font-family: "Test"; src: url(test.woff); } .cls { fill: red; }</style><rect/></svg>'
     const result = prepareSvgForThumb(input)
 
-    expect(result).not.toContain('<style')
     expect(result).not.toContain('@font-face')
-    expect(result).not.toContain('.cls')
+    // CSS 클래스는 유지 (셰이프 렌더링에 필요)
+    expect(result).toContain('.cls { fill: red; }')
     expect(result).toContain('<rect/>')
   })
 
-  it('복수 style 태그 전부 제거', () => {
-    const input = '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="300"><defs><style>.a{fill:red}</style></defs><style>.b{stroke:blue}</style><rect/></svg>'
+  it('@import 제거하되 CSS 클래스는 유지', () => {
+    const input = '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="300"><style>@import url("fonts.css"); .a{fill:red}</style><rect/></svg>'
     const result = prepareSvgForThumb(input)
 
-    expect(result).not.toContain('<style')
+    expect(result).not.toContain('@import')
+    expect(result).toContain('.a{fill:red}')
     expect(result).toContain('<rect/>')
   })
 
@@ -101,9 +102,9 @@ describe('prepareSvgForThumb', () => {
     // foreignObject 제거
     expect(result).not.toContain('foreignObject')
     expect(result).not.toContain('label')
-    // style 태그 전체 제거
-    expect(result).not.toContain('<style')
+    // @font-face만 제거, style 태그는 유지
     expect(result).not.toContain('@font-face')
+    expect(result).toContain('<style')
     // 실제 도형 데이터 유지
     expect(result).toContain('M100 200 L300 400')
     expect(result).toContain('stroke="#333"')
