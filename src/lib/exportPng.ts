@@ -1,7 +1,7 @@
 import type { Editor } from 'tldraw'
 import { getScaleConfig, SCALE_PRESETS } from './scaleConfig'
 
-export async function exportPng(editor: Editor, filename = 'bimova_plan') {
+export async function exportPng(editor: Editor, filename = 'bimove_plan') {
   const shapes = editor.getCurrentPageShapes()
   if (shapes.length === 0) return
 
@@ -78,7 +78,7 @@ export async function printPdf(editor: Editor, projectName = 'untitled') {
     <div class="tb-cell tb-project"><div class="tb-label">프로젝트</div><div class="tb-value">${projectName}</div></div>
     <div class="tb-cell tb-scale"><div class="tb-label">축척</div><div class="tb-value">${scaleLabel}</div></div>
     <div class="tb-cell tb-date"><div class="tb-label">날짜</div><div class="tb-value">${date}</div></div>
-    <div class="tb-cell tb-tool"><div class="tb-label">제작</div><div class="tb-value">bimova</div></div>
+    <div class="tb-cell tb-tool"><div class="tb-label">제작</div><div class="tb-value">bimove</div></div>
   </div>
 </body>
 </html>`
@@ -90,7 +90,7 @@ export async function printPdf(editor: Editor, projectName = 'untitled') {
   setTimeout(() => win.print(), 600)
 }
 
-export async function exportSvg(editor: Editor, filename = 'bimova_plan') {
+export async function exportSvg(editor: Editor, filename = 'bimove_plan') {
   const shapes = editor.getCurrentPageShapes()
   if (shapes.length === 0) return
 
