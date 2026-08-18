@@ -8,6 +8,7 @@ import {
   saveProjectSnapshot,
 } from '../lib/supabaseSync'
 import { readShareFromHash, clearShareHash } from '../lib/shareLink'
+import { pickCadFile } from '../lib/dxf'
 
 type Project = {
   id: string
@@ -107,20 +108,41 @@ function DashboardSidebar({
 /* ── New Project Modal ── */
 function NewProjectModal({ onClose, onCreate }: {
   onClose: () => void
-  onCreate: (name: string) => void
+  onCreate: (name: string, dxfFile?: File) => void
 }) {
   const [name, setName] = useState('')
   const [error, setError] = useState(false)
   const [template, setTemplate] = useState<'blank' | 'import'>('blank')
+  const [dxfFile, setDxfFile] = useState<File | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setTimeout(() => inputRef.current?.focus(), 100)
   }, [])
 
+  const handlePickDwg = async () => {
+    const file = await pickCadFile()
+    if (file) {
+      setDxfFile(file)
+      setTemplate('import')
+      // 파일명에서 프로젝트 이름 자동 추천
+      if (!name.trim()) {
+        const baseName = file.name.replace(/\.(dxf|dwg)$/i, '')
+        setName(baseName)
+      }
+    }
+  }
+
   const confirm = () => {
     if (!name.trim()) { setError(true); inputRef.current?.focus(); return }
-    onCreate(name.trim())
+    if (template === 'import' && !dxfFile) {
+      // DWG 선택했는데 파일 안 골랐으면 파일 피커 열기
+      handlePickDwg().then(() => {
+        if (!name.trim()) { setError(true); inputRef.current?.focus() }
+      })
+      return
+    }
+    onCreate(name.trim(), template === 'import' ? dxfFile ?? undefined : undefined)
     onClose()
   }
 
@@ -143,7 +165,7 @@ function NewProjectModal({ onClose, onCreate }: {
         <div className="dash-modal-templates">
           <button
             className={`dash-template-card${template === 'blank' ? ' selected' : ''}`}
-            onClick={() => setTemplate('blank')}
+            onClick={() => { setTemplate('blank'); setDxfFile(null) }}
           >
             <span className="dash-template-icon">📐</span>
             <span className="dash-template-label">빈 프로젝트</span>
@@ -151,11 +173,13 @@ function NewProjectModal({ onClose, onCreate }: {
           </button>
           <button
             className={`dash-template-card${template === 'import' ? ' selected' : ''}`}
-            onClick={() => setTemplate('import')}
+            onClick={handlePickDwg}
           >
             <span className="dash-template-icon">📁</span>
             <span className="dash-template-label">DWG 불러오기</span>
-            <span className="dash-template-desc">기존 도면에서 시작</span>
+            <span className="dash-template-desc">
+              {dxfFile ? `✓ ${dxfFile.name}` : '기존 도면에서 시작'}
+            </span>
           </button>
         </div>
 
@@ -279,13 +303,17 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) =
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
-  const handleCreate = async (name: string) => {
+  const handleCreate = async (name: string, dxfFile?: File) => {
     if (!user) return
     try {
       const p = await createProjectDB(user.id, name)
       if (p) {
         toast(`"${name}" 프로젝트가 생성되었습니다.`, 'success')
         await loadProjects()
+        // DWG 불러오기 선택 시: 에디터 마운트 후 자동 임포트되도록 파일 저장
+        if (dxfFile) {
+          ;(window as unknown as Record<string, unknown>).__pendingCadFile = dxfFile
+        }
         onOpen(p.id, p.name)
       }
     } catch {

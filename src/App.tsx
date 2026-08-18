@@ -34,6 +34,7 @@ import { ProjectContext } from './context/ProjectContext'
 import { loadSnapshot, saveSnapshot, saveThumbnail, touchProject } from './lib/projectStore'
 import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase } from './lib/supabaseSync'
 import { saveVersion } from './lib/versions'
+import { parseCadFile, commitCadImport } from './lib/dxf'
 import { initGrayscaleAttr, initDarkAttr } from './lib/settings'
 import './App.css'
 
@@ -123,6 +124,19 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
         }
       })
       setEditor(ed)
+
+      // 대시보드에서 "DWG 불러오기"로 생성된 경우: 자동 임포트
+      const win = window as unknown as Record<string, unknown>
+      const pendingFile = win.__pendingCadFile as File | undefined
+      if (pendingFile) {
+        delete win.__pendingCadFile
+        parseCadFile(pendingFile).then(result => {
+          if (!result) return
+          const allLayers = new Set(result.layers.map(l => l.name))
+          commitCadImport(ed, result, allLayers)
+          requestAnimationFrame(() => ed.zoomToFit())
+        })
+      }
     })()
   }
 
