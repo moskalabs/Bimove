@@ -80,7 +80,7 @@ function DashboardSidebar({
 
   return (
     <aside className="dash-sidebar">
-      <div className="dash-sidebar-logo">bimove</div>
+      <div className="dash-sidebar-logo">bimova</div>
       <nav className="dash-sidebar-nav">
         {items.map(it => (
           <button

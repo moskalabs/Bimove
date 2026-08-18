@@ -94,7 +94,7 @@ export function AuthPage() {
         {/* logo */}
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <div style={{ fontSize: 26, fontWeight: 800, color: '#111', letterSpacing: -0.5 }}>
-            bimove
+            bimova
           </div>
           <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
             BIM 에디터
