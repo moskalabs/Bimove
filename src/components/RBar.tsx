@@ -25,6 +25,7 @@ import {
   getWallHeightMm, setWallHeightMm,
   getSnapEnabled, setSnapEnabled,
   getDarkMode, setDarkMode as persistDarkMode,
+  getSnapMode, setSnapMode, type SnapMode,
 } from '../lib/settings'
 import { drawingState } from '../lib/drawingState'
 
@@ -282,12 +283,34 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
   )
 }
 
+/* ── 스냅 모드 정의: 아이콘 + 레이블 + 키 ── */
+type SnapOptionDef = {
+  mode: SnapMode | 'ortho'
+  label: string
+  icon: string
+  color: string
+}
+
+const SNAP_OPTIONS: SnapOptionDef[] = [
+  { mode: 'endpoint',      label: '끝점',   icon: '⊕', color: '#00b341' },
+  { mode: 'midpoint',      label: '중간점', icon: '⊙', color: '#1a73e8' },
+  { mode: 'intersection',  label: '교차점', icon: '✕', color: '#e8a01a' },
+  { mode: 'perpendicular', label: '수직',   icon: '⊥', color: '#e84335' },
+  { mode: 'extension',     label: '연장',   icon: '⋯', color: '#9c27b0' },
+  { mode: 'ortho',         label: '직교',   icon: '∠', color: '#607d8b' },
+]
+
 /* ── 화면 보기 (하단): 거리 표시 + 스냅 ── */
 function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleConfig }) {
   const editor = useEditor()
-  const [snapEnd, setSnapEnd] = useState(true)
-  const [snapMid, setSnapMid] = useState(true)
-  const [snapOrtho, setSnapOrtho] = useState(getSnapEnabled)
+  const [snapModes, setSnapModes] = useState(() => ({
+    endpoint: getSnapMode('endpoint'),
+    midpoint: getSnapMode('midpoint'),
+    intersection: getSnapMode('intersection'),
+    perpendicular: getSnapMode('perpendicular'),
+    extension: getSnapMode('extension'),
+    ortho: getSnapEnabled(),
+  }))
   const [distText, setDistText] = useState<string | null>(null)
   const [zoom, setZoom] = useState(100)
 
@@ -325,13 +348,16 @@ function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleC
   const zoomIn = () => { if (editor) editor.zoomIn() }
   const zoomOut = () => { if (editor) editor.zoomOut() }
 
-  const toggleSnap = (kind: 'end' | 'mid' | 'ortho') => {
-    if (kind === 'end') setSnapEnd(!snapEnd)
-    else if (kind === 'mid') setSnapMid(!snapMid)
-    else {
-      const next = !snapOrtho
-      setSnapOrtho(next)
+  const toggleSnap = (opt: SnapOptionDef) => {
+    if (opt.mode === 'ortho') {
+      const next = !snapModes.ortho
+      setSnapModes(prev => ({ ...prev, ortho: next }))
       setSnapEnabled(next)
+    } else {
+      const mode = opt.mode as SnapMode
+      const next = !snapModes[mode]
+      setSnapModes(prev => ({ ...prev, [mode]: next }))
+      setSnapMode(mode, next)
     }
   }
 
@@ -355,21 +381,26 @@ function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleC
 
       {/* 스냅 옵션 */}
       <div className="rbar-snap-options">
-        <label className="rbar-snap-item">
-          <input type="checkbox" checked={snapEnd} onChange={() => toggleSnap('end')} />
-          <span className="rbar-snap-icon">✓ ↗</span>
-          <span>끝점</span>
-        </label>
-        <label className="rbar-snap-item">
-          <input type="checkbox" checked={snapMid} onChange={() => toggleSnap('mid')} />
-          <span className="rbar-snap-icon">✓ ↗</span>
-          <span>중간점</span>
-        </label>
-        <label className="rbar-snap-item">
-          <input type="checkbox" checked={snapOrtho} onChange={() => toggleSnap('ortho')} />
-          <span className="rbar-snap-icon">✓ ↳</span>
-          <span>직교</span>
-        </label>
+        {SNAP_OPTIONS.map(opt => {
+          const active = opt.mode === 'ortho' ? snapModes.ortho : snapModes[opt.mode as SnapMode]
+          return (
+            <label
+              key={opt.mode}
+              className={`rbar-snap-item${active ? ' active' : ''}`}
+              title={opt.label}
+            >
+              <input
+                type="checkbox"
+                checked={active}
+                onChange={() => toggleSnap(opt)}
+              />
+              <span className="rbar-snap-icon" style={{ color: active ? opt.color : undefined }}>
+                {opt.icon}
+              </span>
+              <span>{opt.label}</span>
+            </label>
+          )
+        })}
       </div>
     </div>
   )

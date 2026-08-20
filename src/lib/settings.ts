@@ -47,6 +47,39 @@ export function setSnapEnabled(v: boolean) {
   scopedSet(SNAP_ENABLED_KEY, String(v))
 }
 
+// ── 개별 스냅 모드 토글 ──
+export type SnapMode = 'endpoint' | 'midpoint' | 'intersection' | 'perpendicular' | 'extension'
+
+const SNAP_MODE_PREFIX = 'bimova_snap_'
+const SNAP_DEFAULTS: Record<SnapMode, boolean> = {
+  endpoint: true,
+  midpoint: true,
+  intersection: true,
+  perpendicular: false,
+  extension: false,
+}
+
+export function getSnapMode(mode: SnapMode): boolean {
+  const val = scopedGet(SNAP_MODE_PREFIX + mode)
+  if (val === null) return SNAP_DEFAULTS[mode]
+  return val === 'true'
+}
+
+export function setSnapMode(mode: SnapMode, v: boolean) {
+  scopedSet(SNAP_MODE_PREFIX + mode, String(v))
+}
+
+/** 현재 활성화된 스냅 모드 전체 반환 */
+export function getActiveSnapModes(): Record<SnapMode, boolean> {
+  return {
+    endpoint: getSnapMode('endpoint'),
+    midpoint: getSnapMode('midpoint'),
+    intersection: getSnapMode('intersection'),
+    perpendicular: getSnapMode('perpendicular'),
+    extension: getSnapMode('extension'),
+  }
+}
+
 const GRAYSCALE_KEY = 'bimova_grayscale'
 
 /** Grayscale (CAD 흑백) 렌더링 모드 */

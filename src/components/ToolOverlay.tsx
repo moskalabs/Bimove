@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { TLShapeId } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
-import { snapToWallEndpoint } from '../lib/snap'
+import {
+  snapToWallEndpoint, snapToIntersection, snapToExtension,
+  type SnapType,
+} from '../lib/snap'
 import { drawingState } from '../lib/drawingState'
 import { getScaleConfig, formatLength } from '../lib/scaleConfig'
 
@@ -10,13 +13,34 @@ type Pt = { x: number; y: number }
 type OverlayState = {
   start: Pt | null
   snap: Pt | null
+  snapType: SnapType | null
   end: Pt | null
   mid: Pt | null
   angleDeg: number | null
   distLabel: string | null
 }
 
-const EMPTY: OverlayState = { start: null, snap: null, end: null, mid: null, angleDeg: null, distLabel: null }
+const EMPTY: OverlayState = { start: null, snap: null, snapType: null, end: null, mid: null, angleDeg: null, distLabel: null }
+
+/** 스냅 타입별 색상 */
+const SNAP_COLORS: Record<SnapType, string> = {
+  endpoint: '#00b341',
+  midpoint: '#1a73e8',
+  intersection: '#e8a01a',
+  perpendicular: '#e84335',
+  extension: '#9c27b0',
+  angle: '#607d8b',
+}
+
+/** 스냅 타입별 레이블 */
+const SNAP_LABELS: Record<SnapType, string> = {
+  endpoint: '끝점',
+  midpoint: '중간점',
+  intersection: '교차점',
+  perpendicular: '수직',
+  extension: '연장',
+  angle: '',
+}
 
 export function ToolOverlay() {
   const editor = useEditor()
@@ -55,11 +79,31 @@ export function ToolOverlay() {
         }
       }
 
-      // 스냅 가능한 끝점 링
-      const hit = snapToWallEndpoint(editor, editor.inputs.currentPagePoint, drawingId ?? undefined)
-      const snap = hit ? editor.pageToViewport({ x: hit.x, y: hit.y }) : null
+      // 스냅 감지: endpoint/midpoint > intersection > extension
+      const pagePoint = editor.inputs.currentPagePoint
+      const excludeId = drawingId ?? undefined
+      let snap: Pt | null = null
+      let snapType: SnapType | null = null
 
-      setState({ start, snap, end, mid, angleDeg, distLabel })
+      const epHit = snapToWallEndpoint(editor, pagePoint, excludeId)
+      if (epHit) {
+        snap = editor.pageToViewport({ x: epHit.x, y: epHit.y })
+        snapType = epHit.snapType ?? 'endpoint'
+      } else {
+        const intHit = snapToIntersection(editor, pagePoint, excludeId)
+        if (intHit) {
+          snap = editor.pageToViewport({ x: intHit.x, y: intHit.y })
+          snapType = 'intersection'
+        } else {
+          const extHit = snapToExtension(editor, pagePoint, excludeId)
+          if (extHit) {
+            snap = editor.pageToViewport({ x: extHit.x, y: extHit.y })
+            snapType = 'extension'
+          }
+        }
+      }
+
+      setState({ start, snap, snapType, end, mid, angleDeg, distLabel })
     }
 
     let raf = 0
@@ -69,6 +113,9 @@ export function ToolOverlay() {
     })
     return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
   }, [editor])
+
+  const snapColor = state.snapType ? SNAP_COLORS[state.snapType] : '#00b341'
+  const snapLabel = state.snapType ? SNAP_LABELS[state.snapType] : ''
 
   return (
     <>
@@ -81,12 +128,51 @@ export function ToolOverlay() {
         }} />
       )}
       {state.snap && (
-        <div style={{
-          position: 'absolute', left: state.snap.x - 8, top: state.snap.y - 8,
-          width: 16, height: 16, borderRadius: '50%',
-          border: '2px solid #00b341', background: 'rgba(0,179,65,0.15)',
-          pointerEvents: 'none', zIndex: 101,
-        }} />
+        <>
+          {/* 스냅 인디케이터 링 */}
+          <div style={{
+            position: 'absolute', left: state.snap.x - 8, top: state.snap.y - 8,
+            width: 16, height: 16, borderRadius: '50%',
+            border: `2px solid ${snapColor}`, background: `${snapColor}22`,
+            pointerEvents: 'none', zIndex: 101,
+          }} />
+          {/* 교차점은 X 마커 추가 */}
+          {state.snapType === 'intersection' && (
+            <div style={{
+              position: 'absolute', left: state.snap.x - 6, top: state.snap.y - 6,
+              width: 12, height: 12, pointerEvents: 'none', zIndex: 102,
+              color: snapColor, fontSize: 12, fontWeight: 'bold',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>✕</div>
+          )}
+          {/* 수직은 ⊥ 마커 추가 */}
+          {state.snapType === 'perpendicular' && (
+            <div style={{
+              position: 'absolute', left: state.snap.x - 6, top: state.snap.y - 6,
+              width: 12, height: 12, pointerEvents: 'none', zIndex: 102,
+              color: snapColor, fontSize: 11, fontWeight: 'bold',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>⊥</div>
+          )}
+          {/* 연장은 점선 연장 표시 */}
+          {state.snapType === 'extension' && (
+            <div style={{
+              position: 'absolute', left: state.snap.x + 10, top: state.snap.y - 6,
+              pointerEvents: 'none', zIndex: 102,
+              color: snapColor, fontSize: 9, fontWeight: 600,
+              whiteSpace: 'nowrap',
+            }}>···</div>
+          )}
+          {/* 스냅 타입 레이블 */}
+          {snapLabel && (
+            <div style={{
+              position: 'absolute', left: state.snap.x + 12, top: state.snap.y + 4,
+              pointerEvents: 'none', zIndex: 102,
+              color: snapColor, fontSize: 10, fontWeight: 600,
+              whiteSpace: 'nowrap', textShadow: '0 0 3px white, 0 0 3px white',
+            }}>{snapLabel}</div>
+          )}
+        </>
       )}
       {state.end && state.angleDeg !== null && (
         <div className="tool-angle-badge" style={{
