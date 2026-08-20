@@ -104,6 +104,6 @@ export function printQuotePdf(lines: CostLine[], opts: QuoteOptions) {
   setTimeout(() => win.print(), 600)
 }
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
 }

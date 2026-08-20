@@ -105,6 +105,9 @@ const TOOL_MAP: Record<string, string> = {
   'select': 'select',
   'wall': 'wall',
   'opening': 'door',
+  'window': 'window',
+  'block': 'block',
+  'comment': 'comment',
   'text': 'text',
   'dimension': 'dimension',
 }

@@ -20,7 +20,7 @@ import { renderPatternDef } from '../lib/wallPatterns'
 import type { PatternId } from '../lib/materialPresets'
 
 /** #ffffff 등 배경과 구분 안 되는 밝은 색 감지 */
-function isNearWhite(hex: string): boolean {
+export function isNearWhite(hex: string): boolean {
   const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
   if (!m) return false
   const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16)
@@ -35,7 +35,7 @@ export type WallShapeProps = {
 
 export type WallShape = TLBaseShape<'wall', WallShapeProps>
 
-function getCorners(shape: WallShape): Vec[] {
+export function getCorners(shape: WallShape): Vec[] {
   const { x2, y2, thickness } = shape.props
   const len = Math.sqrt(x2 * x2 + y2 * y2)
   if (len < 1) return [new Vec(0, 0), new Vec(1, 0), new Vec(1, 1), new Vec(0, 1)]
@@ -55,7 +55,7 @@ function getCorners(shape: WallShape): Vec[] {
  * so the outer corner gap is filled. Uses miter-join geometry:
  * extension = half_thickness_2 / tan(angle/2)
  */
-function miterExtension(
+export function miterExtension(
   d1x: number, d1y: number, // wall-1 dir pointing AWAY from junction (unit)
   d2x: number, d2y: number, // wall-2 dir pointing AWAY from junction (unit)
   h2: number,               // half-thickness of wall-2
