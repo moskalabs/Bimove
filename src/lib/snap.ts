@@ -64,28 +64,20 @@ export function snapToWallEndpoint(
   let best: SnapPoint | null = null
   let bestDist = radius
 
-  const epEnabled = getSnapMode('endpoint')
-  const midEnabled = getSnapMode('midpoint')
-  if (!epEnabled && !midEnabled) return null
-
   const endpoints = getWallEndpoints(editor)
   for (const ep of endpoints) {
     if (ep.id === excludeId) continue
     // endpoint
-    if (epEnabled) {
-      const d1 = Math.hypot(ep.x - point.x, ep.y - point.y)
-      if (d1 < bestDist) {
-        bestDist = d1
-        best = { x: ep.x, y: ep.y, sourceId: ep.id, snapType: 'endpoint' }
-      }
+    const d1 = Math.hypot(ep.x - point.x, ep.y - point.y)
+    if (d1 < bestDist) {
+      bestDist = d1
+      best = { x: ep.x, y: ep.y, sourceId: ep.id, snapType: 'endpoint' }
     }
     // midpoint
-    if (midEnabled) {
-      const d2 = Math.hypot(ep.mx - point.x, ep.my - point.y)
-      if (d2 < bestDist) {
-        bestDist = d2
-        best = { x: ep.mx, y: ep.my, sourceId: ep.id, snapType: 'midpoint' }
-      }
+    const d2 = Math.hypot(ep.mx - point.x, ep.my - point.y)
+    if (d2 < bestDist) {
+      bestDist = d2
+      best = { x: ep.mx, y: ep.my, sourceId: ep.id, snapType: 'midpoint' }
     }
   }
   return best
@@ -307,9 +299,15 @@ export function resolveDrawPoint(
 ): SnapPoint {
   const point = editor.inputs.currentPagePoint
 
-  // 1. 끝점/중간점 스냅 (최고 우선순위)
+  // 1. 끝점/중간점 스냅 (최고 우선순위) — 모드 설정에 따라 필터
   const epSnap = snapToWallEndpoint(editor, point, excludeId)
-  if (epSnap) return epSnap
+  if (epSnap) {
+    const isEp = epSnap.snapType === 'endpoint'
+    const isMid = epSnap.snapType === 'midpoint'
+    if ((isEp && getSnapMode('endpoint')) || (isMid && getSnapMode('midpoint'))) {
+      return epSnap
+    }
+  }
 
   // 2. 교차점 스냅
   const intSnap = snapToIntersection(editor, point, excludeId)
