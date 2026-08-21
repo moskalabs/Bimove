@@ -7,7 +7,6 @@ import {
   startAreaMeasure,
   completeAreaMeasure,
   cancelAreaMeasure,
-  type PickResult,
   type AreaMeasureResult,
 } from '../../lib/drawingState'
 
