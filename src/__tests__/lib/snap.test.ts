@@ -78,7 +78,7 @@ type FakeShape = {
   type: string
   x: number
   y: number
-  props: { x2: number; y2: number; thickness?: number }
+  props: Record<string, unknown>
 }
 
 function makeEditor(shapes: FakeShape[], zoom = 1) {
@@ -91,6 +91,7 @@ function makeEditor(shapes: FakeShape[], zoom = 1) {
 import {
   snapToWallEndpoint, snapToWallLine, _resetSnapCache,
   lineSegmentIntersection, snapToIntersection, snapToPerpendicular, snapToExtension,
+  parseDxfPathEndpoints,
 } from '../../lib/snap'
 import { setSnapMode } from '../../lib/settings'
 
@@ -408,5 +409,116 @@ describe('snapToExtension', () => {
     ])
     const snap = snapToExtension(editor as never, { x: 120, y: 2 }, 'w1')
     expect(snap).toBeNull()
+  })
+})
+
+// ── parseDxfPathEndpoints ──
+
+describe('parseDxfPathEndpoints', () => {
+  it('parses single M...L segment', () => {
+    const segs = parseDxfPathEndpoints('M0,0L100,50')
+    expect(segs).toHaveLength(1)
+    expect(segs[0]).toEqual({ x1: 0, y1: 0, x2: 100, y2: 50 })
+  })
+
+  it('parses multiple segments', () => {
+    const segs = parseDxfPathEndpoints('M0,0L100,0 M0,50L100,50')
+    expect(segs).toHaveLength(2)
+    expect(segs[0]).toEqual({ x1: 0, y1: 0, x2: 100, y2: 0 })
+    expect(segs[1]).toEqual({ x1: 0, y1: 50, x2: 100, y2: 50 })
+  })
+
+  it('handles decimal coordinates', () => {
+    const segs = parseDxfPathEndpoints('M12.5,3.7L45.8,99.2')
+    expect(segs).toHaveLength(1)
+    expect(segs[0].x1).toBeCloseTo(12.5)
+    expect(segs[0].y1).toBeCloseTo(3.7)
+  })
+
+  it('returns empty array for empty string', () => {
+    expect(parseDxfPathEndpoints('')).toEqual([])
+  })
+})
+
+// ── dxfgroup snap integration ──
+
+describe('dxfgroup snap', () => {
+  it('snaps to dxfgroup segment endpoints', () => {
+    const editor = makeEditor([
+      {
+        id: 'g1', type: 'dxfgroup', x: 100, y: 200,
+        props: { pathData: 'M0,0L50,0 M0,30L50,30', thickness: 2, segCount: 2 },
+      },
+    ])
+    // first seg start at (100+0, 200+0) = (100, 200)
+    const snap = snapToWallEndpoint(editor as never, { x: 102, y: 202 })
+    expect(snap).not.toBeNull()
+    expect(snap!.x).toBe(100)
+    expect(snap!.y).toBe(200)
+  })
+
+  it('snaps to dxfgroup segment end point', () => {
+    const editor = makeEditor([
+      {
+        id: 'g1', type: 'dxfgroup', x: 0, y: 0,
+        props: { pathData: 'M10,20L80,20', thickness: 2, segCount: 1 },
+      },
+    ])
+    // seg end at (0+80, 0+20) = (80, 20)
+    const snap = snapToWallEndpoint(editor as never, { x: 82, y: 22 })
+    expect(snap).not.toBeNull()
+    expect(snap!.x).toBe(80)
+    expect(snap!.y).toBe(20)
+  })
+
+  it('snaps to dxfgroup midpoint', () => {
+    const editor = makeEditor([
+      {
+        id: 'g1', type: 'dxfgroup', x: 0, y: 0,
+        props: { pathData: 'M0,0L100,0', thickness: 2, segCount: 1 },
+      },
+    ])
+    // midpoint = (50, 0)
+    const snap = snapToWallEndpoint(editor as never, { x: 52, y: 2 })
+    expect(snap).not.toBeNull()
+    expect(snap!.x).toBe(50)
+    expect(snap!.y).toBe(0)
+    expect(snap!.snapType).toBe('midpoint')
+  })
+
+  it('snapToWallLine works with dxfgroup', () => {
+    const editor = makeEditor([
+      {
+        id: 'g1', type: 'dxfgroup', x: 0, y: 0,
+        props: { pathData: 'M0,0L100,0', thickness: 5, segCount: 1 },
+      },
+    ])
+    const snap = snapToWallLine(editor as never, { x: 50, y: 5 })
+    expect(snap).not.toBeNull()
+    expect(snap!.x).toBeCloseTo(50, 1)
+    expect(snap!.y).toBeCloseTo(0, 1)
+  })
+
+  it('mixes wall and dxfgroup shapes', () => {
+    const editor = makeEditor([
+      { id: 'w1', type: 'wall', x: 0, y: 0, props: { x2: 100, y2: 0 } },
+      {
+        id: 'g1', type: 'dxfgroup', x: 200, y: 0,
+        props: { pathData: 'M0,0L100,0', thickness: 2, segCount: 1 },
+      },
+    ])
+    // snap to wall endpoint
+    const s1 = snapToWallEndpoint(editor as never, { x: 2, y: 2 })
+    expect(s1).not.toBeNull()
+    expect(s1!.x).toBe(0)
+
+    _resetSnapCache()
+    setSnapMode('endpoint', true)
+    setSnapMode('midpoint', true)
+
+    // snap to dxfgroup endpoint at (200, 0)
+    const s2 = snapToWallEndpoint(editor as never, { x: 202, y: 2 })
+    expect(s2).not.toBeNull()
+    expect(s2!.x).toBe(200)
   })
 })

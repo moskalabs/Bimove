@@ -24,28 +24,58 @@ export function _resetSnapCache() {
   _intersectionCache = []
 }
 
+/** dxfgroup pathData에서 끝점 추출: "M0,5L100,5 M0,50L100,50" → [{x1,y1,x2,y2}, ...] */
+export function parseDxfPathEndpoints(pathData: string): { x1: number; y1: number; x2: number; y2: number }[] {
+  const segs: { x1: number; y1: number; x2: number; y2: number }[] = []
+  const re = /M([\d.e+-]+),([\d.e+-]+)\s*L([\d.e+-]+),([\d.e+-]+)/gi
+  let m
+  while ((m = re.exec(pathData)) !== null) {
+    segs.push({ x1: parseFloat(m[1]), y1: parseFloat(m[2]), x2: parseFloat(m[3]), y2: parseFloat(m[4]) })
+  }
+  return segs
+}
+
 function getWallEndpoints(editor: Editor): WallEndpoint[] {
   const now = performance.now()
   if (now - _snapCacheTime < 16) return _snapCache  // 같은 프레임 내 캐시 재사용
   _snapCacheTime = now
   _snapCache = []
   for (const shape of editor.getCurrentPageShapes()) {
-    if (shape.type !== 'wall') continue
-    const props = shape.props as { x2: number; y2: number }
-    _snapCache.push({
-      x: shape.x,
-      y: shape.y,
-      mx: shape.x + props.x2 / 2,
-      my: shape.y + props.y2 / 2,
-      id: shape.id,
-    })
-    _snapCache.push({
-      x: shape.x + props.x2,
-      y: shape.y + props.y2,
-      mx: shape.x + props.x2 / 2,
-      my: shape.y + props.y2 / 2,
-      id: shape.id,
-    })
+    if (shape.type === 'wall') {
+      const props = shape.props as { x2: number; y2: number }
+      _snapCache.push({
+        x: shape.x,
+        y: shape.y,
+        mx: shape.x + props.x2 / 2,
+        my: shape.y + props.y2 / 2,
+        id: shape.id,
+      })
+      _snapCache.push({
+        x: shape.x + props.x2,
+        y: shape.y + props.y2,
+        mx: shape.x + props.x2 / 2,
+        my: shape.y + props.y2 / 2,
+        id: shape.id,
+      })
+    } else if (shape.type === 'dxfgroup') {
+      // DXF 그룹: pathData에서 각 선분의 시작/끝점 추출
+      const props = shape.props as { pathData: string }
+      const segs = parseDxfPathEndpoints(props.pathData)
+      for (const seg of segs) {
+        const sx = shape.x + seg.x1, sy = shape.y + seg.y1
+        const ex = shape.x + seg.x2, ey = shape.y + seg.y2
+        _snapCache.push({
+          x: sx, y: sy,
+          mx: (sx + ex) / 2, my: (sy + ey) / 2,
+          id: shape.id,
+        })
+        _snapCache.push({
+          x: ex, y: ey,
+          mx: (sx + ex) / 2, my: (sy + ey) / 2,
+          id: shape.id,
+        })
+      }
+    }
   }
   return _snapCache
 }
@@ -105,15 +135,28 @@ function getWallLines(editor: Editor): WallLine[] {
   _lineCacheTime = now
   _lineCache = []
   for (const shape of editor.getCurrentPageShapes()) {
-    if (shape.type !== 'wall') continue
-    const props = shape.props as { x2: number; y2: number; thickness: number }
-    const len = Math.hypot(props.x2, props.y2)
-    if (len < 1) continue
-    _lineCache.push({
-      x: shape.x, y: shape.y,
-      dx: props.x2, dy: props.y2,
-      len, thickness: props.thickness, id: shape.id,
-    })
+    if (shape.type === 'wall') {
+      const props = shape.props as { x2: number; y2: number; thickness: number }
+      const len = Math.hypot(props.x2, props.y2)
+      if (len < 1) continue
+      _lineCache.push({
+        x: shape.x, y: shape.y,
+        dx: props.x2, dy: props.y2,
+        len, thickness: props.thickness, id: shape.id,
+      })
+    } else if (shape.type === 'dxfgroup') {
+      const props = shape.props as { pathData: string; thickness: number }
+      const segs = parseDxfPathEndpoints(props.pathData)
+      for (const seg of segs) {
+        const dx = seg.x2 - seg.x1, dy = seg.y2 - seg.y1
+        const len = Math.hypot(dx, dy)
+        if (len < 1) continue
+        _lineCache.push({
+          x: shape.x + seg.x1, y: shape.y + seg.y1,
+          dx, dy, len, thickness: props.thickness, id: shape.id,
+        })
+      }
+    }
   }
   return _lineCache
 }
