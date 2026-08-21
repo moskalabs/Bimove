@@ -13,6 +13,7 @@ const SNAP_RADIUS_PX = 12
 type WallEndpoint = { x: number; y: number; mx: number; my: number; id: string }
 let _snapCache: WallEndpoint[] = []
 let _snapCacheTime = -1
+let _snapDiagLogged = false
 
 /** 테스트용: 캐시 초기화 */
 export function _resetSnapCache() {
@@ -22,6 +23,7 @@ export function _resetSnapCache() {
   _snapCache = []
   _lineCache = []
   _intersectionCache = []
+  _snapDiagLogged = false
 }
 
 /** dxfgroup pathData에서 끝점 추출: "M0,5L100,5 M0,50L100,50" → [{x1,y1,x2,y2}, ...] */
@@ -40,42 +42,48 @@ function getWallEndpoints(editor: Editor): WallEndpoint[] {
   if (now - _snapCacheTime < 16) return _snapCache  // 같은 프레임 내 캐시 재사용
   _snapCacheTime = now
   _snapCache = []
+  let wallCount = 0
+  let dxfCount = 0
+  let dxfSegCount = 0
   for (const shape of editor.getCurrentPageShapes()) {
     if (shape.type === 'wall') {
+      wallCount++
       const props = shape.props as { x2: number; y2: number }
-      _snapCache.push({
-        x: shape.x,
-        y: shape.y,
-        mx: shape.x + props.x2 / 2,
-        my: shape.y + props.y2 / 2,
-        id: shape.id,
-      })
-      _snapCache.push({
-        x: shape.x + props.x2,
-        y: shape.y + props.y2,
-        mx: shape.x + props.x2 / 2,
-        my: shape.y + props.y2 / 2,
-        id: shape.id,
-      })
+      // getShapePageTransform: 그룹/회전 포함 정확한 page 좌표 변환
+      const mat = editor.getShapePageTransform(shape)
+      const s = mat.applyToPoint({ x: 0, y: 0 })
+      const e = mat.applyToPoint({ x: props.x2, y: props.y2 })
+      const mid = { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2 }
+      _snapCache.push({ x: s.x, y: s.y, mx: mid.x, my: mid.y, id: shape.id })
+      _snapCache.push({ x: e.x, y: e.y, mx: mid.x, my: mid.y, id: shape.id })
     } else if (shape.type === 'dxfgroup') {
+      dxfCount++
       // DXF 그룹: pathData에서 각 선분의 시작/끝점 추출
-      const props = shape.props as { pathData: string }
-      const segs = parseDxfPathEndpoints(props.pathData)
+      const pathData = (shape.props as Record<string, unknown>).pathData
+      if (!pathData || typeof pathData !== 'string') continue
+      const segs = parseDxfPathEndpoints(pathData)
+      dxfSegCount += segs.length
+      const mat = editor.getShapePageTransform(shape)
       for (const seg of segs) {
-        const sx = shape.x + seg.x1, sy = shape.y + seg.y1
-        const ex = shape.x + seg.x2, ey = shape.y + seg.y2
+        const s = mat.applyToPoint({ x: seg.x1, y: seg.y1 })
+        const e = mat.applyToPoint({ x: seg.x2, y: seg.y2 })
         _snapCache.push({
-          x: sx, y: sy,
-          mx: (sx + ex) / 2, my: (sy + ey) / 2,
+          x: s.x, y: s.y,
+          mx: (s.x + e.x) / 2, my: (s.y + e.y) / 2,
           id: shape.id,
         })
         _snapCache.push({
-          x: ex, y: ey,
-          mx: (sx + ex) / 2, my: (sy + ey) / 2,
+          x: e.x, y: e.y,
+          mx: (s.x + e.x) / 2, my: (s.y + e.y) / 2,
           id: shape.id,
         })
       }
     }
+  }
+  // 진단: 첫 호출 시 1회 로그 (브라우저 콘솔에서 확인)
+  if (!_snapDiagLogged && _snapCache.length > 0) {
+    _snapDiagLogged = true
+    console.debug(`[snap] endpoints: ${_snapCache.length} (wall: ${wallCount}, dxfgroup: ${dxfCount}, dxfSegs: ${dxfSegCount})`)
   }
   return _snapCache
 }
@@ -137,23 +145,31 @@ function getWallLines(editor: Editor): WallLine[] {
   for (const shape of editor.getCurrentPageShapes()) {
     if (shape.type === 'wall') {
       const props = shape.props as { x2: number; y2: number; thickness: number }
-      const len = Math.hypot(props.x2, props.y2)
+      const mat = editor.getShapePageTransform(shape)
+      const s = mat.applyToPoint({ x: 0, y: 0 })
+      const e = mat.applyToPoint({ x: props.x2, y: props.y2 })
+      const dx = e.x - s.x, dy = e.y - s.y
+      const len = Math.hypot(dx, dy)
       if (len < 1) continue
       _lineCache.push({
-        x: shape.x, y: shape.y,
-        dx: props.x2, dy: props.y2,
-        len, thickness: props.thickness, id: shape.id,
+        x: s.x, y: s.y,
+        dx, dy, len, thickness: props.thickness, id: shape.id,
       })
     } else if (shape.type === 'dxfgroup') {
-      const props = shape.props as { pathData: string; thickness: number }
-      const segs = parseDxfPathEndpoints(props.pathData)
+      const pathData = (shape.props as Record<string, unknown>).pathData
+      if (!pathData || typeof pathData !== 'string') continue
+      const thickness = ((shape.props as Record<string, unknown>).thickness as number) ?? 2
+      const segs = parseDxfPathEndpoints(pathData)
+      const mat = editor.getShapePageTransform(shape)
       for (const seg of segs) {
-        const dx = seg.x2 - seg.x1, dy = seg.y2 - seg.y1
+        const s = mat.applyToPoint({ x: seg.x1, y: seg.y1 })
+        const e = mat.applyToPoint({ x: seg.x2, y: seg.y2 })
+        const dx = e.x - s.x, dy = e.y - s.y
         const len = Math.hypot(dx, dy)
         if (len < 1) continue
         _lineCache.push({
-          x: shape.x + seg.x1, y: shape.y + seg.y1,
-          dx, dy, len, thickness: props.thickness, id: shape.id,
+          x: s.x, y: s.y,
+          dx, dy, len, thickness, id: shape.id,
         })
       }
     }

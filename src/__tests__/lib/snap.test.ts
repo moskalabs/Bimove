@@ -85,6 +85,13 @@ function makeEditor(shapes: FakeShape[], zoom = 1) {
   return {
     getZoomLevel: () => zoom,
     getCurrentPageShapes: () => shapes,
+    // 그룹/회전 없는 단순 translation 변환 (테스트용)
+    getShapePageTransform: (shape: FakeShape) => ({
+      applyToPoint: (pt: { x: number; y: number }) => ({
+        x: shape.x + pt.x,
+        y: shape.y + pt.y,
+      }),
+    }),
   }
 }
 

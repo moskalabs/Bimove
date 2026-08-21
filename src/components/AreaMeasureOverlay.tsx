@@ -107,6 +107,7 @@ export function AreaMeasureOverlay() {
   }, [pagePoints])
 
   // 마우스 이동: 커서 위치 표시 + 스냅 감지
+  const snapLoggedRef = useRef(false)
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!editor || !active) return
     const rawPt = editor.screenToPage({ x: e.clientX, y: e.clientY })
@@ -114,6 +115,10 @@ export function AreaMeasureOverlay() {
     // 객체 스냅 감지
     const snapped = snapToWallEndpoint(editor, rawPt)
     if (snapped) {
+      if (!snapLoggedRef.current) {
+        snapLoggedRef.current = true
+        console.debug('[area-snap] hit:', snapped.snapType, 'at', snapped.x.toFixed(1), snapped.y.toFixed(1))
+      }
       const snapPage: Pt = { x: snapped.x, y: snapped.y }
       setSnapVp(editor.pageToViewport(snapPage))
       setCursorVp(editor.pageToViewport(snapPage))
