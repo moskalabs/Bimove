@@ -98,7 +98,7 @@ const DEFAULT_CATEGORIES: FinishingCategory[] = [
       {
         id: 'f-paint', label: '도장', calcType: 'paint',
         coverageM2PerL: 8, containerSizes: [1, 4, 18], lossRate: 0.05, unit: 'L',
-        specLabel: '수성 페인트 기준 8m²/L',
+        specLabel: '수성 페인트 기준 8m²/L (면적 x 도포횟수 ÷ 도포율)',
         variants: [createVariant('도장 A'), createVariant('도장 B'), createVariant('도장 C')],
       },
       {
