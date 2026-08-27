@@ -175,12 +175,12 @@ describe('defaults', () => {
     expect(tile.variants.map(v => v.label)).toEqual(['타일 A', '타일 B', '타일 C'])
   })
 
-  it('도배 국산/수입 variants', () => {
+  it('도배 광폭/국산/수입 variants', () => {
     const data = resetFinishingData()
     const wp = data.categories.flatMap(c => c.items).find(i => i.id === 'f-wallpaper')!
     expect(wp).toBeDefined()
-    expect(wp.variants).toHaveLength(2)
-    expect(wp.variants.map(v => v.label)).toEqual(['국산', '수입'])
+    expect(wp.variants).toHaveLength(3)
+    expect(wp.variants.map(v => v.label)).toEqual(['도배(광폭)', '국산', '수입'])
   })
 
   it('마루는 floorOnly', () => {
