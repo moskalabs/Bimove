@@ -93,7 +93,7 @@ const DEFAULT_CATEGORIES: FinishingCategory[] = [
         id: 'f-gypsum', label: '석고보드', calcType: 'sheet',
         boxAreaM2: 2.98, lossRate: 0.05, unit: '매',
         specLabel: '9.5T 900x1800 기준 2.98 m²/매',
-        variants: [createVariant('석고보드')],
+        variants: [createVariant('석고보드'), createVariant('방수석고')],
       },
       {
         id: 'f-paint', label: '도장', calcType: 'paint',
@@ -111,7 +111,7 @@ const DEFAULT_CATEGORIES: FinishingCategory[] = [
         id: 'f-wallpaper', label: '도배', calcType: 'roll',
         rollAreaM2: 16, lossRate: 0.10, unit: '롤',
         specLabel: '실크벽지 기준 16 m²/롤',
-        variants: [createVariant('국산'), createVariant('수입')],
+        variants: [createVariant('도배(광폭)'), createVariant('국산'), createVariant('수입')],
       },
       {
         id: 'f-wood', label: '마루', calcType: 'sheet',
