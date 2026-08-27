@@ -91,8 +91,8 @@ const DEFAULT_CATEGORIES: FinishingCategory[] = [
       // ── 기본 항목 ──
       {
         id: 'f-gypsum', label: '석고보드', calcType: 'sheet',
-        boxAreaM2: 2.98, lossRate: 0.05, unit: '매',
-        specLabel: '9.5T 900x1800 기준 2.98 m²/매',
+        boxAreaM2: 1.62, lossRate: 0.05, unit: '장',
+        specLabel: '900 x 1800 기준 1.62 m²/장',
         variants: [createVariant('석고보드'), createVariant('방수석고')],
       },
       {
