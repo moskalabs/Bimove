@@ -313,6 +313,105 @@ function TotalSection({ item, variant, onSpecEdit }: {
   )
 }
 
+// ── 자재 규격 수정 모달 ──
+
+function SpecEditModal({ item, onSave, onClose }: {
+  item: FinishingItem
+  onSave: (patch: Partial<FinishingItem>) => void
+  onClose: () => void
+}) {
+  const [boxAreaM2, setBoxAreaM2] = useState(item.boxAreaM2 ?? 0)
+  const [rollAreaM2, setRollAreaM2] = useState(item.rollAreaM2 ?? 0)
+  const [coverageM2PerL, setCoverageM2PerL] = useState(item.coverageM2PerL ?? 8)
+  const [lossRate, setLossRate] = useState(Math.round(item.lossRate * 100))
+  const [unit, setUnit] = useState(item.unit)
+  const [specLabel, setSpecLabel] = useState(item.specLabel ?? '')
+  const [itemWidthMm, setItemWidthMm] = useState(item.itemWidthMm ?? 0)
+  const [itemLengthMm, setItemLengthMm] = useState(item.itemLengthMm ?? 0)
+
+  const handleSave = () => {
+    const patch: Partial<FinishingItem> = {
+      lossRate: lossRate / 100,
+      unit,
+      specLabel,
+    }
+    if (item.calcType === 'sheet') {
+      patch.boxAreaM2 = boxAreaM2
+      patch.itemWidthMm = itemWidthMm
+      patch.itemLengthMm = itemLengthMm
+    } else if (item.calcType === 'roll') {
+      patch.rollAreaM2 = rollAreaM2
+    } else if (item.calcType === 'paint') {
+      patch.coverageM2PerL = coverageM2PerL
+    }
+    onSave(patch)
+    onClose()
+  }
+
+  return (
+    <div className="ft-spec-overlay" onClick={onClose}>
+      <div className="ft-spec-modal" onClick={e => e.stopPropagation()}>
+        <div className="ft-spec-modal-title">자재 규격 수정 - {item.label}</div>
+
+        <div className="ft-spec-modal-body">
+          {/* sheet 타입: 박스/매 면적 */}
+          {item.calcType === 'sheet' && (
+            <>
+              <label className="ft-spec-field">
+                <span>자재 규격 (가로 mm)</span>
+                <input type="number" value={itemWidthMm || ''} onChange={e => setItemWidthMm(parseFloat(e.target.value) || 0)} />
+              </label>
+              <label className="ft-spec-field">
+                <span>자재 규격 (세로 mm)</span>
+                <input type="number" value={itemLengthMm || ''} onChange={e => setItemLengthMm(parseFloat(e.target.value) || 0)} />
+              </label>
+              <label className="ft-spec-field">
+                <span>단위 면적 (m²/{unit})</span>
+                <input type="number" step="0.01" value={boxAreaM2 || ''} onChange={e => setBoxAreaM2(parseFloat(e.target.value) || 0)} />
+              </label>
+            </>
+          )}
+
+          {/* roll 타입: 롤당 면적 */}
+          {item.calcType === 'roll' && (
+            <label className="ft-spec-field">
+              <span>롤당 면적 (m²/롤)</span>
+              <input type="number" step="0.01" value={rollAreaM2 || ''} onChange={e => setRollAreaM2(parseFloat(e.target.value) || 0)} />
+            </label>
+          )}
+
+          {/* paint 타입: 도포율 */}
+          {item.calcType === 'paint' && (
+            <label className="ft-spec-field">
+              <span>도포율 (m²/L)</span>
+              <input type="number" step="0.1" value={coverageM2PerL || ''} onChange={e => setCoverageM2PerL(parseFloat(e.target.value) || 0)} />
+            </label>
+          )}
+
+          {/* 공통: 로스율, 단위, 규격 설명 */}
+          <label className="ft-spec-field">
+            <span>로스율 (%)</span>
+            <input type="number" step="1" value={lossRate} onChange={e => setLossRate(parseInt(e.target.value) || 0)} />
+          </label>
+          <label className="ft-spec-field">
+            <span>단위</span>
+            <input type="text" value={unit} onChange={e => setUnit(e.target.value)} />
+          </label>
+          <label className="ft-spec-field">
+            <span>규격 설명</span>
+            <input type="text" value={specLabel} onChange={e => setSpecLabel(e.target.value)} />
+          </label>
+        </div>
+
+        <div className="ft-spec-modal-actions">
+          <button className="ft-spec-cancel" onClick={onClose}>취소</button>
+          <button className="ft-spec-save" onClick={handleSave}>저장</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── 자재 상세 뷰 ──
 
 function MaterialDetail({
@@ -322,6 +421,7 @@ function MaterialDetail({
   onUpdate: (item: FinishingItem) => void
 }) {
   const [activeTab, setActiveTab] = useState(0)
+  const [showSpecEdit, setShowSpecEdit] = useState(false)
   const variant = item.variants[activeTab] ?? item.variants[0]
   if (!variant) return null
 
@@ -386,8 +486,16 @@ function MaterialDetail({
         {!item.floorOnly && (
           <WallTable item={item} variant={variant} onUpdate={updateZones} />
         )}
-        <TotalSection item={item} variant={variant} />
+        <TotalSection item={item} variant={variant} onSpecEdit={() => setShowSpecEdit(true)} />
       </div>
+
+      {showSpecEdit && (
+        <SpecEditModal
+          item={item}
+          onSave={patch => onUpdate({ ...item, ...patch })}
+          onClose={() => setShowSpecEdit(false)}
+        />
+      )}
     </div>
   )
 }
