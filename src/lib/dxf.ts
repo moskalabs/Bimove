@@ -104,44 +104,120 @@ const LAYERS = [
 export function exportDxf(editor: Editor, filename = 'untitled') {
   const k = getScaleConfig(editor).pxPerMm || 1
   const toMm = (px: number) => px / k
-  const x = (px: number) => toMm(px).toFixed(3)
-  const y = (px: number) => (-toMm(px)).toFixed(3) // Y flip: canvas Y-down → DXF Y-up
+  const xc = (px: number) => toMm(px).toFixed(3)
+  const yc = (px: number) => (-toMm(px)).toFixed(3) // Y flip: canvas Y-down → DXF Y-up
   const lines: string[] = []
   const put = (...pairs: [number | string, number | string][]) => {
     for (const [code, val] of pairs) { lines.push(String(code)); lines.push(String(val)) }
   }
 
+  // Handle counter for AC1015 compliance (every table/entity needs a unique handle)
+  let handleCounter = 0x100
+  const nextHandle = () => (handleCounter++).toString(16).toUpperCase()
+
   const lineEntity = (layer: string, x1: number, y1: number, x2: number, y2: number) =>
-    put(['0', 'LINE'], ['8', layer],
-      ['10', x(x1)], ['20', y(y1)], ['30', '0.0'],
-      ['11', x(x2)], ['21', y(y2)], ['31', '0.0'])
+    put(['0', 'LINE'], ['5', nextHandle()], ['100', 'AcDbEntity'], ['8', layer],
+      ['100', 'AcDbLine'],
+      ['10', xc(x1)], ['20', yc(y1)], ['30', '0.0'],
+      ['11', xc(x2)], ['21', yc(y2)], ['31', '0.0'])
 
   // Closed LWPOLYLINE (AC1015+)
   const lwPolyline = (layer: string, pts: [number, number][]) => {
-    put(['0', 'LWPOLYLINE'], ['8', layer], ['90', String(pts.length)], ['70', '1'])
-    for (const [px, py] of pts) put(['10', x(px)], ['20', y(py)])
+    put(['0', 'LWPOLYLINE'], ['5', nextHandle()], ['100', 'AcDbEntity'], ['8', layer],
+      ['100', 'AcDbPolyline'], ['90', String(pts.length)], ['70', '1'])
+    for (const [px, py] of pts) put(['10', xc(px)], ['20', yc(py)])
   }
 
-  // ARC entity — angles in DXF are CCW from positive X (Y-up), so negate canvas angles
+  // ARC entity
   const arcEntity = (layer: string, cx: number, cy: number, r: number, startDeg: number, endDeg: number) =>
-    put(['0', 'ARC'], ['8', layer],
-      ['10', x(cx)], ['20', y(cy)], ['30', '0.0'],
+    put(['0', 'ARC'], ['5', nextHandle()], ['100', 'AcDbEntity'], ['8', layer],
+      ['100', 'AcDbCircle'],
+      ['10', xc(cx)], ['20', yc(cy)], ['30', '0.0'],
       ['40', toMm(r).toFixed(3)],
+      ['100', 'AcDbArc'],
       ['50', startDeg.toFixed(2)], ['51', endDeg.toFixed(2)])
+
+  // ---- Compute drawing extents for HEADER ----
+  let extMinX = Infinity, extMinY = Infinity, extMaxX = -Infinity, extMaxY = -Infinity
+  for (const s of editor.getCurrentPageShapes()) {
+    const mx = toMm(s.x), my = -toMm(s.y)
+    extMinX = Math.min(extMinX, mx); extMinY = Math.min(extMinY, my)
+    extMaxX = Math.max(extMaxX, mx); extMaxY = Math.max(extMaxY, my)
+  }
+  if (!isFinite(extMinX)) { extMinX = 0; extMinY = 0; extMaxX = 1000; extMaxY = 1000 }
 
   // ---- HEADER ----
   put(['0', 'SECTION'], ['2', 'HEADER'],
     ['9', '$ACADVER'], ['1', 'AC1015'],
+    ['9', '$HANDSEED'], ['5', 'FFFF'],
     ['9', '$INSUNITS'], ['70', '4'],
+    ['9', '$EXTMIN'], ['10', extMinX.toFixed(3)], ['20', extMinY.toFixed(3)], ['30', '0.0'],
+    ['9', '$EXTMAX'], ['10', extMaxX.toFixed(3)], ['20', extMaxY.toFixed(3)], ['30', '0.0'],
     ['0', 'ENDSEC'])
 
-  // ---- TABLES (layer definitions) ----
-  put(['0', 'SECTION'], ['2', 'TABLES'],
-    ['0', 'TABLE'], ['2', 'LAYER'], ['70', String(LAYERS.length)])
+  // ---- CLASSES (empty but required for AC1015) ----
+  put(['0', 'SECTION'], ['2', 'CLASSES'], ['0', 'ENDSEC'])
+
+  // ---- TABLES ----
+  put(['0', 'SECTION'], ['2', 'TABLES'])
+
+  // VPORT table
+  put(['0', 'TABLE'], ['2', 'VPORT'], ['5', nextHandle()], ['100', 'AcDbSymbolTable'], ['70', '1'])
+  put(['0', 'VPORT'], ['5', nextHandle()], ['100', 'AcDbSymbolTableRecord'], ['100', 'AcDbViewportTableRecord'],
+    ['2', '*Active'], ['70', '0'],
+    ['10', '0.0'], ['20', '0.0'],
+    ['11', '1.0'], ['21', '1.0'],
+    ['12', ((extMinX + extMaxX) / 2).toFixed(3)], ['22', ((extMinY + extMaxY) / 2).toFixed(3)],
+    ['40', (extMaxY - extMinY).toFixed(3)],
+    ['41', '1.0'], ['42', '50.0'], ['43', '0.0'],
+    ['70', '0'])
+  put(['0', 'ENDTAB'])
+
+  // LTYPE table
+  put(['0', 'TABLE'], ['2', 'LTYPE'], ['5', nextHandle()], ['100', 'AcDbSymbolTable'], ['70', '1'])
+  put(['0', 'LTYPE'], ['5', nextHandle()], ['100', 'AcDbSymbolTableRecord'], ['100', 'AcDbLinetypeTableRecord'],
+    ['2', 'Continuous'], ['70', '0'], ['3', 'Solid line'], ['72', '65'], ['73', '0'], ['40', '0.0'])
+  put(['0', 'ENDTAB'])
+
+  // LAYER table
+  put(['0', 'TABLE'], ['2', 'LAYER'], ['5', nextHandle()], ['100', 'AcDbSymbolTable'], ['70', String(LAYERS.length + 1)])
+  // Default layer 0
+  put(['0', 'LAYER'], ['5', nextHandle()], ['100', 'AcDbSymbolTableRecord'], ['100', 'AcDbLayerTableRecord'],
+    ['2', '0'], ['70', '0'], ['62', '7'], ['6', 'Continuous'])
   for (const [name, color, ltype] of LAYERS) {
-    put(['0', 'LAYER'], ['2', name], ['70', '0'], ['62', String(color)], ['6', ltype])
+    put(['0', 'LAYER'], ['5', nextHandle()], ['100', 'AcDbSymbolTableRecord'], ['100', 'AcDbLayerTableRecord'],
+      ['2', name], ['70', '0'], ['62', String(color)], ['6', ltype])
   }
-  put(['0', 'ENDTAB'], ['0', 'ENDSEC'])
+  put(['0', 'ENDTAB'])
+
+  // STYLE table
+  put(['0', 'TABLE'], ['2', 'STYLE'], ['5', nextHandle()], ['100', 'AcDbSymbolTable'], ['70', '1'])
+  put(['0', 'STYLE'], ['5', nextHandle()], ['100', 'AcDbSymbolTableRecord'], ['100', 'AcDbTextStyleTableRecord'],
+    ['2', 'Standard'], ['70', '0'], ['40', '0.0'], ['41', '1.0'], ['50', '0.0'],
+    ['71', '0'], ['42', '2.5'], ['3', 'txt'], ['4', ''])
+  put(['0', 'ENDTAB'])
+
+  // APPID table
+  put(['0', 'TABLE'], ['2', 'APPID'], ['5', nextHandle()], ['100', 'AcDbSymbolTable'], ['70', '1'])
+  put(['0', 'APPID'], ['5', nextHandle()], ['100', 'AcDbSymbolTableRecord'], ['100', 'AcDbRegAppTableRecord'],
+    ['2', 'ACAD'], ['70', '0'])
+  put(['0', 'ENDTAB'])
+
+  put(['0', 'ENDSEC'])
+
+  // ---- BLOCKS (required: *MODEL_SPACE and *PAPER_SPACE) ----
+  put(['0', 'SECTION'], ['2', 'BLOCKS'])
+  // *Model_Space
+  put(['0', 'BLOCK'], ['5', nextHandle()], ['100', 'AcDbEntity'], ['8', '0'],
+    ['100', 'AcDbBlockBegin'], ['2', '*Model_Space'], ['70', '0'],
+    ['10', '0.0'], ['20', '0.0'], ['30', '0.0'], ['3', '*Model_Space'], ['1', ''])
+  put(['0', 'ENDBLK'], ['5', nextHandle()], ['100', 'AcDbEntity'], ['8', '0'], ['100', 'AcDbBlockEnd'])
+  // *Paper_Space
+  put(['0', 'BLOCK'], ['5', nextHandle()], ['100', 'AcDbEntity'], ['8', '0'],
+    ['100', 'AcDbBlockBegin'], ['2', '*Paper_Space'], ['70', '0'],
+    ['10', '0.0'], ['20', '0.0'], ['30', '0.0'], ['3', '*Paper_Space'], ['1', ''])
+  put(['0', 'ENDBLK'], ['5', nextHandle()], ['100', 'AcDbEntity'], ['8', '0'], ['100', 'AcDbBlockEnd'])
+  put(['0', 'ENDSEC'])
 
   // ---- ENTITIES ----
   put(['0', 'SECTION'], ['2', 'ENTITIES'])
@@ -153,7 +229,6 @@ export function exportDxf(editor: Editor, filename = 'untitled') {
       if (len < 1) continue
       const nx = -p.y2 / len, ny = p.x2 / len
       const h = p.thickness / 2
-      // 4 corners of the wall outline in page px
       lwPolyline('WALL', [
         [s.x + nx * h,          s.y + ny * h],
         [s.x + p.x2 + nx * h,  s.y + p.y2 + ny * h],
@@ -166,20 +241,15 @@ export function exportDxf(editor: Editor, filename = 'untitled') {
       const cos = Math.cos(a), sin = Math.sin(a)
       const hw = p.width / 2
 
-      // Opening LINE (full width)
       lineEntity('DOOR', s.x - hw * cos, s.y - hw * sin, s.x + hw * cos, s.y + hw * sin)
 
-      // Swing ARC: hinge at one end, radius = door width, 90° sweep
-      // flipped → hinge at +end; otherwise at −end
       const [hx, hy] = p.flipped
         ? [s.x + hw * cos, s.y + hw * sin]
         : [s.x - hw * cos, s.y - hw * sin]
 
-      // Door direction angle in DXF coords (Y flipped → negate sin)
       const doorAngleDXF = Math.atan2(-sin, cos) * 180 / Math.PI
       const baseDeg = ((p.flipped ? doorAngleDXF + 180 : doorAngleDXF) + 360) % 360
       const swing = p.swing ?? 1
-      // In DXF (Y-up), canvas "up" swing (neg Y) maps to CCW
       const sweepDeg = swing * (p.flipped ? -90 : 90)
       const endDeg = (baseDeg + sweepDeg + 360) % 360
       arcEntity('DOOR', hx, hy, p.width, baseDeg, endDeg)
@@ -188,12 +258,10 @@ export function exportDxf(editor: Editor, filename = 'untitled') {
       const a = (s as { rotation?: number }).rotation ?? 0
       const cos = Math.cos(a), sin = Math.sin(a)
       const hw = p.width / 2
-      const hn = -sin, hny = cos // normal to window direction (perpendicular)
+      const hn = -sin, hny = cos
       const ht = p.thickness / 2
 
-      // Centre span
       lineEntity('WINDOW', s.x - hw * cos, s.y - hw * sin, s.x + hw * cos, s.y + hw * sin)
-      // Tick marks at each end showing thickness
       lineEntity('WINDOW',
         s.x - hw * cos + hn * ht, s.y - hw * sin + hny * ht,
         s.x - hw * cos - hn * ht, s.y - hw * sin - hny * ht)
@@ -205,8 +273,9 @@ export function exportDxf(editor: Editor, filename = 'untitled') {
       const txt = (p.text ?? '').replace(/\n/g, ' ').trim()
       if (!txt) continue
       const h = toMm(TEXT_SIZE_PX[p.size ?? 'm'] ?? 24)
-      put(['0', 'TEXT'], ['8', 'TEXT'],
-        ['10', x(s.x)], ['20', y(s.y)], ['30', '0.0'],
+      put(['0', 'TEXT'], ['5', nextHandle()], ['100', 'AcDbEntity'], ['8', 'TEXT'],
+        ['100', 'AcDbText'],
+        ['10', xc(s.x)], ['20', yc(s.y)], ['30', '0.0'],
         ['40', h.toFixed(3)], ['1', txt])
     } else if (s.type === 'dimension') {
       const p = s.props as { x2: number; y2: number; offset: number }
@@ -216,25 +285,32 @@ export function exportDxf(editor: Editor, filename = 'untitled') {
       const off = p.offset
       const d1x = s.x + nx * off, d1y = s.y + ny * off
       const d2x = s.x + p.x2 + nx * off, d2y = s.y + p.y2 + ny * off
-      // dimension bar line
       lineEntity('DIMENSION', d1x, d1y, d2x, d2y)
-      // extension lines
       lineEntity('DIMENSION', s.x, s.y, d1x, d1y)
       lineEntity('DIMENSION', s.x + p.x2, s.y + p.y2, d2x, d2y)
-      // label at midpoint
       const lenMm = len / k
       const label = lenMm >= 1000 ? `${(lenMm / 1000).toFixed(2)}m`
         : lenMm >= 100 ? `${(lenMm / 10).toFixed(1)}cm`
         : `${Math.round(lenMm)}mm`
-      put(['0', 'TEXT'], ['8', 'DIMENSION'],
-        ['10', x((d1x + d2x) / 2)], ['20', y((d1y + d2y) / 2)], ['30', '0.0'],
+      put(['0', 'TEXT'], ['5', nextHandle()], ['100', 'AcDbEntity'], ['8', 'DIMENSION'],
+        ['100', 'AcDbText'],
+        ['10', xc((d1x + d2x) / 2)], ['20', yc((d1y + d2y) / 2)], ['30', '0.0'],
         ['40', toMm(10).toFixed(3)], ['1', label])
     }
   }
 
-  put(['0', 'ENDSEC'], ['0', 'EOF'])
+  put(['0', 'ENDSEC'])
 
-  const blob = new Blob([lines.join('\n')], { type: 'application/dxf' })
+  // ---- OBJECTS (minimal root dictionary, required for AC1015) ----
+  const dictHandle = nextHandle()
+  put(['0', 'SECTION'], ['2', 'OBJECTS'])
+  put(['0', 'DICTIONARY'], ['5', dictHandle], ['100', 'AcDbDictionary'], ['281', '1'])
+  put(['0', 'ENDSEC'])
+
+  put(['0', 'EOF'])
+
+  // Use CRLF line endings for AutoCAD compatibility
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/plain' })
   const a = document.createElement('a')
   a.download = `${filename}.dxf`
   a.href = URL.createObjectURL(blob)
