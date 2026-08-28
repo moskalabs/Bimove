@@ -169,8 +169,7 @@ export function exportDxf(editor: Editor, filename = 'untitled') {
     ['11', '1.0'], ['21', '1.0'],
     ['12', ((extMinX + extMaxX) / 2).toFixed(3)], ['22', ((extMinY + extMaxY) / 2).toFixed(3)],
     ['40', (extMaxY - extMinY).toFixed(3)],
-    ['41', '1.0'], ['42', '50.0'], ['43', '0.0'],
-    ['70', '0'])
+    ['41', '1.0'], ['42', '50.0'], ['43', '0.0'])
   put(['0', 'ENDTAB'])
 
   // LTYPE table
@@ -276,7 +275,8 @@ export function exportDxf(editor: Editor, filename = 'untitled') {
       put(['0', 'TEXT'], ['5', nextHandle()], ['100', 'AcDbEntity'], ['8', 'TEXT'],
         ['100', 'AcDbText'],
         ['10', xc(s.x)], ['20', yc(s.y)], ['30', '0.0'],
-        ['40', h.toFixed(3)], ['1', txt])
+        ['40', h.toFixed(3)], ['1', txt],
+        ['100', 'AcDbText'])
     } else if (s.type === 'dimension') {
       const p = s.props as { x2: number; y2: number; offset: number }
       const len = Math.hypot(p.x2, p.y2)
@@ -295,7 +295,8 @@ export function exportDxf(editor: Editor, filename = 'untitled') {
       put(['0', 'TEXT'], ['5', nextHandle()], ['100', 'AcDbEntity'], ['8', 'DIMENSION'],
         ['100', 'AcDbText'],
         ['10', xc((d1x + d2x) / 2)], ['20', yc((d1y + d2y) / 2)], ['30', '0.0'],
-        ['40', toMm(10).toFixed(3)], ['1', label])
+        ['40', toMm(10).toFixed(3)], ['1', label],
+        ['100', 'AcDbText'])
     }
   }
 
@@ -309,8 +310,13 @@ export function exportDxf(editor: Editor, filename = 'untitled') {
 
   put(['0', 'EOF'])
 
-  // Use CRLF line endings for AutoCAD compatibility
-  const blob = new Blob([lines.join('\r\n')], { type: 'text/plain' })
+  // $HANDSEED를 실제 사용된 핸들 다음 값으로 갱신
+  const finalHandSeed = handleCounter.toString(16).toUpperCase()
+  const seedIdx = lines.indexOf('FFFF')
+  if (seedIdx !== -1) lines[seedIdx] = finalHandSeed
+
+  // Use CRLF line endings for AutoCAD compatibility (trailing CRLF 포함)
+  const blob = new Blob([lines.join('\r\n') + '\r\n'], { type: 'text/plain' })
   const a = document.createElement('a')
   a.download = `${filename}.dxf`
   a.href = URL.createObjectURL(blob)
