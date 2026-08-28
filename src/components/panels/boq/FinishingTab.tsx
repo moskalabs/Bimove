@@ -82,10 +82,10 @@ function FloorTable({ item, variant, onUpdate }: {
   const addZone = () => onUpdate([...variant.zones, { id: uid(), label: '', floorAreaM2: 0, wallLengthM: 0, wallHeightM: 2.4 }])
   const removeZone = (idx: number) => onUpdate(variant.zones.filter((_, i) => i !== idx))
 
-  /** 펜 클릭 → 면적 측정 모드 (면적 + 둘레 자동 계산) */
+  /** 펜 클릭 → 면적 측정 모드 (평면 면적만 — 벽면은 별도) */
   const handleMeasure = (idx: number) => {
-    startAreaMeasure(({ areaM2, perimeterM }) => {
-      updateZone(idx, { floorAreaM2: areaM2, wallLengthM: perimeterM })
+    startAreaMeasure(({ areaM2 }) => {
+      updateZone(idx, { floorAreaM2: areaM2 })
     })
   }
 
