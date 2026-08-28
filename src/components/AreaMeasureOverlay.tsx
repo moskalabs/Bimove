@@ -128,6 +128,22 @@ export function AreaMeasureOverlay() {
     }
   }, [editor, active])
 
+  // 휠: tldraw 캔버스로 전달 (확대/축소 허용)
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    const container = document.querySelector('.tl-container')
+    if (container) {
+      container.dispatchEvent(new WheelEvent('wheel', {
+        deltaX: e.deltaX, deltaY: e.deltaY, deltaZ: e.deltaZ,
+        deltaMode: e.deltaMode,
+        clientX: e.clientX, clientY: e.clientY,
+        screenX: e.screenX, screenY: e.screenY,
+        ctrlKey: e.ctrlKey, altKey: e.altKey,
+        shiftKey: e.shiftKey, metaKey: e.metaKey,
+        bubbles: true,
+      }))
+    }
+  }, [])
+
   // 우클릭: 마지막 점 삭제
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -165,6 +181,7 @@ export function AreaMeasureOverlay() {
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
         onMouseMove={handleMouseMove}
+        onWheel={handleWheel}
         onContextMenu={handleContextMenu}
       />
 
