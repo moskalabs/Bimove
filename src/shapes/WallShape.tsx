@@ -10,6 +10,7 @@ import {
   type TLShapePartial,
   Vec,
   useEditor,
+  useValue,
   type Editor,
 } from 'tldraw'
 import type { IndexKey } from '@tldraw/editor'
@@ -226,6 +227,7 @@ function computeJoinedCorners(editor: Editor, shape: WallShape): Vec[] {
 // eslint-disable-next-line react-refresh/only-export-components
 function WallComponent({ shape }: { shape: WallShape }) {
   const editor = useEditor()
+  const isSelected = useValue('wall-selected', () => editor.getSelectedShapeIds().includes(shape.id), [editor, shape.id])
   const [showDim, setShowDim] = useState(getShowWallLengths)
   const [grayscale, setGrayscale] = useState(getGrayscaleMode)
 
@@ -253,12 +255,12 @@ function WallComponent({ shape }: { shape: WallShape }) {
   // DXF 임포트 shapes는 가는 선으로 표시 (CAD 도면 스타일)
   if (isDxf) {
     const rawDxf = (shape.meta?.dxfColor as string) || '#333'
-    const dxfColor = isNearWhite(rawDxf) ? '#333' : rawDxf
+    const dxfColor = isSelected ? '#1a73e8' : (isNearWhite(rawDxf) ? '#333' : rawDxf)
     const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
     const baseSw = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
     // 줌에 따른 최소 화면 0.5px 보장
     const zoom = editor.getZoomLevel()
-    const sw = Math.max(baseSw, 0.5 / Math.max(zoom, 0.001))
+    const sw = isSelected ? Math.max(baseSw * 1.5, 1 / Math.max(zoom, 0.001)) : Math.max(baseSw, 0.5 / Math.max(zoom, 0.001))
     // 채워진 사각형이 아닌, 중심선만 렌더
     return (
       <SVGContainer>
@@ -277,8 +279,8 @@ function WallComponent({ shape }: { shape: WallShape }) {
   const dxfColor = dxfColorRaw && isNearWhite(dxfColorRaw) ? '#333' : dxfColorRaw
   const rawFill = (shape.meta?.fill as string) ?? dxfColor ?? '#555'
   const rawStroke = (shape.meta?.stroke as string) ?? dxfColor ?? '#222'
-  const fill = grayscale ? '#f5f5f5' : rawFill
-  const stroke = grayscale ? '#333' : rawStroke
+  const fill = isSelected ? '#e8f0fe' : (grayscale ? '#f5f5f5' : rawFill)
+  const stroke = isSelected ? '#1a73e8' : (grayscale ? '#333' : rawStroke)
   const pattern = grayscale ? undefined : (shape.meta?.pattern as string | undefined)
   // 패턴 ID를 패턴 이름+색상으로 공유 (벽마다 <defs> 중복 방지)
   const patKey = pattern && pattern !== 'none' ? `pat-${pattern}-${stroke.replace('#', '')}` : null
@@ -376,9 +378,9 @@ export class WallShapeUtil extends ShapeUtil<WallShape> {
   }
 
   indicator(shape: WallShape) {
-    const corners = getCorners(shape)
-    const d = `M${corners[0].x},${corners[0].y} L${corners[1].x},${corners[1].y} L${corners[2].x},${corners[2].y} L${corners[3].x},${corners[3].y} Z`
-    return <path d={d} />
+    const { x2, y2 } = shape.props
+    // CAD 스타일: 중심선만 표시 (바운딩 폴리곤 대신)
+    return <line x1={0} y1={0} x2={x2} y2={y2} />
   }
 
   override component(shape: WallShape) {
