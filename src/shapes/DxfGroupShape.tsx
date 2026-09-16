@@ -12,6 +12,7 @@ import {
   Vec,
   useEditor,
 } from 'tldraw'
+import { getGrayscaleMode } from '../lib/settings'
 
 /** #ffffff 등 배경과 구분 안 되는 밝은 색 감지 */
 function isNearWhite(hex: string): boolean {
@@ -36,6 +37,7 @@ export type DxfGroupShape = TLBaseShape<'dxfgroup', DxfGroupShapeProps>
 function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
   const editor = useEditor()
   const [zoom, setZoom] = useState(() => editor.getZoomLevel())
+  const [grayscale, setGrayscale] = useState(getGrayscaleMode)
 
   useEffect(() => {
     // 카메라 변경 시 줌 레벨 추적 (rAF 스로틀)
@@ -55,9 +57,15 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
     return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
   }, [editor])
 
+  useEffect(() => {
+    const onSettings = () => setGrayscale(getGrayscaleMode())
+    window.addEventListener('bimova:settings', onSettings)
+    return () => window.removeEventListener('bimova:settings', onSettings)
+  }, [])
+
   // ACI 7 = #ffffff 등 밝은 색은 라이트 배경에서 안 보이므로 보정
   const rawColor = (shape.meta?.dxfColor as string) || '#333'
-  const stroke = isNearWhite(rawColor) ? '#333' : rawColor
+  const stroke = grayscale ? '#333' : (isNearWhite(rawColor) ? '#333' : rawColor)
   const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
   const baseStrokeW = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
   // 줌에 따른 최소 화면 0.5px 보장: zoom 1%에서 strokeW = 50 (50*0.01 = 0.5px 화면)

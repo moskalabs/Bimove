@@ -338,6 +338,14 @@ function AppContent() {
   const { user, loading, sessionExpired } = useAuth()
   const [currentProject, setCurrentProject] = useState<{ id: string; name: string } | null>(null)
 
+  // 유저 인증 후 body 속성 동기화 (모듈 레벨 init은 userId 없어서 실패할 수 있음)
+  useEffect(() => {
+    if (user) {
+      initGrayscaleAttr()
+      initDarkAttr()
+    }
+  }, [user])
+
   if (loading) {
     return (
       <div style={{
