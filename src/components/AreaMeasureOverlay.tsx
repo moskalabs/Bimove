@@ -1,7 +1,7 @@
 // 바닥 면적 폴리곤 측정 오버레이
 // 1. 펜 클릭으로 활성화 → 2. 도면 위에서 꼭짓점 클릭 → 3. 폴리곤 닫기 → 면적 자동 계산
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Vec, normalizeWheel } from 'tldraw'
+import { Vec } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
 import { cancelAreaMeasure, completeAreaMeasure } from '../lib/drawingState'
 import { getScaleConfig } from '../lib/scaleConfig'
@@ -134,7 +134,8 @@ export function AreaMeasureOverlay() {
     if (!editor) return
     e.preventDefault()
     e.stopPropagation()
-    const delta = normalizeWheel(e)
+    const pixelRatio = e.deltaMode === 1 ? 16 : 1
+    const delta = new Vec(e.deltaX * pixelRatio, e.deltaY * pixelRatio)
     if (delta.x === 0 && delta.y === 0) return
     editor.dispatch({
       type: 'wheel',

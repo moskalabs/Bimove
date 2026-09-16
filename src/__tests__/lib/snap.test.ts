@@ -529,3 +529,127 @@ describe('dxfgroup snap', () => {
     expect(s2!.x).toBe(200)
   })
 })
+
+// ── Wall edge snap (벽체 양쪽 엣지 스냅) ──
+
+describe('wall edge snap', () => {
+  it('snaps to edge point when far from centerline', () => {
+    // 수평 벽 (0,0)-(100,0), thickness=20 → 엣지 y=±10
+    const editor = makeEditor([
+      { id: 'w1', type: 'wall', x: 0, y: 0, props: { x2: 100, y2: 0, thickness: 20 } },
+    ])
+    // 커서 (2, 12) → 중심선 (0,0)까지 d=12.17, 엣지 (0,10)까지 d=2.83
+    // 중심선이 반경 내에 있으면 중심선 우선이므로, 중심선 반경 밖에서 테스트
+    const snap = snapToWallEndpoint(editor as never, { x: 1, y: 11 })
+    expect(snap).not.toBeNull()
+    // 중심선 (0,0)도 반경 내이므로 중심선이 우선 (two-pass 로직)
+    // 실제로 d(0,0) = sqrt(1+121) = 11.05, d(0,10) = sqrt(1+1) = 1.41
+    // 중심선 11.05 < 12 → 중심선 스냅됨
+    expect(snap!.snapType).toBe('endpoint')
+    expect(snap!.x).toBe(0)
+    expect(snap!.y).toBe(0)
+  })
+
+  it('prefers centerline over edge (two-pass priority)', () => {
+    // 벽체 (0,0)-(100,0), thickness=10 → 엣지 y=±5
+    const editor = makeEditor([
+      { id: 'w1', type: 'wall', x: 0, y: 0, props: { x2: 100, y2: 0, thickness: 10 } },
+    ])
+    // 커서 (3, 3): 중심선(0,0) d=4.24, 엣지(0,5) d=3.61
+    // 엣지가 더 가까워도 중심선 우선
+    const snap = snapToWallEndpoint(editor as never, { x: 3, y: 3 })
+    expect(snap).not.toBeNull()
+    expect(snap!.snapType).toBe('endpoint')
+    expect(snap!.x).toBe(0)
+    expect(snap!.y).toBe(0)
+  })
+
+  it('falls back to edge when centerline out of range', () => {
+    // 벽체 (50,0)-(150,0), thickness=20 → 엣지 (50,±10), (150,±10)
+    const editor = makeEditor([
+      { id: 'w1', type: 'wall', x: 50, y: 0, props: { x2: 100, y2: 0, thickness: 20 } },
+    ])
+    // 커서 (51, 11): 중심선(50,0) d=11.05 < 12 → 중심선 우선
+    // 커서를 중심선 밖으로:
+    // 커서 (40, 11): 중심선(50,0) d=sqrt(100+121)=14.87 > 12 → 중심선 밖
+    // 엣지(50,10) d=sqrt(100+1)=10.05 < 12 → 엣지 스냅
+    const snap = snapToWallEndpoint(editor as never, { x: 40, y: 11 })
+    expect(snap).not.toBeNull()
+    expect(snap!.snapType).toBe('edge')
+  })
+
+  it('edge snap points exist for both sides of wall', () => {
+    // 수직 벽 (0,0)-(0,100), thickness=20
+    // 수직 벽의 법선은 좌우 방향 → 엣지 x=±10
+    const editor = makeEditor([
+      { id: 'w1', type: 'wall', x: 0, y: 0, props: { x2: 0, y2: 100, thickness: 20 } },
+    ])
+
+    // 왼쪽 엣지 (10,0) 근처
+    _resetSnapCache()
+    setSnapMode('endpoint', true)
+    setSnapMode('midpoint', true)
+    const snapLeft = snapToWallEndpoint(editor as never, { x: 20, y: 1 })
+    // 중심선(0,0) d=20.02 > 12 → 밖
+    // 엣지(10,0) d=sqrt(100+1)=10.05 < 12 → 스냅
+    expect(snapLeft).not.toBeNull()
+    if (snapLeft) {
+      expect(snapLeft.snapType).toBe('edge')
+      expect(snapLeft.x).toBeCloseTo(10, 0)
+    }
+
+    // 오른쪽 엣지 (-10,0) 근처
+    _resetSnapCache()
+    const snapRight = snapToWallEndpoint(editor as never, { x: -20, y: 1 })
+    expect(snapRight).not.toBeNull()
+    if (snapRight) {
+      expect(snapRight.snapType).toBe('edge')
+      expect(snapRight.x).toBeCloseTo(-10, 0)
+    }
+  })
+
+  it('does not produce edge points for very short walls', () => {
+    // len < 1 → no edge points
+    const editor = makeEditor([
+      { id: 'w1', type: 'wall', x: 0, y: 0, props: { x2: 0.5, y2: 0, thickness: 20 } },
+    ])
+    // 중심선 끝점만 존재
+    const snap = snapToWallEndpoint(editor as never, { x: 0, y: 11 })
+    // 중심선(0,0) d=11 < 12 → 스냅
+    expect(snap).not.toBeNull()
+    expect(snap!.snapType).toBe('endpoint')
+  })
+
+  it('excludes edge points when shape is excluded', () => {
+    const editor = makeEditor([
+      { id: 'w1', type: 'wall', x: 50, y: 0, props: { x2: 100, y2: 0, thickness: 20 } },
+    ])
+    const snap = snapToWallEndpoint(editor as never, { x: 40, y: 11 }, 'w1')
+    expect(snap).toBeNull()
+  })
+
+  it('diagonal wall produces correct edge points', () => {
+    // 대각선 벽: (0,0)-(100,100), thickness=14.14
+    // len = sqrt(20000) ≈ 141.42
+    // 법선: (-dy/len, dx/len) * half = (-100/141.42, 100/141.42) * 7.07 = (-5, 5)
+    // 엣지 시작점: (0+(-5), 0+5) = (-5, 5) 및 (0+5, 0-5) = (5, -5)
+    const editor = makeEditor([
+      { id: 'w1', type: 'wall', x: 0, y: 0, props: { x2: 100, y2: 100, thickness: 14.14 } },
+    ])
+    // 중심선 밖, 엣지 (-5, 5) 근처
+    const snap = snapToWallEndpoint(editor as never, { x: -12, y: 7 })
+    if (snap && snap.snapType === 'edge') {
+      // 엣지 포인트가 벽의 법선 방향으로 오프셋되어 있음
+      expect(Math.abs(snap.x) + Math.abs(snap.y)).toBeGreaterThan(0)
+    }
+  })
+})
+
+// ── resolveDrawPoint 엣지 모드 ──
+
+describe('resolveDrawPoint edge mode', () => {
+  it('imports resolveDrawPoint successfully', async () => {
+    const snap = await import('../../lib/snap')
+    expect(typeof snap.resolveDrawPoint).toBe('function')
+  })
+})

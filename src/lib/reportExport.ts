@@ -4,7 +4,7 @@ import { getScaleConfig, SCALE_PRESETS } from './scaleConfig'
 import {
   loadFinishingData,
   sumFloorArea, sumWallArea, sumTotalArea,
-  calcSheetQty, calcRollQty, sumPaintVolume, unitAreaM2,
+  calcSheetQty, calcRollQty, sumPaintVolume,
   type FinishingItem, type MaterialVariant,
 } from './finishingData'
 
@@ -50,13 +50,12 @@ function buildSpecRows(projectId: string): string {
 
     for (const item of cat.items) {
       no++
-      const ua = unitAreaM2(item)
       const specText = item.specLabel || '-'
 
       // 변형별 행
       for (let vi = 0; vi < item.variants.length; vi++) {
         const v = item.variants[vi]
-        const { area, qty } = variantSummary(item, v)
+        const { qty } = variantSummary(item, v)
         const floorA = sumFloorArea(v)
         const wallA = sumWallArea(v)
 

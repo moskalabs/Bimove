@@ -26,6 +26,7 @@ const EMPTY: OverlayState = { start: null, snap: null, snapType: null, end: null
 const SNAP_COLORS: Record<SnapType, string> = {
   endpoint: '#00b341',
   midpoint: '#1a73e8',
+  edge: '#00b341',
   intersection: '#e8a01a',
   perpendicular: '#e84335',
   extension: '#9c27b0',
@@ -36,6 +37,7 @@ const SNAP_COLORS: Record<SnapType, string> = {
 const SNAP_LABELS: Record<SnapType, string> = {
   endpoint: '끝점',
   midpoint: '중간점',
+  edge: '엣지',
   intersection: '교차점',
   perpendicular: '수직',
   extension: '연장',

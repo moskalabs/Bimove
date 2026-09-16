@@ -66,14 +66,15 @@ function ZoneInput({ value, onChange, width }: {
   )
 }
 
-// ── 평면 물량표 ──
+// ── 통합 물량표 (평면 + 벽면) ──
 
-function FloorTable({ item, variant, onUpdate }: {
+function UnifiedZoneTable({ item, variant, onUpdate }: {
   item: FinishingItem
   variant: MaterialVariant
   onUpdate: (zones: ZoneRow[]) => void
 }) {
   const isPaint = item.calcType === 'paint'
+  const showWall = !item.floorOnly
 
   const updateZone = (idx: number, patch: Partial<ZoneRow>) => {
     const next = variant.zones.map((z, i) => i === idx ? { ...z, ...patch } : z)
@@ -82,7 +83,6 @@ function FloorTable({ item, variant, onUpdate }: {
   const addZone = () => onUpdate([...variant.zones, { id: uid(), label: '', floorAreaM2: 0, wallLengthM: 0, wallHeightM: 2.4 }])
   const removeZone = (idx: number) => onUpdate(variant.zones.filter((_, i) => i !== idx))
 
-  /** 펜 클릭 → 면적 측정 모드 (평면 면적만 — 벽면은 별도) */
   const handleMeasure = (idx: number) => {
     startAreaMeasure(({ areaM2 }) => {
       updateZone(idx, { floorAreaM2: areaM2 })
@@ -91,15 +91,19 @@ function FloorTable({ item, variant, onUpdate }: {
 
   return (
     <div className="ft-section">
-      <div className="ft-section-title">물량표 평면</div>
+      <div className="ft-section-title">물량표</div>
       <table className="ft-table">
         <thead>
           <tr>
             <th>구역/공간</th>
-            <th>면적(m²)</th>
-            {isPaint && <th>도포 횟수</th>}
-            {isPaint && <th>필요 용량(L)</th>}
-            <th style={{ width: 52 }}></th>
+            <th>평면(m²)</th>
+            {showWall && <th>벽 길이(m)</th>}
+            {showWall && <th>높이(m)</th>}
+            {showWall && <th>벽면(m²)</th>}
+            {isPaint && <th>도포</th>}
+            {isPaint && <th>평면(L)</th>}
+            {isPaint && showWall && <th>벽면(L)</th>}
+            <th style={{ width: 44 }}></th>
           </tr>
         </thead>
         <tbody>
@@ -109,8 +113,21 @@ function FloorTable({ item, variant, onUpdate }: {
                 <ZoneInput value={z.label} onChange={v => updateZone(i, { label: v })} />
               </td>
               <td>
-                <ZoneInput value={z.floorAreaM2 || ''} onChange={v => updateZone(i, { floorAreaM2: parseFloat(v) || 0 })} width={60} />
+                <ZoneInput value={z.floorAreaM2 || ''} onChange={v => updateZone(i, { floorAreaM2: parseFloat(v) || 0 })} width={50} />
               </td>
+              {showWall && (
+                <td>
+                  <ZoneInput value={z.wallLengthM || ''} onChange={v => updateZone(i, { wallLengthM: parseFloat(v) || 0 })} width={45} />
+                </td>
+              )}
+              {showWall && (
+                <td>
+                  <ZoneInput value={z.wallHeightM || ''} onChange={v => updateZone(i, { wallHeightM: parseFloat(v) || 0 })} width={35} />
+                </td>
+              )}
+              {showWall && (
+                <td className="ft-num">{wallAreaM2(z) > 0 ? wallAreaM2(z).toFixed(1) : '-'}</td>
+              )}
               {isPaint && (
                 <td>
                   <select
@@ -123,7 +140,10 @@ function FloorTable({ item, variant, onUpdate }: {
                 </td>
               )}
               {isPaint && (
-                <td className="ft-num">{paintVolumeL(z, item.coverageM2PerL ?? 8, 'floor')}</td>
+                <td className="ft-num">{paintVolumeL(z, item.coverageM2PerL ?? 8, 'floor') || '-'}</td>
+              )}
+              {isPaint && showWall && (
+                <td className="ft-num">{paintVolumeL(z, item.coverageM2PerL ?? 8, 'wall') || '-'}</td>
               )}
               <td className="ft-row-actions">
                 <button
@@ -140,68 +160,6 @@ function FloorTable({ item, variant, onUpdate }: {
         </tbody>
       </table>
       <button className="ft-add-row" onClick={addZone}>+ 행 추가</button>
-    </div>
-  )
-}
-
-// ── 벽면 물량표 ──
-
-function WallTable({ item, variant, onUpdate }: {
-  item: FinishingItem
-  variant: MaterialVariant
-  onUpdate: (zones: ZoneRow[]) => void
-}) {
-  const isPaint = item.calcType === 'paint'
-
-  const updateZone = (idx: number, patch: Partial<ZoneRow>) => {
-    const next = variant.zones.map((z, i) => i === idx ? { ...z, ...patch } : z)
-    onUpdate(next)
-  }
-
-  return (
-    <div className="ft-section">
-      <div className="ft-section-title">물량표 벽면</div>
-      <table className="ft-table">
-        <thead>
-          <tr>
-            <th>구역/공간</th>
-            <th>벽 길이(m)</th>
-            <th>적용 높이(m)</th>
-            {isPaint && <th>도포 횟수</th>}
-            <th>{isPaint ? '필요 용량(L)' : '면적(m²)'}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {variant.zones.map((z, i) => (
-            <tr key={z.id}>
-              <td className="ft-zone-label">{z.label || `구역 ${i + 1}`}</td>
-              <td>
-                <ZoneInput value={z.wallLengthM || ''} onChange={v => updateZone(i, { wallLengthM: parseFloat(v) || 0 })} width={55} />
-              </td>
-              <td>
-                <ZoneInput value={z.wallHeightM || ''} onChange={v => updateZone(i, { wallHeightM: parseFloat(v) || 0 })} width={40} />
-              </td>
-              {isPaint && (
-                <td>
-                  <select
-                    className="ft-zone-select"
-                    value={z.coatCount ?? 2}
-                    onChange={e => updateZone(i, { coatCount: parseInt(e.target.value) })}
-                  >
-                    {[1, 2, 3, 4].map(n => <option key={n} value={n}>{n}</option>)}
-                  </select>
-                </td>
-              )}
-              <td className="ft-num">
-                {isPaint
-                  ? paintVolumeL(z, item.coverageM2PerL ?? 8, 'wall')
-                  : wallAreaM2(z).toFixed(2)
-                }
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   )
 }
@@ -480,12 +438,9 @@ function MaterialDetail({
         <button className="ft-variant-add" onClick={addVariant}><Plus size={14} /></button>
       </div>
 
-      {/* 물량표 평면 + 벽면 */}
+      {/* 물량표 (평면 + 벽면 통합) */}
       <div className="ft-tables-scroll">
-        <FloorTable item={item} variant={variant} onUpdate={updateZones} />
-        {!item.floorOnly && (
-          <WallTable item={item} variant={variant} onUpdate={updateZones} />
-        )}
+        <UnifiedZoneTable item={item} variant={variant} onUpdate={updateZones} />
         <TotalSection item={item} variant={variant} onSpecEdit={() => setShowSpecEdit(true)} />
       </div>
 
