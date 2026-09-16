@@ -367,6 +367,31 @@ function AppContent() {
     }
   }, [user])
 
+  // 프로젝트 열기/닫기 시 브라우저 히스토리 동기화
+  const openProject = (id: string, name: string) => {
+    setCurrentProject({ id, name })
+    history.pushState({ view: 'editor', id }, '', `#project=${id}`)
+  }
+
+  const closeProject = () => {
+    setCurrentProject(null)
+    // 히스토리에 대시보드 상태 추가 (뒤로가기 시 또 나가지 않도록)
+    if (history.state?.view === 'editor') {
+      history.pushState({ view: 'dashboard' }, '', window.location.pathname + window.location.search)
+    }
+  }
+
+  // 브라우저 뒤로가기 → 대시보드로 복귀
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      if (!e.state || e.state.view !== 'editor') {
+        setCurrentProject(null)
+      }
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
   if (loading) {
     return (
       <div style={{
@@ -395,14 +420,14 @@ function AppContent() {
         <EditorView
           projectId={currentProject.id}
           projectName={currentProject.name}
-          onBack={() => setCurrentProject(null)}
+          onBack={closeProject}
         />
       </>
     )
   }
 
   if (!currentProject) {
-    return <ProjectsPage onOpen={(id, name) => setCurrentProject({ id, name: name ?? '프로젝트' })} />
+    return <ProjectsPage onOpen={(id, name) => openProject(id, name ?? '프로젝트')} />
   }
 
   return (
@@ -410,7 +435,7 @@ function AppContent() {
       <EditorView
         projectId={currentProject.id}
         projectName={currentProject.name}
-        onBack={() => setCurrentProject(null)}
+        onBack={closeProject}
       />
       <OfflineBanner />
     </>
