@@ -10,6 +10,7 @@ import { ImportPanel } from './panels/ImportPanel'
 import { useEditor } from '../context/EditorContext'
 import { exportDxf } from '../lib/dxf'
 import { exportPng } from '../lib/exportPng'
+import { printReport } from '../lib/reportExport'
 
 /* ── 햄버거 메뉴 드롭다운 ── */
 function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onClose: () => void; onImport: () => void }) {
@@ -48,6 +49,9 @@ function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onClose: ()
                 </div>
                 <div className="lbar-menu-item" onClick={() => { editor && exportPng(editor); onClose(); setExportSub(false) }}>
                   🖼 PNG 내보내기
+                </div>
+                <div className="lbar-menu-item" onClick={() => { editor && printReport(editor); onClose(); setExportSub(false) }}>
+                  📋 리포트 내보내기
                 </div>
               </div>
             )}
