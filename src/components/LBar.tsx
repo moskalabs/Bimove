@@ -98,7 +98,7 @@ function View3DIcon() {
 
 type PanelId = 'layers' | 'materials' | 'table' | 'layout' | 'import' | null
 
-export function LBar({ onBack }: { onBack?: () => void }) {
+export function LBar({ onBack, onShow3D }: { onBack?: () => void; onShow3D?: () => void }) {
   const [activePanel, setActivePanel] = useState<PanelId>(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -174,6 +174,7 @@ export function LBar({ onBack }: { onBack?: () => void }) {
           <button
             className="lbar-icon"
             title="2D/3D 전환"
+            onClick={onShow3D}
           >
             <View3DIcon />
           </button>

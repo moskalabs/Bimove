@@ -275,7 +275,7 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
       <div className="bimova-layout">
         <TopBar />
         <div className="bimova-body">
-          <LBar onBack={onBack} />
+          <LBar onBack={onBack} onShow3D={() => setShow3D(true)} />
           <main className="canvas-area">
             <ToolOverlay />
             <Tldraw
@@ -291,10 +291,6 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
             <RoomOverlay />
             <ScaleRuler />
             <ChatPanel />
-            <button
-              className="canvas-3d-btn"
-              onClick={() => setShow3D(true)}
-            >🧱 3D</button>
           </main>
           <RBar />
         </div>
