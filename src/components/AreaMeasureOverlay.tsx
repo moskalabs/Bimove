@@ -1,6 +1,7 @@
 // 바닥 면적 폴리곤 측정 오버레이
 // 1. 펜 클릭으로 활성화 → 2. 도면 위에서 꼭짓점 클릭 → 3. 폴리곤 닫기 → 면적 자동 계산
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { Vec, normalizeWheel } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
 import { cancelAreaMeasure, completeAreaMeasure } from '../lib/drawingState'
 import { getScaleConfig } from '../lib/scaleConfig'
@@ -128,21 +129,23 @@ export function AreaMeasureOverlay() {
     }
   }, [editor, active])
 
-  // 휠: tldraw 캔버스로 전달 (확대/축소 허용)
+  // 휠: editor.dispatch()로 직접 전달 (DOM 포워딩은 isFocused 체크에 막힘)
   const handleWheel = useCallback((e: React.WheelEvent) => {
-    const container = document.querySelector('.tl-container')
-    if (container) {
-      container.dispatchEvent(new WheelEvent('wheel', {
-        deltaX: e.deltaX, deltaY: e.deltaY, deltaZ: e.deltaZ,
-        deltaMode: e.deltaMode,
-        clientX: e.clientX, clientY: e.clientY,
-        screenX: e.screenX, screenY: e.screenY,
-        ctrlKey: e.ctrlKey, altKey: e.altKey,
-        shiftKey: e.shiftKey, metaKey: e.metaKey,
-        bubbles: true,
-      }))
-    }
-  }, [])
+    if (!editor) return
+    e.preventDefault()
+    e.stopPropagation()
+    const delta = normalizeWheel(e)
+    if (delta.x === 0 && delta.y === 0) return
+    editor.dispatch({
+      type: 'wheel',
+      name: 'wheel',
+      delta,
+      point: new Vec(e.clientX, e.clientY),
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      ctrlKey: e.metaKey || e.ctrlKey,
+    })
+  }, [editor])
 
   // 우클릭: 마지막 점 삭제
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
