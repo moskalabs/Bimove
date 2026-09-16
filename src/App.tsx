@@ -101,6 +101,7 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
     ed.setCameraOptions({
       ...ed.getCameraOptions(),
       zoomSteps: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8],
+      wheelBehavior: 'zoom',
     })
     // Supabase에서 먼저 로드, 실패하면 localStorage 폴백
     ;(async () => {
@@ -221,6 +222,26 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
       clearInterval(autoVersionTimer)
     }
   }, [editor, projectId])
+
+  // 휠(중간) 버튼 더블클릭 → 화면 맞춤(zoomToFit)
+  useEffect(() => {
+    if (!editor) return
+    let lastMiddleDown = 0
+    const handleMiddleClick = (e: MouseEvent) => {
+      if (e.button !== 1) return          // 중간 버튼만
+      const now = Date.now()
+      if (now - lastMiddleDown < 350) {   // 350ms 이내 = 더블클릭
+        e.preventDefault()
+        editor.zoomToFit({ animation: { duration: 250 } })
+        lastMiddleDown = 0                // 리셋
+      } else {
+        lastMiddleDown = now
+      }
+    }
+    const canvas = document.querySelector('.tl-container') as HTMLElement | null
+    canvas?.addEventListener('mousedown', handleMiddleClick)
+    return () => canvas?.removeEventListener('mousedown', handleMiddleClick)
+  }, [editor])
 
   useEffect(() => {
     if (!editor) return
