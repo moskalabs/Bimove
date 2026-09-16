@@ -8,6 +8,7 @@ import { MaterialsPanel } from './panels/MaterialsPanel'
 import { LayoutPanel } from './panels/LayoutPanel'
 import { ImportPanel } from './panels/ImportPanel'
 import { useEditor } from '../context/EditorContext'
+import { useProjectId } from '../context/ProjectContext'
 import { exportDxf } from '../lib/dxf'
 import { exportPng } from '../lib/exportPng'
 import { printReport } from '../lib/reportExport'
@@ -15,6 +16,7 @@ import { printReport } from '../lib/reportExport'
 /* ── 햄버거 메뉴 드롭다운 ── */
 function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onClose: () => void; onImport: () => void }) {
   const editor = useEditor()
+  const projectId = useProjectId()
   const [exportSub, setExportSub] = useState(false)
 
   if (!open) return null
@@ -50,7 +52,7 @@ function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onClose: ()
                 <div className="lbar-menu-item" onClick={() => { editor && exportPng(editor); onClose(); setExportSub(false) }}>
                   🖼 PNG 내보내기
                 </div>
-                <div className="lbar-menu-item" onClick={() => { editor && printReport(editor); onClose(); setExportSub(false) }}>
+                <div className="lbar-menu-item" onClick={() => { editor && printReport(editor, { projectId: projectId || undefined }); onClose(); setExportSub(false) }}>
                   📋 리포트 내보내기
                 </div>
               </div>
