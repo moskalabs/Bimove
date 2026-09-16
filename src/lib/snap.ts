@@ -2,7 +2,7 @@ import type { Editor } from 'tldraw'
 import { getSnapEnabled, getSnapMode } from './settings'
 
 /** 스냅 타입: 어떤 종류의 스냅이 발생했는지 구분 */
-export type SnapType = 'endpoint' | 'midpoint' | 'intersection' | 'perpendicular' | 'extension' | 'angle'
+export type SnapType = 'endpoint' | 'midpoint' | 'edge' | 'intersection' | 'perpendicular' | 'extension' | 'angle'
 
 export type SnapPoint = { x: number; y: number; sourceId?: string; snapType?: SnapType }
 
@@ -10,7 +10,7 @@ export type SnapPoint = { x: number; y: number; sourceId?: string; snapType?: Sn
 const SNAP_RADIUS_PX = 12
 
 // ── Wall endpoint cache: 프레임당 1회만 수집 ──
-type WallEndpoint = { x: number; y: number; mx: number; my: number; id: string }
+type WallEndpoint = { x: number; y: number; mx: number; my: number; id: string; edge?: boolean }
 let _snapCache: WallEndpoint[] = []
 let _snapCacheTime = -1
 let _snapDiagLogged = false
@@ -48,14 +48,28 @@ function getWallEndpoints(editor: Editor): WallEndpoint[] {
   for (const shape of editor.getCurrentPageShapes()) {
     if (shape.type === 'wall') {
       wallCount++
-      const props = shape.props as { x2: number; y2: number }
+      const props = shape.props as { x2: number; y2: number; thickness: number }
       // getShapePageTransform: 그룹/회전 포함 정확한 page 좌표 변환
       const mat = editor.getShapePageTransform(shape)
       const s = mat.applyToPoint({ x: 0, y: 0 })
       const e = mat.applyToPoint({ x: props.x2, y: props.y2 })
       const mid = { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2 }
+      // 중심선 끝점
       _snapCache.push({ x: s.x, y: s.y, mx: mid.x, my: mid.y, id: shape.id })
       _snapCache.push({ x: e.x, y: e.y, mx: mid.x, my: mid.y, id: shape.id })
+      // 양쪽 엣지 끝점 (두께 고려)
+      const half = (props.thickness ?? 10) / 2
+      const dx = e.x - s.x, dy = e.y - s.y
+      const len = Math.hypot(dx, dy)
+      if (len > 1) {
+        const nx = -dy / len * half, ny = dx / len * half // 수직 방향
+        // 왼쪽 엣지 끝점 2개
+        _snapCache.push({ x: s.x + nx, y: s.y + ny, mx: mid.x + nx, my: mid.y + ny, id: shape.id, edge: true })
+        _snapCache.push({ x: e.x + nx, y: e.y + ny, mx: mid.x + nx, my: mid.y + ny, id: shape.id, edge: true })
+        // 오른쪽 엣지 끝점 2개
+        _snapCache.push({ x: s.x - nx, y: s.y - ny, mx: mid.x - nx, my: mid.y - ny, id: shape.id, edge: true })
+        _snapCache.push({ x: e.x - nx, y: e.y - ny, mx: mid.x - nx, my: mid.y - ny, id: shape.id, edge: true })
+      }
     } else if (shape.type === 'dxfgroup') {
       dxfCount++
       // DXF 그룹: pathData에서 각 선분의 시작/끝점 추출
@@ -103,21 +117,39 @@ export function snapToWallEndpoint(
   let bestDist = radius
 
   const endpoints = getWallEndpoints(editor)
+
+  // 패스 1: 중심선 끝점/중간점 (우선순위 높음)
   for (const ep of endpoints) {
-    if (ep.id === excludeId) continue
-    // endpoint
+    if (ep.id === excludeId || ep.edge) continue
     const d1 = Math.hypot(ep.x - point.x, ep.y - point.y)
     if (d1 < bestDist) {
       bestDist = d1
       best = { x: ep.x, y: ep.y, sourceId: ep.id, snapType: 'endpoint' }
     }
-    // midpoint
     const d2 = Math.hypot(ep.mx - point.x, ep.my - point.y)
     if (d2 < bestDist) {
       bestDist = d2
       best = { x: ep.mx, y: ep.my, sourceId: ep.id, snapType: 'midpoint' }
     }
   }
+
+  // 패스 2: 엣지 끝점 (중심선 스냅이 없을 때만)
+  if (!best) {
+    for (const ep of endpoints) {
+      if (ep.id === excludeId || !ep.edge) continue
+      const d1 = Math.hypot(ep.x - point.x, ep.y - point.y)
+      if (d1 < bestDist) {
+        bestDist = d1
+        best = { x: ep.x, y: ep.y, sourceId: ep.id, snapType: 'edge' }
+      }
+      const d2 = Math.hypot(ep.mx - point.x, ep.my - point.y)
+      if (d2 < bestDist) {
+        bestDist = d2
+        best = { x: ep.mx, y: ep.my, sourceId: ep.id, snapType: 'edge' }
+      }
+    }
+  }
+
   return best
 }
 
@@ -358,10 +390,10 @@ export function resolveDrawPoint(
 ): SnapPoint {
   const point = editor.inputs.currentPagePoint
 
-  // 1. 끝점/중간점 스냅 (최고 우선순위) — 모드 설정에 따라 필터
+  // 1. 끝점/중간점/엣지 스냅 (최고 우선순위) — 모드 설정에 따라 필터
   const epSnap = snapToWallEndpoint(editor, point, excludeId)
   if (epSnap) {
-    const isEp = epSnap.snapType === 'endpoint'
+    const isEp = epSnap.snapType === 'endpoint' || epSnap.snapType === 'edge'
     const isMid = epSnap.snapType === 'midpoint'
     if ((isEp && getSnapMode('endpoint')) || (isMid && getSnapMode('midpoint'))) {
       return epSnap
