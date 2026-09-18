@@ -28,6 +28,7 @@ import {
   getSnapMode, setSnapMode, type SnapMode,
 } from '../lib/settings'
 import { drawingState } from '../lib/drawingState'
+import { getProjects, renameProject } from '../lib/projectStore'
 
 type SelInfo = {
   id: TLShapeId
@@ -153,7 +154,16 @@ function TopActionBar() {
 
 /* ── 프로젝트 정보: 파일명, 프로필 ── */
 function ProjectInfoSection() {
-  const [projectName, setProjectName] = useState('Drawing 1')
+  const projectId = useProjectId()
+  const [projectName, setProjectName] = useState(() => {
+    const p = getProjects().find(p => p.id === projectId)
+    return p?.name || '새 프로젝트'
+  })
+
+  const handleNameChange = (name: string) => {
+    setProjectName(name)
+    if (projectId) renameProject(projectId, name)
+  }
 
   return (
     <section className="rbar-section">
@@ -163,7 +173,7 @@ function ProjectInfoSection() {
         <input
           className="rbar-prop-input"
           value={projectName}
-          onChange={e => setProjectName(e.target.value)}
+          onChange={e => handleNameChange(e.target.value)}
         />
       </div>
       <div className="rbar-prop-row">
@@ -179,17 +189,30 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
   const editor = useEditor()
   const [gridOn, setGridOn] = useState(false)
   const [darkMode, setDarkModeLocal] = useState(getDarkMode)
-  const [layer, setLayer] = useState('CO-1')
+  const [dxfLayers, setDxfLayers] = useState<string[]>([])
+  const [layer, setLayer] = useState('')
 
   useEffect(() => {
     if (!editor) return
     let raf = 0
+    const syncLayers = () => {
+      const layerSet = new Set<string>()
+      for (const s of editor.getCurrentPageShapes()) {
+        const meta = s.meta as Record<string, unknown>
+        if (typeof meta?.dxfLayer === 'string') layerSet.add(meta.dxfLayer)
+      }
+      const sorted = [...layerSet].sort()
+      setDxfLayers(sorted)
+      if (sorted.length > 0 && !sorted.includes(layer)) setLayer(sorted[0])
+    }
+    syncLayers()
     const unsub = editor.store.listen(() => {
       if (raf) return
       raf = requestAnimationFrame(() => {
         raf = 0
         const state = editor.getInstanceState()
         setGridOn(!!(state as { isGridMode?: boolean }).isGridMode)
+        syncLayers()
       })
     })
     return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
@@ -224,10 +247,8 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
             value={layer}
             onChange={e => setLayer(e.target.value)}
           >
-            <option value="CO-1">CO-1</option>
-            <option value="Default">Default</option>
-            <option value="A-Wall">A-Wall</option>
-            <option value="A-Door">A-Door</option>
+            {dxfLayers.length === 0 && <option value="">없음</option>}
+            {dxfLayers.map(l => <option key={l} value={l}>{l}</option>)}
           </select>
         </div>
       </div>
