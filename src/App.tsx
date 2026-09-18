@@ -120,6 +120,18 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
       if (saved) {
         try { ed.loadSnapshot(saved as TLEditorSnapshot) } catch { /* ignore corrupt */ }
       }
+      // 빈 페이지 자동 정리: 셰이프가 없는 여분 페이지 삭제 (최소 1페이지 유지)
+      const allPages = ed.getPages()
+      if (allPages.length > 1) {
+        const emptyPages = allPages.filter(p => ed.getPageShapeIds(p.id).size === 0)
+        // 전부 빈 페이지면 첫 번째는 남김
+        const toDelete = emptyPages.length === allPages.length
+          ? emptyPages.slice(1)
+          : emptyPages
+        for (const p of toDelete) {
+          ed.deletePage(p.id)
+        }
+      }
       // 셰이프가 있으면 전체 보기로 카메라 이동
       requestAnimationFrame(() => {
         const shapes = ed.getCurrentPageShapes()
