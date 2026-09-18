@@ -305,6 +305,7 @@ function parseDxfText(text: string, fileName = 'test.dxf'): CadParseResult {
     totalSegments: segs.length,
     unitToMm,
     _segs: segs,
+    _texts: [],
   }
 }
 

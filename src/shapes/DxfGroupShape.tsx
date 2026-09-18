@@ -30,7 +30,10 @@ export type DxfGroupShapeProps = {
   pathData: string // pre-computed SVG path: "M0,0L100,0 M0,50L100,50 ..."
   thickness: number
   segCount: number // 세그먼트 수 (정보용)
+  textsJson: string // JSON: Array<{ x, y, t, h, r?, c? }>
 }
+
+type DxfTextEntry = { x: number; y: number; t: string; h: number; r?: number; c?: string }
 
 export type DxfGroupShape = TLBaseShape<'dxfgroup', DxfGroupShapeProps>
 
@@ -85,6 +88,12 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
   const minStroke = 0.5 / Math.max(zoom, 0.001)
   const strokeW = Math.max(baseStrokeW, minStroke)
 
+  // 텍스트 데이터 파싱
+  let texts: DxfTextEntry[] = []
+  try {
+    if (shape.props.textsJson) texts = JSON.parse(shape.props.textsJson)
+  } catch { /* ignore */ }
+
   return (
     <SVGContainer>
       {matFill && (
@@ -96,13 +105,33 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
           opacity={0.35}
         />
       )}
-      <path
-        d={shape.props.pathData}
-        fill="none"
-        stroke={stroke}
-        strokeWidth={strokeW}
-        strokeLinecap="round"
-      />
+      {shape.props.pathData && (
+        <path
+          d={shape.props.pathData}
+          fill="none"
+          stroke={stroke}
+          strokeWidth={strokeW}
+          strokeLinecap="round"
+        />
+      )}
+      {texts.map((t, i) => {
+        const fontSize = Math.max(t.h, 2 / Math.max(zoom, 0.001))
+        const textColor = grayscale ? '#555' : (t.c && !isNearWhite(t.c) ? t.c : '#555')
+        return (
+          <text
+            key={i}
+            x={t.x}
+            y={t.y}
+            fontSize={fontSize}
+            fill={textColor}
+            fontFamily="sans-serif"
+            dominantBaseline="auto"
+            transform={t.r ? `rotate(${-t.r},${t.x},${t.y})` : undefined}
+          >
+            {t.t}
+          </text>
+        )
+      })}
     </SVGContainer>
   )
 }
@@ -137,10 +166,11 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
     pathData: T.string,
     thickness: T.number,
     segCount: T.number,
+    textsJson: T.string,
   }
 
   getDefaultProps(): DxfGroupShapeProps {
-    return { w: 100, h: 100, pathData: '', thickness: 2, segCount: 0 }
+    return { w: 100, h: 100, pathData: '', thickness: 2, segCount: 0, textsJson: '' }
   }
 
   getGeometry(shape: DxfGroupShape) {
@@ -177,15 +207,36 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
     const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
     const strokeW = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
 
+    let texts: DxfTextEntry[] = []
+    try {
+      if (shape.props.textsJson) texts = JSON.parse(shape.props.textsJson)
+    } catch { /* ignore */ }
+
     return (
       <g>
-        <path
-          d={shape.props.pathData}
-          fill="none"
-          stroke={stroke}
-          strokeWidth={strokeW}
-          strokeLinecap="round"
-        />
+        {shape.props.pathData && (
+          <path
+            d={shape.props.pathData}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={strokeW}
+            strokeLinecap="round"
+          />
+        )}
+        {texts.map((t, i) => (
+          <text
+            key={i}
+            x={t.x}
+            y={t.y}
+            fontSize={t.h}
+            fill={t.c && !isNearWhite(t.c) ? t.c : '#555'}
+            fontFamily="sans-serif"
+            dominantBaseline="auto"
+            transform={t.r ? `rotate(${-t.r},${t.x},${t.y})` : undefined}
+          >
+            {t.t}
+          </text>
+        ))}
       </g>
     )
   }

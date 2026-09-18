@@ -340,6 +340,16 @@ export function dxfFingerprint(fileName: string, fileSize: number, entityCount: 
 /** DXF 엔티티 배열에서 선분(segment) 추출 (테스트 가능) */
 export type DxfSeg = Seg & { layer?: string; lineweight?: number; color?: string }
 
+/** DXF TEXT/MTEXT 엔티티 데이터 */
+export type DxfText = {
+  x: number; y: number
+  text: string
+  height: number
+  rotation?: number
+  layer?: string
+  color?: string
+}
+
 export function parseDxfSegments(
   entities: Array<Record<string, unknown>>,
   layerDefs: Record<string, { lineweight?: number; colorIndex?: number; color?: number }>,
@@ -448,6 +458,17 @@ export function parseDxfSegments(
           })
         }
       }
+    } else if (e.type === 'SOLID' || e.type === '3DFACE') {
+      // SOLID/3DFACE: 3-4 corner polygon outline
+      const pts = (e.points ?? e.corners ?? e.vertices) as Array<{ x: number; y: number }> | undefined
+      if (pts && pts.length >= 3) {
+        // DXF SOLID vertex order: corners 3&4 are swapped → outline is 0→1→3→2
+        const order = pts.length >= 4 ? [0, 1, 3, 2] : [0, 1, 2]
+        for (let i = 0; i < order.length && segs.length < maxSegments; i++) {
+          const a = pts[order[i]], b = pts[order[(i + 1) % order.length]]
+          segs.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, layer, lineweight, color })
+        }
+      }
     }
   }
   return segs
@@ -536,6 +557,89 @@ function collectSegmentsWithBlocks(
   return allSegs.slice(0, maxSegments)
 }
 
+/**
+ * TEXT/MTEXT 엔티티를 재귀적으로 수집 (INSERT 블록 내부 포함).
+ * collectSegmentsWithBlocks와 동일한 변환 로직 적용.
+ */
+function collectTextsWithBlocks(
+  entities: Array<Record<string, unknown>>,
+  layerDefs: Record<string, { lineweight?: number; colorIndex?: number; color?: number }>,
+  blocks: DxfBlocks,
+  depth = 0,
+): DxfText[] {
+  if (depth > 8) return []
+  const allTexts: DxfText[] = []
+
+  for (const e of entities) {
+    const layer = (e.layer as string) || undefined
+    // 엔티티 색상 해석
+    const resolveColor = (): string | undefined => {
+      const ci = typeof e.colorIndex === 'number' ? e.colorIndex : 0
+      if (ci > 0) return aciToHex(ci)
+      if (layer && layerDefs[layer]?.colorIndex) return aciToHex(layerDefs[layer].colorIndex!)
+      return undefined
+    }
+
+    if (e.type === 'TEXT') {
+      const sp = (e.startPoint ?? e.position) as { x: number; y: number } | undefined
+      if (!sp) continue
+      const txt = (e.text as string)?.trim()
+      if (!txt) continue
+      allTexts.push({
+        x: sp.x, y: sp.y, text: txt,
+        height: (e.textHeight as number) ?? 2.5,
+        rotation: (e.rotation as number) || undefined,
+        layer, color: resolveColor(),
+      })
+    } else if (e.type === 'MTEXT') {
+      const pos = e.position as { x: number; y: number } | undefined
+      if (!pos) continue
+      let txt = (e.text as string)?.trim()
+      if (!txt) continue
+      // MTEXT 서식 코드 정리: \P=줄바꿈, {\f...;...}=폰트 등
+      txt = txt.replace(/\\P/g, ' ').replace(/\{[^}]*\}/g, '').replace(/\\[a-zA-Z][^;]*;/g, '').trim()
+      if (!txt) continue
+      allTexts.push({
+        x: pos.x, y: pos.y, text: txt,
+        height: (e.height as number) ?? 2.5,
+        rotation: (e.rotation as number) || undefined,
+        layer, color: resolveColor(),
+      })
+    } else if (e.type === 'INSERT') {
+      const blockName = e.name as string
+      if (!blockName || SKIP_BLOCK_NAMES.has(blockName)) continue
+      const block = blocks[blockName]
+      if (!block?.entities?.length) continue
+
+      const pos = e.position as { x: number; y: number } | undefined
+      const bpos = block.position
+      const rot = ((e.rotation as number) ?? 0) * Math.PI / 180
+      const xs = (e.xScale as number) ?? 1
+      const ys = (e.yScale as number) ?? 1
+      const cos = Math.cos(rot), sin = Math.sin(rot)
+      const tx = pos?.x ?? 0, ty = pos?.y ?? 0
+      const bx = bpos?.x ?? 0, by = bpos?.y ?? 0
+      const insertLayer = (e.layer as string) || undefined
+
+      const blockTexts = collectTextsWithBlocks(
+        block.entities as Array<Record<string, unknown>>,
+        layerDefs, blocks, depth + 1,
+      )
+
+      for (const t of blockTexts) {
+        const px = (t.x - bx) * xs, py = (t.y - by) * ys
+        t.x = px * cos - py * sin + tx
+        t.y = px * sin + py * cos + ty
+        t.height *= Math.abs(ys)
+        if (rot !== 0) t.rotation = ((t.rotation ?? 0) + (rot * 180) / Math.PI) % 360
+        if ((!t.layer || t.layer === '0') && insertLayer) t.layer = insertLayer
+      }
+      allTexts.push(...blockTexts)
+    }
+  }
+  return allTexts
+}
+
 /** 현재 캔버스에 이미 임포트된 DXF 핑거프린트 목록 조회 */
 function getImportedFingerprints(editor: Editor): Set<string> {
   const fps = new Set<string>()
@@ -577,6 +681,7 @@ export interface CadParseResult {
   unitToMm: number
   /** 내부 데이터 (commitCadImport에서 사용) */
   _segs: DxfSeg[]
+  _texts: DxfText[]
 }
 
 const STRUCTURAL_KEYWORDS = /wall|window|win(?!ter)|door|stair|column|beam|slab|elev|건축|벽|창문|문/i
@@ -653,12 +758,16 @@ export async function parseCadFile(
     }
   }
 
-  // INSERT/BLOCK 재귀 확장 포함 세그먼트 수집
+  // INSERT/BLOCK 재귀 확장 포함 세그먼트 + 텍스트 수집
   const segs = collectSegmentsWithBlocks(
     dxf.entities as unknown as Array<Record<string, unknown>>,
     layerDefs, blocks,
   )
-  if (!segs.length) {
+  const texts = collectTextsWithBlocks(
+    dxf.entities as unknown as Array<Record<string, unknown>>,
+    layerDefs, blocks,
+  )
+  if (!segs.length && !texts.length) {
     notify?.onError?.('DXF에서 도형 데이터를 찾지 못했습니다.')
     return null
   }
@@ -697,6 +806,7 @@ export async function parseCadFile(
     totalSegments: segs.length,
     unitToMm,
     _segs: segs,
+    _texts: texts,
   }
 }
 
@@ -899,6 +1009,28 @@ export function commitCadImport(
   const offsetX = (minX + maxX) / 2 - vpCenterX
   const offsetY = (minY + maxY) / 2 - vpCenterY
 
+  // ── 텍스트 좌표 변환 (DXF → px, Y flip) ──
+  type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string }
+  const pxTexts: PxText[] = result._texts
+    .filter(t => selectedLayers.has(t.layer || '0'))
+    .map(t => ({
+      x: t.x * scale,
+      y: -t.y * scale,
+      text: t.text,
+      height: Math.max(t.height * scale, 4),
+      rotation: t.rotation,
+      color: t.color,
+      layer: t.layer,
+    }))
+
+  // 텍스트도 바운딩박스에 포함
+  for (const t of pxTexts) {
+    minX = Math.min(minX, t.x)
+    minY = Math.min(minY, t.y - t.height)
+    maxX = Math.max(maxX, t.x + t.text.length * t.height * 0.6)
+    maxY = Math.max(maxY, t.y)
+  }
+
   // ── 100+ segments: 레이어별 DxfGroup shape로 묶기 (React 컴포넌트 수 대폭 감소) ──
   if (merged.length >= 100) {
     // 레이어별 그루핑
@@ -909,6 +1041,9 @@ export function commitCadImport(
       if (!g) { g = []; layerGroups.set(key, g) }
       g.push(s)
     }
+
+    // 텍스트 배정용 Set (이미 할당된 텍스트 인덱스)
+    const assignedTextIdx = new Set<number>()
 
     const groupShapes: unknown[] = []
     for (const [layer, segs] of layerGroups) {
@@ -924,6 +1059,26 @@ export function commitCadImport(
           gMaxX = Math.max(gMaxX, s.x1, s.x1 + s.dx)
           gMaxY = Math.max(gMaxY, s.y1, s.y1 + s.dy)
         }
+
+        // 이 클러스터 바운딩박스 내의 텍스트 수집 (여유 margin 포함)
+        const margin = 20
+        const localTexts: Array<{ x: number; y: number; t: string; h: number; r?: number; c?: string }> = []
+        pxTexts.forEach((t, idx) => {
+          if (assignedTextIdx.has(idx)) return
+          if ((t.layer || '0') !== layer) return
+          if (t.x >= gMinX - margin && t.x <= gMaxX + margin &&
+              t.y >= gMinY - margin && t.y <= gMaxY + margin) {
+            localTexts.push({
+              x: +(t.x - gMinX).toFixed(1),
+              y: +(t.y - gMinY).toFixed(1),
+              t: t.text,
+              h: +t.height.toFixed(1),
+              r: t.rotation,
+              c: t.color,
+            })
+            assignedTextIdx.add(idx)
+          }
+        })
 
         const gx = gMinX - offsetX
         const gy = gMinY - offsetY
@@ -946,13 +1101,55 @@ export function commitCadImport(
           type: 'dxfgroup',
           x: gx,
           y: gy,
-          props: { w, h, pathData, thickness: thickness * 0.3, segCount: cluster.length },
+          props: {
+            w, h, pathData, thickness: thickness * 0.3, segCount: cluster.length,
+            textsJson: localTexts.length ? JSON.stringify(localTexts) : '',
+          },
           meta: {
             dxfFingerprint: result.fingerprint,
             dxfLayer: layer,
             ...(firstSeg.lineweight ? { dxfLineweight: firstSeg.lineweight } : {}),
             ...(firstSeg.color ? { dxfColor: firstSeg.color } : {}),
           },
+        })
+      }
+    }
+
+    // 미배정 텍스트 → 레이어별 텍스트 전용 shape 생성
+    const orphanTexts = pxTexts.filter((_, i) => !assignedTextIdx.has(i))
+    if (orphanTexts.length > 0) {
+      const textsByLayer = new Map<string, PxText[]>()
+      for (const t of orphanTexts) {
+        const key = t.layer || '0'
+        let arr = textsByLayer.get(key)
+        if (!arr) { arr = []; textsByLayer.set(key, arr) }
+        arr.push(t)
+      }
+      for (const [layer, texts] of textsByLayer) {
+        let tMinX = Infinity, tMinY = Infinity, tMaxX = -Infinity, tMaxY = -Infinity
+        for (const t of texts) {
+          tMinX = Math.min(tMinX, t.x)
+          tMinY = Math.min(tMinY, t.y - t.height)
+          tMaxX = Math.max(tMaxX, t.x + t.text.length * t.height * 0.6)
+          tMaxY = Math.max(tMaxY, t.y + t.height)
+        }
+        const w = Math.max(tMaxX - tMinX, 1)
+        const h = Math.max(tMaxY - tMinY, 1)
+        const localTexts = texts.map(t => ({
+          x: +(t.x - tMinX).toFixed(1),
+          y: +(t.y - tMinY).toFixed(1),
+          t: t.text,
+          h: +t.height.toFixed(1),
+          r: t.rotation,
+          c: t.color,
+        }))
+        groupShapes.push({
+          id: createShapeId(),
+          type: 'dxfgroup',
+          x: tMinX - offsetX,
+          y: tMinY - offsetY,
+          props: { w, h, pathData: '', thickness: 0, segCount: 0, textsJson: JSON.stringify(localTexts) },
+          meta: { dxfFingerprint: result.fingerprint, dxfLayer: layer },
         })
       }
     }
