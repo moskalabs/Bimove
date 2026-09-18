@@ -7,7 +7,6 @@ import {
   getRoomNames, setRoomName,
   getSnapEnabled, setSnapEnabled,
   getSnapMode, setSnapMode, getActiveSnapModes,
-  type SnapMode,
 } from '../../lib/settings'
 
 describe('wall thickness', () => {
@@ -126,8 +125,6 @@ describe('snap enabled (ortho)', () => {
 })
 
 describe('individual snap modes', () => {
-  const _ALL_MODES: SnapMode[] = ['endpoint', 'midpoint', 'intersection', 'perpendicular', 'extension']
-
   it('endpoint defaults to true', () => {
     localStorage.clear()
     expect(getSnapMode('endpoint')).toBe(true)
