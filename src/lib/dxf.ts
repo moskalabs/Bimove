@@ -604,6 +604,85 @@ export async function parseCadFile(
   }
 }
 
+/** 연결된 세그먼트끼리 클러스터링 (Union-Find)
+ *  endpoint가 SNAP_TOL 이내이면 같은 그룹으로 판정.
+ *  방/벽 단위로 개별 선택 가능하도록 분리. */
+function clusterConnectedSegs(segs: RawSeg[]): RawSeg[][] {
+  if (segs.length <= 1) return [segs]
+
+  const SNAP_TOL = 5 // px 단위 endpoint 근접 허용치
+  const n = segs.length
+
+  // Union-Find
+  const parent = Array.from({ length: n }, (_, i) => i)
+  const rank = new Array(n).fill(0)
+  function find(x: number): number {
+    while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x] }
+    return x
+  }
+  function union(a: number, b: number) {
+    const ra = find(a), rb = find(b)
+    if (ra === rb) return
+    if (rank[ra] < rank[rb]) parent[ra] = rb
+    else if (rank[ra] > rank[rb]) parent[rb] = ra
+    else { parent[rb] = ra; rank[ra]++ }
+  }
+
+  // endpoint를 grid cell로 해싱 → 같은 cell에 endpoint가 있는 세그먼트 연결
+  const cellSize = SNAP_TOL
+  const cellMap = new Map<string, number[]>() // cellKey → seg indices
+
+  for (let i = 0; i < n; i++) {
+    const s = segs[i]
+    const pts = [
+      { x: s.x1, y: s.y1 },
+      { x: s.x1 + s.dx, y: s.y1 + s.dy },
+    ]
+    for (const p of pts) {
+      // 인접 4셀 검사 (경계 근처 누락 방지)
+      const cx = Math.round(p.x / cellSize)
+      const cy = Math.round(p.y / cellSize)
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const key = `${cx + dx},${cy + dy}`
+          const bucket = cellMap.get(key)
+          if (bucket) {
+            for (const j of bucket) {
+              // 실제 거리 확인
+              const sj = segs[j]
+              const pts2 = [
+                { x: sj.x1, y: sj.y1 },
+                { x: sj.x1 + sj.dx, y: sj.y1 + sj.dy },
+              ]
+              for (const q of pts2) {
+                if (Math.hypot(p.x - q.x, p.y - q.y) <= SNAP_TOL) {
+                  union(i, j)
+                }
+              }
+            }
+          }
+        }
+      }
+      // 자기 자신 등록
+      const ownKey = `${cx},${cy}`
+      let ownBucket = cellMap.get(ownKey)
+      if (!ownBucket) { ownBucket = []; cellMap.set(ownKey, ownBucket) }
+      ownBucket.push(i)
+    }
+  }
+
+  // 그룹별로 세그먼트 수집
+  const groups = new Map<number, RawSeg[]>()
+  for (let i = 0; i < n; i++) {
+    const root = find(i)
+    let g = groups.get(root)
+    if (!g) { g = []; groups.set(root, g) }
+    g.push(segs[i])
+  }
+
+  return [...groups.values()]
+}
+
 /** 동일선상(collinear) 세그먼트를 병합하여 shape 수를 줄임 */
 type RawSeg = { x1: number; y1: number; dx: number; dy: number; layer?: string; lineweight?: number; color?: string }
 
@@ -737,45 +816,49 @@ export function commitCadImport(
 
     const groupShapes: unknown[] = []
     for (const [layer, segs] of layerGroups) {
-      // 그룹 바운딩박스 계산
-      let gMinX = Infinity, gMinY = Infinity, gMaxX = -Infinity, gMaxY = -Infinity
-      for (const s of segs) {
-        gMinX = Math.min(gMinX, s.x1, s.x1 + s.dx)
-        gMinY = Math.min(gMinY, s.y1, s.y1 + s.dy)
-        gMaxX = Math.max(gMaxX, s.x1, s.x1 + s.dx)
-        gMaxY = Math.max(gMaxY, s.y1, s.y1 + s.dy)
+      // 연결된 선분끼리 분리 (Union-Find)
+      const clusters = clusterConnectedSegs(segs)
+
+      for (const cluster of clusters) {
+        // 그룹 바운딩박스 계산
+        let gMinX = Infinity, gMinY = Infinity, gMaxX = -Infinity, gMaxY = -Infinity
+        for (const s of cluster) {
+          gMinX = Math.min(gMinX, s.x1, s.x1 + s.dx)
+          gMinY = Math.min(gMinY, s.y1, s.y1 + s.dy)
+          gMaxX = Math.max(gMaxX, s.x1, s.x1 + s.dx)
+          gMaxY = Math.max(gMaxY, s.y1, s.y1 + s.dy)
+        }
+
+        const gx = gMinX - offsetX
+        const gy = gMinY - offsetY
+        const w = Math.max(gMaxX - gMinX, 1)
+        const h = Math.max(gMaxY - gMinY, 1)
+
+        // 세그먼트를 shape-local 좌표로 변환 후 SVG path 생성
+        const pathData = cluster.map(s => {
+          const x1 = s.x1 - gMinX
+          const y1 = s.y1 - gMinY
+          const x2 = x1 + s.dx
+          const y2 = y1 + s.dy
+          return `M${x1.toFixed(1)},${y1.toFixed(1)}L${x2.toFixed(1)},${y2.toFixed(1)}`
+        }).join('')
+
+        const firstSeg = cluster[0]
+
+        groupShapes.push({
+          id: createShapeId(),
+          type: 'dxfgroup',
+          x: gx,
+          y: gy,
+          props: { w, h, pathData, thickness: thickness * 0.3, segCount: cluster.length },
+          meta: {
+            dxfFingerprint: result.fingerprint,
+            dxfLayer: layer,
+            ...(firstSeg.lineweight ? { dxfLineweight: firstSeg.lineweight } : {}),
+            ...(firstSeg.color ? { dxfColor: firstSeg.color } : {}),
+          },
+        })
       }
-
-      const gx = gMinX - offsetX
-      const gy = gMinY - offsetY
-      const w = gMaxX - gMinX
-      const h = gMaxY - gMinY
-
-      // 세그먼트를 shape-local 좌표로 변환 후 SVG path 생성
-      const pathData = segs.map(s => {
-        const x1 = s.x1 - gMinX
-        const y1 = s.y1 - gMinY
-        const x2 = x1 + s.dx
-        const y2 = y1 + s.dy
-        return `M${x1.toFixed(1)},${y1.toFixed(1)}L${x2.toFixed(1)},${y2.toFixed(1)}`
-      }).join('')
-
-      // 첫 세그먼트의 색상/두께를 그룹 대표로 사용
-      const firstSeg = segs[0]
-
-      groupShapes.push({
-        id: createShapeId(),
-        type: 'dxfgroup',
-        x: gx,
-        y: gy,
-        props: { w, h, pathData, thickness: thickness * 0.3, segCount: segs.length },
-        meta: {
-          dxfFingerprint: result.fingerprint,
-          dxfLayer: layer,
-          ...(firstSeg.lineweight ? { dxfLineweight: firstSeg.lineweight } : {}),
-          ...(firstSeg.color ? { dxfColor: firstSeg.color } : {}),
-        },
-      })
     }
 
     editor.createShapes(groupShapes as never)
