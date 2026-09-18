@@ -382,6 +382,72 @@ export function parseDxfSegments(
         const b = verts[0]
         segs.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, layer, lineweight, color })
       }
+    } else if (e.type === 'ARC') {
+      // ARC: center + radius + startAngle/endAngle (degrees)
+      const cx = e.center as { x: number; y: number } | undefined
+      const r = e.radius as number | undefined
+      const sa = e.startAngle as number | undefined
+      const ea = e.endAngle as number | undefined
+      if (cx && r && r > 0 && sa != null && ea != null) {
+        const ARC_STEP_DEG = 10
+        const startRad = (sa * Math.PI) / 180
+        let endRad = (ea * Math.PI) / 180
+        if (endRad <= startRad) endRad += 2 * Math.PI
+        const steps = Math.max(3, Math.ceil(((endRad - startRad) * 180) / (Math.PI * ARC_STEP_DEG)))
+        const dt = (endRad - startRad) / steps
+        for (let i = 0; i < steps && segs.length < maxSegments; i++) {
+          const t0 = startRad + dt * i
+          const t1 = startRad + dt * (i + 1)
+          segs.push({
+            x1: cx.x + r * Math.cos(t0), y1: cx.y + r * Math.sin(t0),
+            x2: cx.x + r * Math.cos(t1), y2: cx.y + r * Math.sin(t1),
+            layer, lineweight, color,
+          })
+        }
+      }
+    } else if (e.type === 'CIRCLE') {
+      // CIRCLE: center + radius → 36-gon
+      const cx = e.center as { x: number; y: number } | undefined
+      const r = e.radius as number | undefined
+      if (cx && r && r > 0) {
+        const N = 36
+        const dt = (2 * Math.PI) / N
+        for (let i = 0; i < N && segs.length < maxSegments; i++) {
+          const t0 = dt * i
+          const t1 = dt * (i + 1)
+          segs.push({
+            x1: cx.x + r * Math.cos(t0), y1: cx.y + r * Math.sin(t0),
+            x2: cx.x + r * Math.cos(t1), y2: cx.y + r * Math.sin(t1),
+            layer, lineweight, color,
+          })
+        }
+      }
+    } else if (e.type === 'ELLIPSE') {
+      // ELLIPSE: center + majorAxisEnd + axisRatio + startAngle/endAngle (radians)
+      const cx = e.center as { x: number; y: number } | undefined
+      const maj = e.majorAxisEndPoint as { x: number; y: number } | undefined
+      const ratio = e.axisRatio as number | undefined
+      if (cx && maj && ratio) {
+        const sa = (e.startAngle as number) ?? 0
+        let ea = (e.endAngle as number) ?? (2 * Math.PI)
+        if (ea <= sa) ea += 2 * Math.PI
+        const a = Math.hypot(maj.x, maj.y) // semi-major
+        const b = a * ratio                 // semi-minor
+        const rot = Math.atan2(maj.y, maj.x)
+        const cosR = Math.cos(rot), sinR = Math.sin(rot)
+        const N = 36
+        const dt = (ea - sa) / N
+        for (let i = 0; i < N && segs.length < maxSegments; i++) {
+          const t0 = sa + dt * i, t1 = sa + dt * (i + 1)
+          const lx0 = a * Math.cos(t0), ly0 = b * Math.sin(t0)
+          const lx1 = a * Math.cos(t1), ly1 = b * Math.sin(t1)
+          segs.push({
+            x1: cx.x + lx0 * cosR - ly0 * sinR, y1: cx.y + lx0 * sinR + ly0 * cosR,
+            x2: cx.x + lx1 * cosR - ly1 * sinR, y2: cx.y + lx1 * sinR + ly1 * cosR,
+            layer, lineweight, color,
+          })
+        }
+      }
     }
   }
   return segs
