@@ -142,7 +142,7 @@ function FloorTable({ item, variant, onUpdate }: {
 
   return (
     <div className="ft-section">
-      <div className="ft-section-title">평면 물량표</div>
+      <div className="ft-section-title">물량표 평면</div>
       <table className="ft-table">
         <thead>
           <tr>
@@ -219,7 +219,7 @@ function WallTable({ item, variant, onUpdate }: {
 
   return (
     <div className="ft-section">
-      <div className="ft-section-title">벽면 물량표</div>
+      <div className="ft-section-title">물량표 벽면</div>
       <table className="ft-table">
         <thead>
           <tr>
