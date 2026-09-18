@@ -714,9 +714,12 @@
 }
 
 .rbar-snap-icon {
-  font-size: 12px;
   width: 16px;
-  text-align: center;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 /* ── L-bar panel ── */

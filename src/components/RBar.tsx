@@ -296,17 +296,81 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
 type SnapOptionDef = {
   mode: SnapMode | 'ortho'
   label: string
-  icon: string
+  icon: React.ReactNode
   color: string
 }
 
+/** CAD 스타일 스냅 아이콘 (SVG) */
+function SnapSvgIcon({ mode, color }: { mode: string; color: string }) {
+  const s = 16 // viewBox size
+  const c = color
+  switch (mode) {
+    case 'endpoint':
+      // 대각선 + 끝점 원
+      return (
+        <svg width={s} height={s} viewBox="0 0 16 16" fill="none">
+          <line x1="3" y1="13" x2="13" y2="3" stroke={c} strokeWidth="1.5" strokeLinecap="round" />
+          <circle cx="13" cy="3" r="2.5" fill={c} />
+        </svg>
+      )
+    case 'midpoint':
+      // 대각선 + 중간점 삼각형
+      return (
+        <svg width={s} height={s} viewBox="0 0 16 16" fill="none">
+          <line x1="2" y1="14" x2="14" y2="2" stroke={c} strokeWidth="1.5" strokeLinecap="round" />
+          <polygon points="8,5 5.5,10 10.5,10" fill={c} />
+        </svg>
+      )
+    case 'intersection':
+      // X 교차
+      return (
+        <svg width={s} height={s} viewBox="0 0 16 16" fill="none">
+          <line x1="2" y1="14" x2="14" y2="2" stroke={c} strokeWidth="1.5" strokeLinecap="round" />
+          <line x1="2" y1="2" x2="14" y2="14" stroke={c} strokeWidth="1.5" strokeLinecap="round" />
+          <circle cx="8" cy="8" r="2" fill={c} />
+        </svg>
+      )
+    case 'perpendicular':
+      // 수직선 + 직각 표시
+      return (
+        <svg width={s} height={s} viewBox="0 0 16 16" fill="none">
+          <line x1="3" y1="13" x2="3" y2="3" stroke={c} strokeWidth="1.5" strokeLinecap="round" />
+          <line x1="3" y1="13" x2="13" y2="13" stroke={c} strokeWidth="1.5" strokeLinecap="round" />
+          <rect x="3" y="9" width="4" height="4" fill="none" stroke={c} strokeWidth="1" />
+          <circle cx="8" cy="6" r="2" fill={c} />
+        </svg>
+      )
+    case 'extension':
+      // 선 + 연장 점선
+      return (
+        <svg width={s} height={s} viewBox="0 0 16 16" fill="none">
+          <line x1="2" y1="8" x2="8" y2="8" stroke={c} strokeWidth="1.5" strokeLinecap="round" />
+          <line x1="9" y1="8" x2="14" y2="8" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeDasharray="2 2" />
+          <circle cx="8" cy="8" r="2" fill={c} />
+        </svg>
+      )
+    case 'ortho':
+      // 직교 각도 표시
+      return (
+        <svg width={s} height={s} viewBox="0 0 16 16" fill="none">
+          <line x1="3" y1="13" x2="13" y2="13" stroke={c} strokeWidth="1.5" strokeLinecap="round" />
+          <line x1="3" y1="13" x2="8" y2="3" stroke={c} strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M6 13 A4 4 0 0 1 5 9.5" stroke={c} strokeWidth="1" fill="none" />
+          <circle cx="3" cy="13" r="1.5" fill={c} />
+        </svg>
+      )
+    default:
+      return null
+  }
+}
+
 const SNAP_OPTIONS: SnapOptionDef[] = [
-  { mode: 'endpoint',      label: '끝점',   icon: '⊕', color: '#00b341' },
-  { mode: 'midpoint',      label: '중간점', icon: '⊙', color: '#1a73e8' },
-  { mode: 'intersection',  label: '교차점', icon: '✕', color: '#e8a01a' },
-  { mode: 'perpendicular', label: '수직',   icon: '⊥', color: '#e84335' },
-  { mode: 'extension',     label: '연장',   icon: '⋯', color: '#9c27b0' },
-  { mode: 'ortho',         label: '직교',   icon: '∠', color: '#607d8b' },
+  { mode: 'endpoint',      label: '끝점',   icon: <SnapSvgIcon mode="endpoint" color="#f5a623" />, color: '#f5a623' },
+  { mode: 'midpoint',      label: '중간점', icon: <SnapSvgIcon mode="midpoint" color="#f5a623" />, color: '#f5a623' },
+  { mode: 'intersection',  label: '교차점', icon: <SnapSvgIcon mode="intersection" color="#e8a01a" />, color: '#e8a01a' },
+  { mode: 'perpendicular', label: '수직',   icon: <SnapSvgIcon mode="perpendicular" color="#e84335" />, color: '#e84335' },
+  { mode: 'extension',     label: '연장',   icon: <SnapSvgIcon mode="extension" color="#9c27b0" />, color: '#9c27b0' },
+  { mode: 'ortho',         label: '직교',   icon: <SnapSvgIcon mode="ortho" color="#607d8b" />, color: '#607d8b' },
 ]
 
 /* ── 화면 보기 (하단): 거리 표시 + 스냅 ── */
@@ -410,7 +474,7 @@ function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleC
           onClick={() => setSnapOpen(prev => !prev)}
           title="스냅 상세설정"
         >
-          <span className="rbar-snap-toggle-icon">⊕</span>
+          <span className="rbar-snap-toggle-icon"><SnapSvgIcon mode="endpoint" color={anySnapActive ? '#f5a623' : '#888'} /></span>
           <span>스냅</span>
           <ChevronUp size={12} style={{ transform: snapOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
         </button>
@@ -429,8 +493,11 @@ function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleC
                     checked={active}
                     onChange={() => toggleSnap(opt)}
                   />
-                  <span className="rbar-snap-icon" style={{ color: active ? opt.color : undefined }}>
-                    {opt.icon}
+                  <span className="rbar-snap-icon" style={{ opacity: active ? 1 : 0.4 }}>
+                    {active
+                      ? opt.icon
+                      : <SnapSvgIcon mode={opt.mode} color="#999" />
+                    }
                   </span>
                   <span>{opt.label}</span>
                 </label>
