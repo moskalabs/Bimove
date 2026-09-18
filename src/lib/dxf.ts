@@ -469,6 +469,85 @@ export function parseDxfSegments(
           segs.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, layer, lineweight, color })
         }
       }
+    } else if (e.type === 'HATCH') {
+      // HATCH: boundaryPaths의 edge/polyline → 아웃라인 세그먼트
+      const paths = e.boundaryPaths as Array<{
+        edges?: Array<{
+          type: number
+          start?: { x: number; y: number }
+          end?: { x: number; y: number }
+          center?: { x: number; y: number }
+          radius?: number
+          startAngle?: number
+          endAngle?: number
+          isCounterClockwise?: boolean
+          majorAxisEndPoint?: { x: number; y: number }
+          minorAxisRatio?: number
+        }>
+        polyline?: { vertices: Array<{ x: number; y: number; bulge?: number }> }
+      }> | undefined
+      if (paths) {
+        for (const bp of paths) {
+          if (segs.length >= maxSegments) break
+          if (bp.edges) {
+            for (const edge of bp.edges) {
+              if (segs.length >= maxSegments) break
+              if (edge.type === 1 && edge.start && edge.end) {
+                // LINE edge
+                segs.push({ x1: edge.start.x, y1: edge.start.y, x2: edge.end.x, y2: edge.end.y, layer, lineweight, color })
+              } else if (edge.type === 2 && edge.center && edge.radius) {
+                // ARC edge
+                const cx = edge.center, r = edge.radius
+                let sa = (edge.startAngle ?? 0) * Math.PI / 180
+                let ea = (edge.endAngle ?? 360) * Math.PI / 180
+                if (edge.isCounterClockwise === false) { const tmp = sa; sa = ea; ea = tmp }
+                if (ea <= sa) ea += 2 * Math.PI
+                const steps = Math.max(3, Math.ceil(((ea - sa) * 180) / (Math.PI * 10)))
+                const dt = (ea - sa) / steps
+                for (let i = 0; i < steps && segs.length < maxSegments; i++) {
+                  const t0 = sa + dt * i, t1 = sa + dt * (i + 1)
+                  segs.push({
+                    x1: cx.x + r * Math.cos(t0), y1: cx.y + r * Math.sin(t0),
+                    x2: cx.x + r * Math.cos(t1), y2: cx.y + r * Math.sin(t1),
+                    layer, lineweight, color,
+                  })
+                }
+              } else if (edge.type === 3 && edge.center && edge.majorAxisEndPoint && edge.minorAxisRatio) {
+                // ELLIPSE edge
+                const cx = edge.center, maj = edge.majorAxisEndPoint, ratio = edge.minorAxisRatio
+                const a = Math.hypot(maj.x, maj.y), b = a * ratio
+                const rot = Math.atan2(maj.y, maj.x)
+                const cosR = Math.cos(rot), sinR = Math.sin(rot)
+                let sa = edge.startAngle ?? 0, ea = edge.endAngle ?? (2 * Math.PI)
+                if (ea <= sa) ea += 2 * Math.PI
+                const N = 24, dt = (ea - sa) / N
+                for (let i = 0; i < N && segs.length < maxSegments; i++) {
+                  const t0 = sa + dt * i, t1 = sa + dt * (i + 1)
+                  const lx0 = a * Math.cos(t0), ly0 = b * Math.sin(t0)
+                  const lx1 = a * Math.cos(t1), ly1 = b * Math.sin(t1)
+                  segs.push({
+                    x1: cx.x + lx0 * cosR - ly0 * sinR, y1: cx.y + lx0 * sinR + ly0 * cosR,
+                    x2: cx.x + lx1 * cosR - ly1 * sinR, y2: cx.y + lx1 * sinR + ly1 * cosR,
+                    layer, lineweight, color,
+                  })
+                }
+              }
+            }
+          } else if (bp.polyline?.vertices && bp.polyline.vertices.length >= 2) {
+            const vts = bp.polyline.vertices
+            for (let i = 0; i < vts.length - 1 && segs.length < maxSegments; i++) {
+              segs.push({ x1: vts[i].x, y1: vts[i].y, x2: vts[i + 1].x, y2: vts[i + 1].y, layer, lineweight, color })
+            }
+            // 닫힌 폴리라인이면 마지막→첫 번째 연결
+            if (vts.length >= 3) {
+              const last = vts[vts.length - 1], first = vts[0]
+              if (Math.hypot(last.x - first.x, last.y - first.y) > 0.01) {
+                segs.push({ x1: last.x, y1: last.y, x2: first.x, y2: first.y, layer, lineweight, color })
+              }
+            }
+          }
+        }
+      }
     }
   }
   return segs
