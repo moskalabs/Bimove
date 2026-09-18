@@ -130,27 +130,15 @@ export function LayersPanel() {
   }
 
   // ---- 데이터 ----
-  const typeLayers = LAYER_DEFS.filter(l => (counts[l.type] ?? 0) > 0)
   const dxfLayers = Object.entries(dxfLayerCounts)
     .sort((a, b) => b[1] - a[1])
     .map(([name, count]) => ({
       key: 'dxf:' + name, label: name, color: dxfLayerColor(name), count, layerName: name,
     }))
 
-  // 모든 레이어를 하나의 플랫 리스트로 통합
+  // DXF 레이어만 표시
   const allLayers: { key: string; label: string; color: string; count: number; opacity: OpacityLevel; lineweight?: number; onSelect: () => void; onToggle: () => void }[] = []
 
-  // 도면층 (타입별)
-  for (const l of typeLayers) {
-    allLayers.push({
-      key: l.type, label: l.label, color: l.color, count: counts[l.type],
-      opacity: opacityMap[l.type] ?? 1,
-      onSelect: () => selectFilter(s => s.type === l.type),
-      onToggle: () => cycleOpacity(l.type, s => s.type === l.type),
-    })
-  }
-
-  // DXF 레이어
   for (const l of dxfLayers) {
     allLayers.push({
       key: l.key, label: l.label, color: l.color, count: l.count,
@@ -178,7 +166,7 @@ export function LayersPanel() {
 
       <div className="lbar-panel-body">
         {allLayers.length === 0 ? (
-          <Empty msg="도면을 그리면 레이어가 표시됩니다." />
+          <Empty msg="DXF 파일을 불러오면 레이어가 표시됩니다." />
         ) : (
           allLayers.map(l => (
             <LayerRow
