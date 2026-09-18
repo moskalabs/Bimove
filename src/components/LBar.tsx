@@ -12,6 +12,7 @@ import { useProjectId } from '../context/ProjectContext'
 import { exportDxf } from '../lib/dxf'
 import { exportPng } from '../lib/exportPng'
 import { printReport } from '../lib/reportExport'
+import { getProjects } from '../lib/projectStore'
 
 /* ── 햄버거 메뉴 드롭다운 ── */
 function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onClose: () => void; onImport: () => void }) {
@@ -29,9 +30,10 @@ function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onClose: ()
       <div className="lbar-menu-dropdown" onClick={(e) => e.stopPropagation()}>
         <div className="lbar-menu-section">
           <div className="lbar-menu-header">홈</div>
-          <div className="lbar-menu-item active">● Drawing 1</div>
-          <div className="lbar-menu-item">&nbsp;&nbsp;&nbsp;Drawing 2</div>
-          <div className="lbar-menu-item lbar-menu-add">+ 새로 만들기</div>
+          <div className="lbar-menu-item active">● {(() => {
+            const p = getProjects().find(p => p.id === projectId)
+            return p?.name || '새 프로젝트'
+          })()}</div>
         </div>
         <div className="lbar-menu-divider" />
         <div className="lbar-menu-section">

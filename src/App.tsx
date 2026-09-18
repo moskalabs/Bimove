@@ -97,10 +97,10 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
 
   const handleMount = (ed: Editor) => {
     ed.updateInstanceState({ isGridMode: false })
-    // 대형 DXF 도면을 위해 최소 zoom을 0.01로 확장
+    // 대형 DXF 도면을 위해 최소 zoom을 0.0001로 확장 (10,000m 축소 지원)
     ed.setCameraOptions({
       ...ed.getCameraOptions(),
-      zoomSteps: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8],
+      zoomSteps: [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8],
       wheelBehavior: 'zoom',
     })
     // Supabase에서 먼저 로드, 실패하면 localStorage 폴백

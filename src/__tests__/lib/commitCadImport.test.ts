@@ -391,7 +391,7 @@ describe('commitCadImport', () => {
     expect(centerY).toBeCloseTo(400, 0)
   })
 
-  it('zoom is clamped to tldraw limits [0.1, 8]', () => {
+  it('zoom is clamped to tldraw limits [0.0001, 8]', () => {
     const editor = createMockEditor()
     const result = parseDxfText(SIMPLE_ROOM_DXF)
     const allLayers = new Set(result.layers.map((l) => l.name))
@@ -399,7 +399,7 @@ describe('commitCadImport', () => {
     commitCadImport(editor as never, result, allLayers)
 
     const cam = editor._getCamera()
-    expect(cam.z).toBeGreaterThanOrEqual(0.1)
+    expect(cam.z).toBeGreaterThanOrEqual(0.0001)
     expect(cam.z).toBeLessThanOrEqual(8)
   })
 

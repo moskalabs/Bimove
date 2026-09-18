@@ -9,6 +9,7 @@ import {
   SVGContainer,
   T,
   type TLBaseShape,
+  type VecLike,
   Vec,
   useEditor,
 } from 'tldraw'
@@ -85,6 +86,27 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
   )
 }
 
+/** pathData("M0,0L100,0 M0,50L100,50 ...")에서 개별 선분 추출 후 point 근접 여부 판단 */
+function isPointNearPath(pathData: string, pt: VecLike, margin: number): boolean {
+  // pathData는 "Mx1,y1Lx2,y2 Mx3,y3Lx4,y4 ..." 형태
+  const re = /M([\d.e+-]+),([\d.e+-]+)L([\d.e+-]+),([\d.e+-]+)/g
+  let m
+  while ((m = re.exec(pathData)) !== null) {
+    const ax = +m[1], ay = +m[2], bx = +m[3], by = +m[4]
+    if (distPointToSeg(pt.x, pt.y, ax, ay, bx, by) <= margin) return true
+  }
+  return false
+}
+
+/** 점 (px,py)에서 선분 (ax,ay)-(bx,by)까지의 최단 거리 */
+function distPointToSeg(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax, dy = by - ay
+  const lenSq = dx * dx + dy * dy
+  if (lenSq === 0) return Math.hypot(px - ax, py - ay)
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq))
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+}
+
 export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
   static override type = 'dxfgroup' as const
 
@@ -108,8 +130,14 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
         new Vec(shape.props.w, shape.props.h),
         new Vec(0, shape.props.h),
       ],
-      isFilled: true,
+      isFilled: false,
     })
+  }
+
+  /** 개별 선 위 클릭만 선택되도록 pathData 기반 히트 테스트 */
+  override hitTestPoint(shape: DxfGroupShape, point: VecLike): boolean {
+    const HIT_MARGIN = 6 // 페이지 단위 허용 오차
+    return isPointNearPath(shape.props.pathData, point, HIT_MARGIN)
   }
 
   component(shape: DxfGroupShape) {

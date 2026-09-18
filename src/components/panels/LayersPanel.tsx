@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
 import { useEditor } from '../../context/EditorContext'
-import { loadMaterialPresets } from '../../lib/materialPresets'
 import { getGrayscaleMode, setGrayscaleMode } from '../../lib/settings'
 
 type LayerDef = {
@@ -17,14 +16,6 @@ const LAYER_DEFS: LayerDef[] = [
   { type: 'text',   label: '텍스트', color: '#e65100' },
   { type: 'image',  label: '이미지', color: '#388e3c' },
 ]
-
-const PHASE_COLORS: Record<string, string> = {
-  '구조': '#c0392b',
-  '건축': '#2980b9',
-  '마감': '#16a085',
-  '설비': '#f39c12',
-  '가구·집기': '#8e44ad',
-}
 
 const DXF_LAYER_COLORS: Record<string, string> = {
   '0': '#888',
@@ -47,8 +38,6 @@ function dxfLayerColor(name: string): string {
   return `hsl(${hue}, 55%, 45%)`
 }
 
-type Tab = 'type' | 'phase' | 'material' | 'dxf'
-
 // 투명도 3단계: 100% → 30% → 0%
 type OpacityLevel = 1 | 0.3 | 0
 const OPACITY_CYCLE: OpacityLevel[] = [1, 0.3, 0]
@@ -56,7 +45,6 @@ const OPACITY_ICON: Record<OpacityLevel, string> = { 1: '👁', 0.3: '🔅', 0: 
 
 export function LayersPanel() {
   const editor = useEditor()
-  const [tab, setTab] = useState<Tab>('type')
   // 단일 state 객체로 통합 (8개 setState → 1개, re-render 1회)
   type LayerData = {
     counts: Record<string, number>
@@ -71,10 +59,9 @@ export function LayersPanel() {
   const [_hidden, setHidden] = useState<Set<string>>(new Set())
   const [opacityMap, setOpacityMap] = useState<Record<string, OpacityLevel>>({})
   const [isGrayscale, setIsGrayscale] = useState(getGrayscaleMode)
-  const presets = loadMaterialPresets()
 
   // destructure for easy access
-  const { counts, phaseCounts, materialCounts, dxfLayerCounts, dxfLayerLw } = data
+  const { counts, dxfLayerCounts, dxfLayerLw } = data
 
   useEffect(() => {
     if (!editor) return
@@ -144,112 +131,62 @@ export function LayersPanel() {
 
   // ---- 데이터 ----
   const typeLayers = LAYER_DEFS.filter(l => (counts[l.type] ?? 0) > 0)
-  const phaseLayers = Object.entries(phaseCounts).map(([phase, count]) => ({
-    key: 'phase:' + phase, label: phase, color: PHASE_COLORS[phase] ?? '#888', count,
-  }))
-  const materialLayers = Object.entries(materialCounts).map(([id, count]) => {
-    const m = presets.find(p => p.id === id)
-    return { key: 'mat:' + id, label: m?.label ?? id, color: m?.fill ?? '#888', count, materialId: id }
-  })
   const dxfLayers = Object.entries(dxfLayerCounts)
     .sort((a, b) => b[1] - a[1])
     .map(([name, count]) => ({
       key: 'dxf:' + name, label: name, color: dxfLayerColor(name), count, layerName: name,
     }))
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'type', label: '도면층' },
-    ...(hasDxfLayers ? [{ id: 'dxf' as const, label: 'DXF' }] : []),
-    { id: 'phase', label: '공종' },
-    { id: 'material', label: '자재' },
-  ]
+  // 모든 레이어를 하나의 플랫 리스트로 통합
+  const allLayers: { key: string; label: string; color: string; count: number; opacity: OpacityLevel; lineweight?: number; onSelect: () => void; onToggle: () => void }[] = []
+
+  // 도면층 (타입별)
+  for (const l of typeLayers) {
+    allLayers.push({
+      key: l.type, label: l.label, color: l.color, count: counts[l.type],
+      opacity: opacityMap[l.type] ?? 1,
+      onSelect: () => selectFilter(s => s.type === l.type),
+      onToggle: () => cycleOpacity(l.type, s => s.type === l.type),
+    })
+  }
+
+  // DXF 레이어
+  for (const l of dxfLayers) {
+    allLayers.push({
+      key: l.key, label: l.label, color: l.color, count: l.count,
+      opacity: opacityMap[l.key] ?? 1,
+      lineweight: dxfLayerLw[l.layerName],
+      onSelect: () => selectFilter(s => (s.meta as { dxfLayer?: string })?.dxfLayer === l.layerName),
+      onToggle: () => cycleOpacity(l.key, s => (s.meta as { dxfLayer?: string })?.dxfLayer === l.layerName),
+    })
+  }
 
   return (
     <div className="lbar-panel">
-      <div className="lbar-panel-header">도면층 / 시각화</div>
+      <div className="lbar-panel-header">레이어</div>
 
-      <div className="layer-tabs">
-        {tabs.map(t => (
+      {hasDxfLayers && (
+        <div className="dxf-grayscale-bar">
           <button
-            key={t.id}
-            className={`layer-tab${tab === t.id ? ' active' : ''}`}
-            onClick={() => setTab(t.id)}
+            className={`dxf-grayscale-btn${isGrayscale ? ' on' : ''}`}
+            onClick={() => { const v = !isGrayscale; setGrayscaleMode(v); setIsGrayscale(v) }}
           >
-            {t.label}
+            {isGrayscale ? '⬛ Grayscale ON' : '🎨 Grayscale OFF'}
           </button>
-        ))}
-      </div>
+        </div>
+      )}
 
       <div className="lbar-panel-body">
-        {tab === 'type' && (
-          typeLayers.length === 0 ? (
-            <Empty msg="도면을 그리면 표시됩니다." />
-          ) : (
-            typeLayers.map(l => (
-              <LayerRow
-                key={l.type} label={l.label} color={l.color} count={counts[l.type]}
-                opacity={opacityMap[l.type] ?? 1}
-                onSelect={() => selectFilter(s => s.type === l.type)}
-                onToggle={() => cycleOpacity(l.type, s => s.type === l.type)}
-              />
-            ))
-          )
-        )}
-        {tab === 'dxf' && (
-          dxfLayers.length === 0 ? (
-            <Empty msg="DXF 파일을 가져오면 레이어가 표시됩니다." />
-          ) : (
-            <>
-              <div className="dxf-grayscale-bar">
-                <button
-                  className={`dxf-grayscale-btn${isGrayscale ? ' on' : ''}`}
-                  onClick={() => { const v = !isGrayscale; setGrayscaleMode(v); setIsGrayscale(v) }}
-                >
-                  {isGrayscale ? '⬛ Grayscale ON' : '🎨 Grayscale OFF'}
-                </button>
-              </div>
-              <div className="dxf-layer-count-label">
-                DXF 원본 레이어 ({dxfLayers.length}개)
-              </div>
-              {dxfLayers.map(l => (
-                <LayerRow
-                  key={l.key} label={l.label} color={l.color} count={l.count}
-                  opacity={opacityMap[l.key] ?? 1}
-                  lineweight={dxfLayerLw[l.layerName]}
-                  onSelect={() => selectFilter(s => (s.meta as { dxfLayer?: string })?.dxfLayer === l.layerName)}
-                  onToggle={() => cycleOpacity(l.key, s => (s.meta as { dxfLayer?: string })?.dxfLayer === l.layerName)}
-                />
-              ))}
-            </>
-          )
-        )}
-        {tab === 'phase' && (
-          phaseLayers.length === 0 ? (
-            <Empty msg="공종 미지정 — 속성 패널에서 객체에 공종을 설정해보세요." />
-          ) : (
-            phaseLayers.map(l => (
-              <LayerRow
-                key={l.key} label={l.label} color={l.color} count={l.count}
-                opacity={opacityMap[l.key] ?? 1}
-                onSelect={() => selectFilter(s => (s.meta as { phase?: string })?.phase === l.label)}
-                onToggle={() => cycleOpacity(l.key, s => (s.meta as { phase?: string })?.phase === l.label)}
-              />
-            ))
-          )
-        )}
-        {tab === 'material' && (
-          materialLayers.length === 0 ? (
-            <Empty msg="자재 미지정 — 재질 패널에서 자재를 적용해보세요." />
-          ) : (
-            materialLayers.map(l => (
-              <LayerRow
-                key={l.key} label={l.label} color={l.color} count={l.count}
-                opacity={opacityMap[l.key] ?? 1}
-                onSelect={() => selectFilter(s => (s.meta as { materialId?: string })?.materialId === l.materialId)}
-                onToggle={() => cycleOpacity(l.key, s => (s.meta as { materialId?: string })?.materialId === l.materialId)}
-              />
-            ))
-          )
+        {allLayers.length === 0 ? (
+          <Empty msg="도면을 그리면 레이어가 표시됩니다." />
+        ) : (
+          allLayers.map(l => (
+            <LayerRow
+              key={l.key} label={l.label} color={l.color} count={l.count}
+              opacity={l.opacity} lineweight={l.lineweight}
+              onSelect={l.onSelect} onToggle={l.onToggle}
+            />
+          ))
         )}
       </div>
     </div>

@@ -348,6 +348,19 @@ function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleC
   const zoomIn = () => { if (editor) editor.zoomIn() }
   const zoomOut = () => { if (editor) editor.zoomOut() }
 
+  const [snapOpen, setSnapOpen] = useState(false)
+  const snapRef = useRef<HTMLDivElement>(null)
+
+  // 바깥 클릭 시 드롭다운 닫기
+  useEffect(() => {
+    if (!snapOpen) return
+    const handler = (e: MouseEvent) => {
+      if (snapRef.current && !snapRef.current.contains(e.target as Node)) setSnapOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [snapOpen])
+
   const toggleSnap = (opt: SnapOptionDef) => {
     if (opt.mode === 'ortho') {
       const next = !snapModes.ortho
@@ -360,6 +373,8 @@ function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleC
       setSnapMode(mode, next)
     }
   }
+
+  const anySnapActive = Object.values(snapModes).some(Boolean)
 
   return (
     <div className="rbar-view-section">
@@ -379,28 +394,41 @@ function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleC
         </button>
       </div>
 
-      {/* 스냅 옵션 */}
-      <div className="rbar-snap-options">
-        {SNAP_OPTIONS.map(opt => {
-          const active = opt.mode === 'ortho' ? snapModes.ortho : snapModes[opt.mode as SnapMode]
-          return (
-            <label
-              key={opt.mode}
-              className={`rbar-snap-item${active ? ' active' : ''}`}
-              title={opt.label}
-            >
-              <input
-                type="checkbox"
-                checked={active}
-                onChange={() => toggleSnap(opt)}
-              />
-              <span className="rbar-snap-icon" style={{ color: active ? opt.color : undefined }}>
-                {opt.icon}
-              </span>
-              <span>{opt.label}</span>
-            </label>
-          )
-        })}
+      {/* 스냅 드롭다운 */}
+      <div className="rbar-snap-dropdown" ref={snapRef}>
+        <button
+          className={`rbar-snap-toggle${anySnapActive ? ' active' : ''}`}
+          onClick={() => setSnapOpen(prev => !prev)}
+          title="스냅 상세설정"
+        >
+          <span className="rbar-snap-toggle-icon">⊕</span>
+          <span>스냅</span>
+          <ChevronUp size={12} style={{ transform: snapOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+        </button>
+        {snapOpen && (
+          <div className="rbar-snap-popup">
+            {SNAP_OPTIONS.map(opt => {
+              const active = opt.mode === 'ortho' ? snapModes.ortho : snapModes[opt.mode as SnapMode]
+              return (
+                <label
+                  key={opt.mode}
+                  className={`rbar-snap-item${active ? ' active' : ''}`}
+                  title={opt.label}
+                >
+                  <input
+                    type="checkbox"
+                    checked={active}
+                    onChange={() => toggleSnap(opt)}
+                  />
+                  <span className="rbar-snap-icon" style={{ color: active ? opt.color : undefined }}>
+                    {opt.icon}
+                  </span>
+                  <span>{opt.label}</span>
+                </label>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )
