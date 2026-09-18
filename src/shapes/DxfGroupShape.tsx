@@ -39,9 +39,10 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
   const editor = useEditor()
   const [zoom, setZoom] = useState(() => editor.getZoomLevel())
   const [grayscale, setGrayscale] = useState(getGrayscaleMode)
+  // meta 변경 감지용 (재질 적용 시 re-render 트리거)
+  const [meta, setMeta] = useState(() => shape.meta as Record<string, unknown>)
 
   useEffect(() => {
-    // 카메라 변경 시 줌 레벨 추적 (rAF 스로틀)
     let raf = 0
     const unsub = editor.store.listen(() => {
       if (raf) return
@@ -49,14 +50,22 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
         raf = 0
         const z = editor.getZoomLevel()
         setZoom(prev => {
-          // 10% 이상 변화만 업데이트 (불필요한 re-render 방지)
           if (Math.abs(prev - z) / Math.max(prev, 0.001) > 0.1) return z
           return prev
         })
+        // shape meta 변경 감지
+        const latest = editor.getShape(shape.id)
+        if (latest) {
+          const lm = latest.meta as Record<string, unknown>
+          setMeta(prev => {
+            if (prev.fill !== lm.fill || prev.stroke !== lm.stroke) return lm
+            return prev
+          })
+        }
       })
     })
     return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
-  }, [editor])
+  }, [editor, shape.id])
 
   useEffect(() => {
     const onSettings = () => setGrayscale(getGrayscaleMode())
@@ -65,15 +74,14 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
   }, [])
 
   // 재질 적용 색상 (MaterialsPanel에서 meta에 설정)
-  const matFill = (shape.meta?.fill as string) || ''
-  const matStroke = (shape.meta?.stroke as string) || ''
+  const matFill = (meta.fill as string) || ''
+  const matStroke = (meta.stroke as string) || ''
 
   // ACI 7 = #ffffff 등 밝은 색은 라이트 배경에서 안 보이므로 보정
-  const rawColor = matStroke || (shape.meta?.dxfColor as string) || '#333'
+  const rawColor = matStroke || (meta.dxfColor as string) || '#333'
   const stroke = grayscale ? '#333' : (isNearWhite(rawColor) ? '#333' : rawColor)
-  const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
+  const dxfLw = (meta.dxfLineweight as number) ?? 0
   const baseStrokeW = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
-  // 줌에 따른 최소 화면 0.5px 보장: zoom 1%에서 strokeW = 50 (50*0.01 = 0.5px 화면)
   const minStroke = 0.5 / Math.max(zoom, 0.001)
   const strokeW = Math.max(baseStrokeW, minStroke)
 
@@ -85,7 +93,7 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
           width={shape.props.w}
           height={shape.props.h}
           fill={matFill}
-          opacity={0.25}
+          opacity={0.35}
         />
       )}
       <path
