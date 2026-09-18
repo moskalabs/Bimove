@@ -55,6 +55,24 @@ describe('formatLength', () => {
     // 200px → 200/0.01 = 20000mm = 20m
     expect(formatLength(200, scale)).toBe('20.00m')
   })
+
+  it('formats km when distance >= 1km in m unit', () => {
+    const scale: ScaleConfig = { unit: 'm', pxPerMm: 0.0001 }
+    // 1000px → 1000/0.0001 = 10,000,000mm = 10km
+    expect(formatLength(1000, scale)).toBe('10.00km')
+  })
+
+  it('formats km for exactly 1km', () => {
+    const scale: ScaleConfig = { unit: 'm', pxPerMm: 0.001 }
+    // 1000px → 1000/0.001 = 1,000,000mm = 1km
+    expect(formatLength(1000, scale)).toBe('1.00km')
+  })
+
+  it('formats m for sub-km distances (not km)', () => {
+    const scale: ScaleConfig = { unit: 'm', pxPerMm: 0.001 }
+    // 500px → 500/0.001 = 500,000mm = 500m
+    expect(formatLength(500, scale)).toBe('500.00m')
+  })
 })
 
 describe('DEFAULT_SCALE', () => {
@@ -64,8 +82,8 @@ describe('DEFAULT_SCALE', () => {
 })
 
 describe('SCALE_PRESETS', () => {
-  it('has 5 presets', () => {
-    expect(SCALE_PRESETS).toHaveLength(5)
+  it('has 10 presets (1:1 through 1:10000)', () => {
+    expect(SCALE_PRESETS).toHaveLength(10)
   })
 
   it('each preset has label and pxPerMm', () => {

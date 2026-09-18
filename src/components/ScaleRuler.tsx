@@ -13,6 +13,7 @@ function niceStep(mm: number): number {
 }
 
 function formatMm(mm: number): string {
+  if (mm >= 1_000_000) return `${mm / 1_000_000}km`
   if (mm >= 1000) return `${mm / 1000}m`
   if (mm >= 100) return `${mm / 10}cm`
   return `${mm}mm`
