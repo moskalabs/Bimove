@@ -126,7 +126,7 @@ describe('snap enabled (ortho)', () => {
 })
 
 describe('individual snap modes', () => {
-  const ALL_MODES: SnapMode[] = ['endpoint', 'midpoint', 'intersection', 'perpendicular', 'extension']
+  const _ALL_MODES: SnapMode[] = ['endpoint', 'midpoint', 'intersection', 'perpendicular', 'extension']
 
   it('endpoint defaults to true', () => {
     localStorage.clear()

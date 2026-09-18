@@ -2,21 +2,6 @@ import { useState, useEffect } from 'react'
 import { useEditor } from '../../context/EditorContext'
 import { getGrayscaleMode, setGrayscaleMode } from '../../lib/settings'
 
-type LayerDef = {
-  type: string
-  label: string
-  color: string
-}
-
-const LAYER_DEFS: LayerDef[] = [
-  { type: 'wall',   label: '벽',   color: '#555' },
-  { type: 'door',   label: '문',   color: '#1a73e8' },
-  { type: 'window', label: '창문', color: '#0097a7' },
-  { type: 'block',  label: '블록', color: '#7b1fa2' },
-  { type: 'text',   label: '텍스트', color: '#e65100' },
-  { type: 'image',  label: '이미지', color: '#388e3c' },
-]
-
 const DXF_LAYER_COLORS: Record<string, string> = {
   '0': '#888',
   'WALL': '#555',
@@ -61,7 +46,7 @@ export function LayersPanel() {
   const [isGrayscale, setIsGrayscale] = useState(getGrayscaleMode)
 
   // destructure for easy access
-  const { counts, dxfLayerCounts, dxfLayerLw } = data
+  const { dxfLayerCounts, dxfLayerLw } = data
 
   useEffect(() => {
     if (!editor) return

@@ -1,6 +1,6 @@
 // 공간지정(Zone) 폴리곤 드로잉 오버레이
 // AreaMeasureOverlay 기반 — 동일한 폴리곤 드로잉 UX
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Vec } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
 import { cancelZoneDraw, completeZoneDraw } from '../lib/drawingState'

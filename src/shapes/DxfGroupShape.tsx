@@ -135,7 +135,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
   }
 
   /** 개별 선 위 클릭만 선택되도록 pathData 기반 히트 테스트 */
-  override hitTestPoint(shape: DxfGroupShape, point: VecLike): boolean {
+  hitTestPoint(shape: DxfGroupShape, point: VecLike): boolean {
     const HIT_MARGIN = 6 // 페이지 단위 허용 오차
     return isPointNearPath(shape.props.pathData, point, HIT_MARGIN)
   }
