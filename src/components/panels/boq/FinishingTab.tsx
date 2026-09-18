@@ -90,10 +90,16 @@ function FloorTable({ item, variant, onUpdate }: {
     })
   }
 
+  const zoneShapes = editor
+    ? editor.getCurrentPageShapes().filter(s => s.type === 'zone')
+    : []
+
   const importZones = () => {
     if (!editor) return
-    const zoneShapes = editor.getCurrentPageShapes().filter(s => s.type === 'zone')
-    if (zoneShapes.length === 0) return
+    if (zoneShapes.length === 0) {
+      alert('캔버스에 공간(Zone)이 없습니다.\n툴바에서 공간지정 도구로 영역을 먼저 그려주세요.')
+      return
+    }
     const newZones: ZoneRow[] = zoneShapes.map(s => {
       const p = s.props as { label: string; areaM2: number; perimeterM: number; wallHeightMm: number }
       return {
