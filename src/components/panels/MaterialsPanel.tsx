@@ -78,9 +78,15 @@ export function MaterialsPanel() {
 
   const applyColor = (fill: string, stroke: string, materialId?: string, pattern?: string) => {
     if (!editor || walls.length === 0) return
+    const shapeIds: string[] = []
     walls.forEach(s => {
       editor.updateShape({ id: s.id, meta: { ...s.meta, fill, stroke, materialId, pattern } } as never)
+      shapeIds.push(s.id)
     })
+    // FinishingTab 자동 연동: 재질 적용된 셰이프 정보 전달
+    window.dispatchEvent(new CustomEvent('bimova:material-applied', {
+      detail: { shapeIds, materialId },
+    }))
   }
 
   const activateSelectTool = () => {

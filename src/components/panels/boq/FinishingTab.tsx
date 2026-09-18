@@ -560,6 +560,7 @@ function MaterialDetail({
 
 export function FinishingTab() {
   const projectId = useProjectId()
+  const editor = useEditor()
   const [data, setData] = useState<FinishingTablesData>(() =>
     loadFinishingData(projectId ?? '')
   )
@@ -571,6 +572,54 @@ export function FinishingTab() {
   useEffect(() => {
     if (projectId) saveFinishingData(projectId, data)
   }, [data, projectId])
+
+  // 재질 적용 이벤트 → 현재 선택된 마감재 아이템에 자동 추가
+  useEffect(() => {
+    const handler = (e: Event) => {
+      if (!editor || !selectedItemId) return
+      const { shapeIds } = (e as CustomEvent).detail as { shapeIds: string[]; materialId?: string }
+      const scale = getScaleConfig(editor)
+      const pxPerMm = scale.pxPerMm
+
+      const newZones: ZoneRow[] = []
+      for (const id of shapeIds) {
+        const shape = editor.getShape(id as never)
+        if (!shape) continue
+        const bounds = editor.getShapeGeometry(shape).bounds
+        const wM = bounds.width / pxPerMm / 1000
+        const hM = bounds.height / pxPerMm / 1000
+        const areaM2 = +(wM * hM).toFixed(2)
+        const perimM = +((wM + hM) * 2).toFixed(2)
+        const layerName = (shape.meta as Record<string, unknown>)?.dxfLayer as string || ''
+        newZones.push({
+          id: uid(),
+          label: layerName || '선택 영역',
+          floorAreaM2: areaM2,
+          wallLengthM: perimM,
+          wallHeightM: 2.4,
+        })
+      }
+
+      if (newZones.length === 0) return
+
+      setData(prev => ({
+        ...prev,
+        categories: prev.categories.map(cat => ({
+          ...cat,
+          items: cat.items.map(item => {
+            if (item.id !== selectedItemId) return item
+            // 첫 번째 variant의 zones에 추가
+            const variants = item.variants.map((v, i) =>
+              i === 0 ? { ...v, zones: [...v.zones, ...newZones] } : v
+            )
+            return { ...item, variants }
+          }),
+        })),
+      }))
+    }
+    window.addEventListener('bimova:material-applied', handler)
+    return () => window.removeEventListener('bimova:material-applied', handler)
+  }, [editor, selectedItemId])
 
   const toggleCategory = useCallback((catKey: string) => {
     setData(prev => ({
