@@ -40,13 +40,13 @@ function WallSelectGuide({ onClickSelect }: { onClickSelect: () => void }) {
           <div className="material-guide-step-num">2</div>
           <div className="material-guide-step-text">
             캔버스에서<br />
-            <strong>벽을 클릭</strong>하여 선택
+            <strong>요소를 클릭</strong>하여 선택
           </div>
         </div>
       </div>
 
       <div className="material-guide-hint">
-        💡 Tip: 여러 벽을 선택하려면 Shift+클릭
+        💡 Tip: 여러 요소를 선택하려면 Shift+클릭
       </div>
     </div>
   )
@@ -63,7 +63,7 @@ export function MaterialsPanel() {
     let raf = 0
     const update = () => {
       const sel = editor.getSelectedShapes()
-      setWalls(sel.filter(s => s.type === 'wall'))
+      setWalls(sel.filter(s => s.type === 'wall' || s.type === 'dxfgroup'))
     }
     update() // 초기 상태
     const unsub = editor.store.listen(() => {
@@ -110,8 +110,8 @@ export function MaterialsPanel() {
         {/* 상태 메시지 */}
         <div className={`mat-status${walls.length > 0 ? ' mat-status-active' : ''}`}>
           {walls.length > 0
-            ? `✓ 벽 ${walls.length}개 선택됨 — 재질을 클릭하세요`
-            : '벽을 선택한 후 재질을 클릭하세요.'}
+            ? `✓ ${walls.length}개 선택됨 — 재질을 클릭하세요`
+            : '요소를 선택한 후 재질을 클릭하세요.'}
         </div>
 
         {/* 가이드 */}
