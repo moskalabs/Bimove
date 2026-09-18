@@ -4,7 +4,7 @@ import { createShapeId, type Editor } from 'tldraw'
 import { getScaleConfig } from './scaleConfig'
 import { getDefaultWallThicknessMm } from './settings'
 
-const MAX_SEGMENTS = 10000
+const MAX_SEGMENTS = 50_000
 
 type Seg = { x1: number; y1: number; x2: number; y2: number }
 
@@ -453,6 +453,89 @@ export function parseDxfSegments(
   return segs
 }
 
+// ── INSERT/BLOCK 재귀 확장 ──
+
+/** Block definitions from DXF */
+type DxfBlocks = Record<string, {
+  position?: { x: number; y: number }
+  entities?: Array<Record<string, unknown>>
+}>
+
+const SKIP_BLOCK_NAMES = new Set([
+  '*Model_Space', '*MODEL_SPACE',
+  '*Paper_Space', '*PAPER_SPACE',
+  '*Paper_Space0', '*PAPER_SPACE0',
+])
+
+/**
+ * parseDxfSegments를 감싸서 INSERT 엔티티를 재귀적으로 블록 내용으로 확장.
+ * 블록 좌표계 → 부모 좌표계 변환 포함.
+ */
+function collectSegmentsWithBlocks(
+  entities: Array<Record<string, unknown>>,
+  layerDefs: Record<string, { lineweight?: number; colorIndex?: number; color?: number }>,
+  blocks: DxfBlocks,
+  maxSegments = MAX_SEGMENTS,
+  depth = 0,
+): DxfSeg[] {
+  if (depth > 8 || maxSegments <= 0) return []
+
+  const allSegs: DxfSeg[] = []
+
+  // 1. INSERT가 아닌 엔티티는 직접 파싱
+  const directEntities = entities.filter(e => e.type !== 'INSERT')
+  if (directEntities.length > 0) {
+    const directSegs = parseDxfSegments(directEntities, layerDefs, maxSegments)
+    allSegs.push(...directSegs)
+  }
+
+  // 2. INSERT 엔티티 → 블록 내용을 재귀 확장
+  for (const e of entities) {
+    if (allSegs.length >= maxSegments) break
+    if (e.type !== 'INSERT') continue
+
+    const blockName = e.name as string
+    if (!blockName || SKIP_BLOCK_NAMES.has(blockName)) continue
+    const block = blocks[blockName]
+    if (!block?.entities?.length) continue
+
+    // INSERT 변환 파라미터
+    const pos = e.position as { x: number; y: number } | undefined
+    const bpos = block.position
+    const rot = ((e.rotation as number) ?? 0) * Math.PI / 180
+    const xs = (e.xScale as number) ?? 1
+    const ys = (e.yScale as number) ?? 1
+    const cos = Math.cos(rot), sin = Math.sin(rot)
+    const tx = pos?.x ?? 0, ty = pos?.y ?? 0
+    const bx = bpos?.x ?? 0, by = bpos?.y ?? 0
+    const insertLayer = (e.layer as string) || undefined
+
+    // 블록 내 세그먼트 재귀 수집 (블록 로컬 좌표)
+    const blockSegs = collectSegmentsWithBlocks(
+      block.entities as Array<Record<string, unknown>>,
+      layerDefs, blocks, maxSegments - allSegs.length, depth + 1,
+    )
+
+    // 블록 로컬 → 부모 좌표계 변환
+    for (const s of blockSegs) {
+      // 블록 기준점 빼고, 스케일, 회전, 이동
+      const px1 = (s.x1 - bx) * xs, py1 = (s.y1 - by) * ys
+      const px2 = (s.x2 - bx) * xs, py2 = (s.y2 - by) * ys
+      s.x1 = px1 * cos - py1 * sin + tx
+      s.y1 = px1 * sin + py1 * cos + ty
+      s.x2 = px2 * cos - py2 * sin + tx
+      s.y2 = px2 * sin + py2 * cos + ty
+
+      // 레이어 "0"이면 INSERT의 레이어 상속
+      if ((!s.layer || s.layer === '0') && insertLayer) s.layer = insertLayer
+    }
+
+    allSegs.push(...blockSegs)
+  }
+
+  return allSegs.slice(0, maxSegments)
+}
+
 /** 현재 캔버스에 이미 임포트된 DXF 핑거프린트 목록 조회 */
 function getImportedFingerprints(editor: Editor): Set<string> {
   const fps = new Set<string>()
@@ -558,12 +641,25 @@ export async function parseCadFile(
     { layers?: Record<string, { colorIndex?: number; color?: number; lineweight?: number }> } | undefined
   const layerDefs = layerTable?.layers ?? {}
 
-  const segs = parseDxfSegments(
+  // 블록 정의 추출
+  const rawBlocks = (dxf as unknown as Record<string, unknown>).blocks as
+    Record<string, { position?: { x: number; y: number }; entities?: Array<Record<string, unknown>> }> | undefined
+  const blocks: DxfBlocks = {}
+  if (rawBlocks) {
+    for (const [name, block] of Object.entries(rawBlocks)) {
+      if (block && typeof block === 'object') {
+        blocks[name] = { position: block.position, entities: block.entities }
+      }
+    }
+  }
+
+  // INSERT/BLOCK 재귀 확장 포함 세그먼트 수집
+  const segs = collectSegmentsWithBlocks(
     dxf.entities as unknown as Array<Record<string, unknown>>,
-    layerDefs,
+    layerDefs, blocks,
   )
   if (!segs.length) {
-    notify?.onError?.('DXF에서 선분(LINE/POLYLINE)을 찾지 못했습니다.')
+    notify?.onError?.('DXF에서 도형 데이터를 찾지 못했습니다.')
     return null
   }
 
