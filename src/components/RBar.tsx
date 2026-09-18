@@ -189,32 +189,30 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
   const editor = useEditor()
   const [gridOn, setGridOn] = useState(false)
   const [darkMode, setDarkModeLocal] = useState(getDarkMode)
-  const [dxfLayers, setDxfLayers] = useState<string[]>([])
-  const [layer, setLayer] = useState('')
+  const [layerCount, setLayerCount] = useState(0)
 
   useEffect(() => {
     if (!editor) return
     let raf = 0
-    const syncLayers = () => {
-      const layerSet = new Set<string>()
-      for (const s of editor.getCurrentPageShapes()) {
-        const meta = s.meta as Record<string, unknown>
-        if (typeof meta?.dxfLayer === 'string') layerSet.add(meta.dxfLayer)
-      }
-      const sorted = [...layerSet].sort()
-      setDxfLayers(sorted)
-      if (sorted.length > 0 && !sorted.includes(layer)) setLayer(sorted[0])
-    }
-    syncLayers()
     const unsub = editor.store.listen(() => {
       if (raf) return
       raf = requestAnimationFrame(() => {
         raf = 0
         const state = editor.getInstanceState()
         setGridOn(!!(state as { isGridMode?: boolean }).isGridMode)
-        syncLayers()
+        // 레이어 수만 추적 (레이어 패널에서 상세 관리)
+        let count = 0
+        for (const s of editor.getCurrentPageShapes()) {
+          if ((s.meta as Record<string, unknown>)?.dxfLayer) { count++; break }
+        }
+        setLayerCount(count)
       })
     })
+    // 초기값
+    setGridOn(!!(editor.getInstanceState() as { isGridMode?: boolean }).isGridMode)
+    for (const s of editor.getCurrentPageShapes()) {
+      if ((s.meta as Record<string, unknown>)?.dxfLayer) { setLayerCount(1); break }
+    }
     return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
   }, [editor])
 
@@ -240,17 +238,7 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
       {/* 도면층 */}
       <div className="rbar-prop-row">
         <span className="rbar-prop-label">도면층</span>
-        <div className="rbar-layer-select">
-          <span className="rbar-layer-dot" style={{ background: '#ea4335' }} />
-          <select
-            className="rbar-select"
-            value={layer}
-            onChange={e => setLayer(e.target.value)}
-          >
-            {dxfLayers.length === 0 && <option value="">없음</option>}
-            {dxfLayers.map(l => <option key={l} value={l}>{l}</option>)}
-          </select>
-        </div>
+        <span className="rbar-prop-value">{layerCount > 0 ? 'DXF 로드됨' : '없음'}</span>
       </div>
 
       {/* 스타일 */}
