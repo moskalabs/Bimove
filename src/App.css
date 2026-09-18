@@ -2823,6 +2823,35 @@ html[data-dark="true"] .cad-layer-cancel {
 }
 .ft-variant-add:hover { color: #1a73e8; }
 
+/* ── 평면/벽면 전환 탭 ── */
+
+.ft-view-tabs {
+  display: flex;
+  padding: 0 8px;
+  flex-shrink: 0;
+  border-bottom: 1px solid #eee;
+}
+.ft-view-tab {
+  flex: 1;
+  padding: 7px 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #888;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  text-align: center;
+  user-select: none;
+  transition: color 0.15s, border-color 0.15s;
+}
+.ft-view-tab.active {
+  color: #1a73e8;
+  border-bottom-color: #1a73e8;
+  font-weight: 700;
+}
+.ft-view-tab:hover { color: #333; }
+
 /* ── 물량표 섹션 ── */
 
 .ft-tables-scroll {

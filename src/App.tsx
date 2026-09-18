@@ -242,20 +242,33 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
   useEffect(() => {
     if (!editor) return
     let lastMiddleDown = 0
-    const handleMiddleClick = (e: MouseEvent) => {
+    const handleMiddleDown = (e: MouseEvent) => {
       if (e.button !== 1) return          // 중간 버튼만
+      // 캔버스 영역 내에서만 동작
+      if (!(e.target as HTMLElement)?.closest('.tl-container')) return
       const now = Date.now()
-      if (now - lastMiddleDown < 350) {   // 350ms 이내 = 더블클릭
+      if (now - lastMiddleDown < 400) {   // 400ms 이내 = 더블클릭
         e.preventDefault()
+        e.stopPropagation()
         editor.zoomToFit({ animation: { duration: 250 } })
-        lastMiddleDown = 0                // 리셋
+        lastMiddleDown = 0
       } else {
         lastMiddleDown = now
       }
     }
-    const canvas = document.querySelector('.tl-container') as HTMLElement | null
-    canvas?.addEventListener('mousedown', handleMiddleClick)
-    return () => canvas?.removeEventListener('mousedown', handleMiddleClick)
+    // auxclick 방지 (중간 버튼 기본 동작 차단)
+    const handleAuxClick = (e: MouseEvent) => {
+      if (e.button !== 1) return
+      if ((e.target as HTMLElement)?.closest('.tl-container')) {
+        e.preventDefault()
+      }
+    }
+    document.addEventListener('mousedown', handleMiddleDown, true)
+    document.addEventListener('auxclick', handleAuxClick, true)
+    return () => {
+      document.removeEventListener('mousedown', handleMiddleDown, true)
+      document.removeEventListener('auxclick', handleAuxClick, true)
+    }
   }, [editor])
 
   useEffect(() => {

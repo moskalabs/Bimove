@@ -480,6 +480,7 @@ function MaterialDetail({
 }) {
   const [activeTab, setActiveTab] = useState(0)
   const [showSpecEdit, setShowSpecEdit] = useState(false)
+  const [tableView, setTableView] = useState<'floor' | 'wall'>('floor')
   const variant = item.variants[activeTab] ?? item.variants[0]
   if (!variant) return null
 
@@ -538,10 +539,30 @@ function MaterialDetail({
         <button className="ft-variant-add" onClick={addVariant}><Plus size={14} /></button>
       </div>
 
-      {/* 물량표 (평면 / 벽면 분리) */}
+      {/* 물량표 (평면 / 벽면 탭 전환) */}
+      {!item.floorOnly && (
+        <div className="ft-view-tabs">
+          <button
+            className={`ft-view-tab${tableView === 'floor' ? ' active' : ''}`}
+            onClick={() => setTableView('floor')}
+          >
+            평면
+          </button>
+          <button
+            className={`ft-view-tab${tableView === 'wall' ? ' active' : ''}`}
+            onClick={() => setTableView('wall')}
+          >
+            벽면
+          </button>
+        </div>
+      )}
       <div className="ft-tables-scroll">
-        <FloorTable item={item} variant={variant} onUpdate={updateZones} />
-        {!item.floorOnly && <WallTable item={item} variant={variant} onUpdate={updateZones} />}
+        {(tableView === 'floor' || item.floorOnly) && (
+          <FloorTable item={item} variant={variant} onUpdate={updateZones} />
+        )}
+        {tableView === 'wall' && !item.floorOnly && (
+          <WallTable item={item} variant={variant} onUpdate={updateZones} />
+        )}
         <TotalSection item={item} variant={variant} onSpecEdit={() => setShowSpecEdit(true)} />
       </div>
 
