@@ -64,8 +64,12 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
     return () => window.removeEventListener('bimova:settings', onSettings)
   }, [])
 
+  // 재질 적용 색상 (MaterialsPanel에서 meta에 설정)
+  const matFill = (shape.meta?.fill as string) || ''
+  const matStroke = (shape.meta?.stroke as string) || ''
+
   // ACI 7 = #ffffff 등 밝은 색은 라이트 배경에서 안 보이므로 보정
-  const rawColor = (shape.meta?.dxfColor as string) || '#333'
+  const rawColor = matStroke || (shape.meta?.dxfColor as string) || '#333'
   const stroke = grayscale ? '#333' : (isNearWhite(rawColor) ? '#333' : rawColor)
   const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
   const baseStrokeW = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
@@ -75,6 +79,15 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
 
   return (
     <SVGContainer>
+      {matFill && (
+        <rect
+          x={0} y={0}
+          width={shape.props.w}
+          height={shape.props.h}
+          fill={matFill}
+          opacity={0.25}
+        />
+      )}
       <path
         d={shape.props.pathData}
         fill="none"
