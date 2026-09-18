@@ -1,9 +1,10 @@
 // 마감재 Tables 탭 — 카테고리 트리 + 자재별 상세 물량표
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronRight, ChevronDown, Plus, Upload, MoreHorizontal, Trash2, Pencil, MapPin } from 'lucide-react'
+import { ChevronRight, ChevronDown, Plus, Upload, MoreHorizontal, Trash2, Pencil, MapPin, MousePointer } from 'lucide-react'
 import { startAreaMeasure } from '../../../lib/drawingState'
 import { useProjectId } from '../../../context/ProjectContext'
 import { useEditor } from '../../../context/EditorContext'
+import { getScaleConfig } from '../../../lib/scaleConfig'
 import {
   loadFinishingData, saveFinishingData,
   createVariant, uid,
@@ -92,7 +93,6 @@ function FloorTable({ item, variant, onUpdate }: {
 
   const importZones = () => {
     if (!editor) return
-    // 클릭 시점에 실시간으로 zone 셰이프 조회 (stale 방지)
     const zones = editor.getCurrentPageShapes().filter(s => s.type === 'zone')
     if (zones.length === 0) {
       alert('캔버스에 공간(Zone)이 없습니다.\n툴바에서 공간지정 도구로 영역을 먼저 그려주세요.')
@@ -109,6 +109,35 @@ function FloorTable({ item, variant, onUpdate }: {
       }
     })
     onUpdate(newZones)
+  }
+
+  /** 캔버스에서 선택된 요소(wall/dxfgroup)의 바운딩박스로 면적/둘레 계산 후 테이블에 추가 */
+  const importFromSelection = () => {
+    if (!editor) return
+    const sel = editor.getSelectedShapes().filter(s => s.type === 'wall' || s.type === 'dxfgroup')
+    if (sel.length === 0) {
+      alert('캔버스에서 요소를 먼저 선택하세요.\n(선택 도구로 벽/DXF 요소를 클릭)')
+      return
+    }
+    const scale = getScaleConfig(editor)
+    const pxPerMm = scale.pxPerMm
+    const newZones: ZoneRow[] = sel.map(s => {
+      const bounds = editor.getShapeGeometry(s).bounds
+      const wM = bounds.width / pxPerMm / 1000
+      const hM = bounds.height / pxPerMm / 1000
+      const areaM2 = +(wM * hM).toFixed(2)
+      const perimM = +((wM + hM) * 2).toFixed(2)
+      const layerName = (s.meta as Record<string, unknown>)?.dxfLayer as string || ''
+      const matId = (s.meta as Record<string, unknown>)?.materialId as string || ''
+      return {
+        id: uid(),
+        label: layerName || matId || '선택 영역',
+        floorAreaM2: areaM2,
+        wallLengthM: perimM,
+        wallHeightM: 2.4,
+      }
+    })
+    onUpdate([...variant.zones, ...newZones])
   }
 
   return (
@@ -163,6 +192,9 @@ function FloorTable({ item, variant, onUpdate }: {
       </table>
       <div className="ft-row-btns">
         <button className="ft-add-row" onClick={addZone}>+ 행 추가</button>
+        <button className="ft-add-row ft-import-zone" onClick={importFromSelection} title="선택된 요소의 면적을 가져옵니다">
+          <MousePointer size={12} /> 선택 요소 가져오기
+        </button>
         <button className="ft-add-row ft-import-zone" onClick={importZones} title="캔버스 공간(Zone)을 가져옵니다">
           <MapPin size={12} /> 공간 가져오기
         </button>
