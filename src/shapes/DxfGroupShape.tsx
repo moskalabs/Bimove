@@ -40,9 +40,89 @@ export type DxfGroupShapeProps = {
   thickness: number
   segCount: number // 세그먼트 수 (정보용)
   textsJson: string // JSON: Array<{ x, y, t, h, r?, c? }>
+  hatchesJson: string // JSON: Array<{ d, p, s, a, c? }> (pathData, pattern, scale, angle, color)
 }
 
 type DxfTextEntry = { x: number; y: number; t: string; h: number; r?: number; c?: string }
+type DxfHatchEntry = { d: string; p: string; s: number; a: number; c?: string }
+
+/** DXF 패턴명 → SVG pattern 생성 */
+function dxfHatchPatternDef(
+  id: string, patternName: string, scale: number, angle: number, color: string,
+): React.ReactElement | null {
+  const sz = Math.max(4, 8 * scale) // 패턴 셀 크기
+  const upper = patternName.toUpperCase()
+
+  // SOLID: 패턴 없이 단색 fill
+  if (upper === 'SOLID') return null
+
+  const rotate = angle !== 0 ? `rotate(${angle})` : undefined
+
+  if (upper === 'ANSI31' || upper === 'ANSI32' || upper.includes('LINE') || upper === 'HATCH') {
+    // 사선 해칭 (45도)
+    const gap = upper === 'ANSI32' ? sz * 0.5 : sz
+    return (
+      <pattern id={id} width={gap} height={gap} patternUnits="userSpaceOnUse"
+        patternTransform={rotate ?? 'rotate(45)'}>
+        <line x1={0} y1={0} x2={gap} y2={0} stroke={color} strokeWidth={0.5} opacity={0.6} />
+      </pattern>
+    )
+  }
+
+  if (upper === 'ANSI37' || upper === 'ANSI38') {
+    // 역방향 사선
+    return (
+      <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
+        patternTransform={rotate ?? 'rotate(-45)'}>
+        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={0.5} opacity={0.6} />
+      </pattern>
+    )
+  }
+
+  if (upper.startsWith('AR-CONC') || upper === 'CONCRETE') {
+    // 콘크리트 점 패턴
+    return (
+      <pattern id={id} width={sz * 1.5} height={sz * 1.5} patternUnits="userSpaceOnUse"
+        patternTransform={rotate}>
+        <circle cx={sz * 0.3} cy={sz * 0.3} r={1} fill={color} opacity={0.45} />
+        <circle cx={sz * 1.1} cy={sz * 0.9} r={0.7} fill={color} opacity={0.3} />
+      </pattern>
+    )
+  }
+
+  if (upper.startsWith('AR-BRST') || upper === 'BRICK') {
+    // 벽돌 패턴
+    const w = sz * 1.75, h2 = sz
+    return (
+      <pattern id={id} width={w} height={h2} patternUnits="userSpaceOnUse"
+        patternTransform={rotate}>
+        <line x1={0} y1={0} x2={w} y2={0} stroke={color} strokeWidth={0.5} opacity={0.5} />
+        <line x1={0} y1={h2 / 2} x2={w} y2={h2 / 2} stroke={color} strokeWidth={0.5} opacity={0.5} />
+        <line x1={w / 2} y1={0} x2={w / 2} y2={h2 / 2} stroke={color} strokeWidth={0.5} opacity={0.5} />
+        <line x1={0} y1={h2 / 2} x2={0} y2={h2} stroke={color} strokeWidth={0.5} opacity={0.5} />
+      </pattern>
+    )
+  }
+
+  if (upper === 'CROSS' || upper === 'GRID') {
+    // 격자 패턴
+    return (
+      <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
+        patternTransform={rotate}>
+        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={0.5} opacity={0.5} />
+        <line x1={0} y1={0} x2={0} y2={sz} stroke={color} strokeWidth={0.5} opacity={0.5} />
+      </pattern>
+    )
+  }
+
+  // 기본 fallback: 45도 사선
+  return (
+    <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
+      patternTransform={rotate ?? 'rotate(45)'}>
+      <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={0.5} opacity={0.5} />
+    </pattern>
+  )
+}
 
 export type DxfGroupShape = TLBaseShape<'dxfgroup', DxfGroupShapeProps>
 
@@ -111,8 +191,36 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
     if (shape.props.textsJson) texts = JSON.parse(shape.props.textsJson)
   } catch { /* ignore */ }
 
+  // HATCH 데이터 파싱
+  let hatches: DxfHatchEntry[] = []
+  try {
+    if (shape.props.hatchesJson) hatches = JSON.parse(shape.props.hatchesJson)
+  } catch { /* ignore */ }
+
+  // HATCH SVG 패턴 defs + fill 준비
+  const hatchDefs: Array<{ id: string; def: React.ReactElement | null; isSolid: boolean; color: string }> = hatches.map((h, i) => {
+    const hColor = grayscale
+      ? (darkMode ? '#aaa' : '#666')
+      : h.c
+        ? (darkMode ? (isNearBlack(h.c) ? '#aaa' : h.c) : (isNearWhite(h.c) ? '#666' : h.c))
+        : (darkMode ? '#aaa' : '#666')
+    const patId = `hatch-${shape.id}-${i}`
+    const isSolid = h.p.toUpperCase() === 'SOLID'
+    return {
+      id: patId,
+      def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor),
+      isSolid,
+      color: hColor,
+    }
+  })
+
   return (
     <SVGContainer>
+      {hatchDefs.some(d => d.def) && (
+        <defs>
+          {hatchDefs.map(d => d.def)}
+        </defs>
+      )}
       {matFill && (
         <rect
           x={0} y={0}
@@ -122,6 +230,20 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
           opacity={0.35}
         />
       )}
+      {/* HATCH fills (아웃라인 뒤, 텍스트 앞) */}
+      {hatches.map((h, i) => {
+        const hd = hatchDefs[i]
+        return (
+          <path
+            key={`h${i}`}
+            d={h.d}
+            fill={hd.isSolid ? hd.color : `url(#${hd.id})`}
+            stroke="none"
+            opacity={0.3}
+            pointerEvents="none"
+          />
+        )
+      })}
       {shape.props.pathData && (
         <path
           d={shape.props.pathData}
@@ -189,10 +311,11 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
     thickness: T.number,
     segCount: T.number,
     textsJson: T.string,
+    hatchesJson: T.string,
   }
 
   getDefaultProps(): DxfGroupShapeProps {
-    return { w: 100, h: 100, pathData: '', thickness: 2, segCount: 0, textsJson: '' }
+    return { w: 100, h: 100, pathData: '', thickness: 2, segCount: 0, textsJson: '', hatchesJson: '' }
   }
 
   getGeometry(shape: DxfGroupShape) {
@@ -234,8 +357,33 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
       if (shape.props.textsJson) texts = JSON.parse(shape.props.textsJson)
     } catch { /* ignore */ }
 
+    let hatches: DxfHatchEntry[] = []
+    try {
+      if (shape.props.hatchesJson) hatches = JSON.parse(shape.props.hatchesJson)
+    } catch { /* ignore */ }
+
+    const svgHatchDefs = hatches.map((h, i) => {
+      const hColor = h.c && !isNearWhite(h.c) ? h.c : '#666'
+      const patId = `hatch-svg-${shape.id}-${i}`
+      const isSolid = h.p.toUpperCase() === 'SOLID'
+      return { id: patId, def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor), isSolid, color: hColor }
+    })
+
     return (
       <g>
+        {svgHatchDefs.some(d => d.def) && (
+          <defs>
+            {svgHatchDefs.map(d => d.def)}
+          </defs>
+        )}
+        {hatches.map((h, i) => {
+          const hd = svgHatchDefs[i]
+          return (
+            <path key={`h${i}`} d={h.d}
+              fill={hd.isSolid ? hd.color : `url(#${hd.id})`}
+              stroke="none" opacity={0.3} />
+          )
+        })}
         {shape.props.pathData && (
           <path
             d={shape.props.pathData}

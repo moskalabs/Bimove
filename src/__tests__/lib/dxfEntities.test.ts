@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import DxfParser from 'dxf-parser'
-import { parseDxfSegments, commitCadImport, type CadParseResult, type DxfSeg } from '../../lib/dxf'
+import { parseDxfSegments, parseDxfHatches, commitCadImport, type CadParseResult, type DxfSeg, type DxfHatch } from '../../lib/dxf'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -83,6 +83,7 @@ function parseDxfText(text: string, fileName = 'test.dxf'): CadParseResult {
     unitToMm,
     _segs: segs,
     _texts: [],
+    _hatches: [],
   }
 }
 
@@ -887,5 +888,157 @@ describe('parseDxfSegments: mixed entity types', () => {
       { type: 'LINE', vertices: [{ x: 0, y: 0 }, { x: 10, y: 0 }] },
     ])
     expect(segs.length).toBe(1)
+  })
+})
+
+// ─── HATCH pattern extraction ───────────────────────────────────────────────
+
+describe('parseDxfHatches: pattern extraction', () => {
+  it('extracts SOLID hatch with LINE boundary', () => {
+    const hatches = parseDxfHatches([{
+      type: 'HATCH',
+      patternName: 'SOLID',
+      boundaryPaths: [{
+        edges: [
+          { type: 1, start: { x: 0, y: 0 }, end: { x: 100, y: 0 } },
+          { type: 1, start: { x: 100, y: 0 }, end: { x: 100, y: 100 } },
+          { type: 1, start: { x: 100, y: 100 }, end: { x: 0, y: 100 } },
+          { type: 1, start: { x: 0, y: 100 }, end: { x: 0, y: 0 } },
+        ],
+      }],
+    }], {})
+
+    expect(hatches).toHaveLength(1)
+    expect(hatches[0].patternName).toBe('SOLID')
+    expect(hatches[0].pathData).toContain('M')
+    expect(hatches[0].pathData).toContain('Z')
+    expect(hatches[0].cx).toBeCloseTo(50)
+    expect(hatches[0].cy).toBeCloseTo(50)
+  })
+
+  it('extracts ANSI31 hatch with pattern properties', () => {
+    const hatches = parseDxfHatches([{
+      type: 'HATCH',
+      patternName: 'ANSI31',
+      patternScale: 2.0,
+      patternAngle: 45,
+      colorIndex: 1,
+      boundaryPaths: [{
+        edges: [
+          { type: 1, start: { x: 0, y: 0 }, end: { x: 50, y: 0 } },
+          { type: 1, start: { x: 50, y: 0 }, end: { x: 50, y: 50 } },
+          { type: 1, start: { x: 50, y: 50 }, end: { x: 0, y: 0 } },
+        ],
+      }],
+    }], {})
+
+    expect(hatches).toHaveLength(1)
+    expect(hatches[0].patternName).toBe('ANSI31')
+    expect(hatches[0].patternScale).toBe(2.0)
+    expect(hatches[0].patternAngle).toBe(45)
+    expect(hatches[0].color).toBe('#ff0000')
+  })
+
+  it('extracts hatch with polyline boundary', () => {
+    const hatches = parseDxfHatches([{
+      type: 'HATCH',
+      patternName: 'SOLID',
+      boundaryPaths: [{
+        polyline: {
+          vertices: [
+            { x: 10, y: 10 },
+            { x: 20, y: 10 },
+            { x: 20, y: 20 },
+            { x: 10, y: 20 },
+          ],
+        },
+      }],
+    }], {})
+
+    expect(hatches).toHaveLength(1)
+    expect(hatches[0].pathData).toMatch(/^M10,10L20,10L20,20L10,20Z$/)
+    expect(hatches[0].cx).toBeCloseTo(15)
+    expect(hatches[0].cy).toBeCloseTo(15)
+  })
+
+  it('extracts hatch with ARC edge boundary', () => {
+    const hatches = parseDxfHatches([{
+      type: 'HATCH',
+      boundaryPaths: [{
+        edges: [
+          { type: 2, center: { x: 0, y: 0 }, radius: 50, startAngle: 0, endAngle: 360 },
+        ],
+      }],
+    }], {})
+
+    expect(hatches).toHaveLength(1)
+    expect(hatches[0].patternName).toBe('SOLID') // defaults to SOLID
+    expect(hatches[0].pathData).toContain('M')
+    expect(hatches[0].pathData).toContain('Z')
+  })
+
+  it('defaults pattern to SOLID when no patternName', () => {
+    const hatches = parseDxfHatches([{
+      type: 'HATCH',
+      boundaryPaths: [{
+        edges: [
+          { type: 1, start: { x: 0, y: 0 }, end: { x: 10, y: 0 } },
+          { type: 1, start: { x: 10, y: 0 }, end: { x: 0, y: 0 } },
+        ],
+      }],
+    }], {})
+
+    expect(hatches).toHaveLength(1)
+    expect(hatches[0].patternName).toBe('SOLID')
+    expect(hatches[0].patternScale).toBe(1)
+    expect(hatches[0].patternAngle).toBe(0)
+  })
+
+  it('skips non-HATCH entities', () => {
+    const hatches = parseDxfHatches([
+      { type: 'LINE', vertices: [{ x: 0, y: 0 }, { x: 10, y: 0 }] },
+      { type: 'CIRCLE', center: { x: 0, y: 0 }, radius: 50 },
+    ], {})
+
+    expect(hatches).toHaveLength(0)
+  })
+
+  it('resolves color from layer when entity has none', () => {
+    const hatches = parseDxfHatches([{
+      type: 'HATCH',
+      layer: 'FILL',
+      boundaryPaths: [{
+        edges: [
+          { type: 1, start: { x: 0, y: 0 }, end: { x: 10, y: 0 } },
+          { type: 1, start: { x: 10, y: 0 }, end: { x: 0, y: 0 } },
+        ],
+      }],
+    }], { FILL: { colorIndex: 3 } })
+
+    expect(hatches[0].color).toBe('#00ff00') // ACI 3 = green
+    expect(hatches[0].layer).toBe('FILL')
+  })
+
+  it('handles multiple boundary paths in one HATCH', () => {
+    const hatches = parseDxfHatches([{
+      type: 'HATCH',
+      patternName: 'ANSI31',
+      boundaryPaths: [
+        { edges: [
+          { type: 1, start: { x: 0, y: 0 }, end: { x: 10, y: 0 } },
+          { type: 1, start: { x: 10, y: 0 }, end: { x: 0, y: 0 } },
+        ]},
+        { polyline: { vertices: [
+          { x: 20, y: 20 }, { x: 30, y: 20 }, { x: 30, y: 30 },
+        ]}},
+      ],
+    }], {})
+
+    expect(hatches).toHaveLength(1)
+    // Both paths combined in one pathData
+    expect(hatches[0].pathData).toContain('Z')
+    // At least 2 M commands (one per boundary)
+    const mCount = (hatches[0].pathData.match(/M/g) || []).length
+    expect(mCount).toBeGreaterThanOrEqual(2)
   })
 })

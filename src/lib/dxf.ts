@@ -350,6 +350,17 @@ export type DxfText = {
   color?: string
 }
 
+/** DXF HATCH 패턴 채움 데이터 */
+export type DxfHatch = {
+  pathData: string       // closed SVG path (boundary)
+  patternName: string    // "SOLID", "ANSI31", "AR-CONC" 등
+  patternScale: number   // 패턴 축척 (기본 1)
+  patternAngle: number   // 패턴 회전 (도, 기본 0)
+  color?: string
+  layer?: string
+  cx: number; cy: number // 중심점 (클러스터 할당용)
+}
+
 export function parseDxfSegments(
   entities: Array<Record<string, unknown>>,
   layerDefs: Record<string, { lineweight?: number; colorIndex?: number; color?: number }>,
@@ -553,6 +564,144 @@ export function parseDxfSegments(
   return segs
 }
 
+// ── HATCH 패턴 추출 ──
+
+/** HATCH boundaryPaths 타입 */
+type HatchBoundaryPath = {
+  edges?: Array<{
+    type: number
+    start?: { x: number; y: number }
+    end?: { x: number; y: number }
+    center?: { x: number; y: number }
+    radius?: number
+    startAngle?: number
+    endAngle?: number
+    isCounterClockwise?: boolean
+    majorAxisEndPoint?: { x: number; y: number }
+    minorAxisRatio?: number
+  }>
+  polyline?: { vertices: Array<{ x: number; y: number; bulge?: number }> }
+}
+
+/** boundary edges/polyline → closed SVG path string */
+function boundaryToSvgPath(bp: HatchBoundaryPath): string {
+  const parts: string[] = []
+  if (bp.edges && bp.edges.length > 0) {
+    let started = false
+    for (const edge of bp.edges) {
+      if (edge.type === 1 && edge.start && edge.end) {
+        if (!started) { parts.push(`M${edge.start.x},${edge.start.y}`); started = true }
+        parts.push(`L${edge.end.x},${edge.end.y}`)
+      } else if (edge.type === 2 && edge.center && edge.radius) {
+        const cx = edge.center, r = edge.radius
+        let sa = (edge.startAngle ?? 0) * Math.PI / 180
+        let ea = (edge.endAngle ?? 360) * Math.PI / 180
+        if (edge.isCounterClockwise === false) { const tmp = sa; sa = ea; ea = tmp }
+        if (ea <= sa) ea += 2 * Math.PI
+        const steps = Math.max(3, Math.ceil(((ea - sa) * 180) / (Math.PI * 15)))
+        const dt = (ea - sa) / steps
+        for (let i = 0; i <= steps; i++) {
+          const t = sa + dt * i
+          const px = cx.x + r * Math.cos(t), py = cx.y + r * Math.sin(t)
+          parts.push(i === 0 && !started ? `M${px},${py}` : `L${px},${py}`)
+          if (i === 0) started = true
+        }
+      } else if (edge.type === 3 && edge.center && edge.majorAxisEndPoint && edge.minorAxisRatio) {
+        const cx = edge.center, maj = edge.majorAxisEndPoint, ratio = edge.minorAxisRatio
+        const a = Math.hypot(maj.x, maj.y), b = a * ratio
+        const rot = Math.atan2(maj.y, maj.x)
+        const cosR = Math.cos(rot), sinR = Math.sin(rot)
+        let sa = edge.startAngle ?? 0, ea = edge.endAngle ?? (2 * Math.PI)
+        if (ea <= sa) ea += 2 * Math.PI
+        const N = 18, dt = (ea - sa) / N
+        for (let i = 0; i <= N; i++) {
+          const t = sa + dt * i
+          const lx = a * Math.cos(t), ly = b * Math.sin(t)
+          const px = cx.x + lx * cosR - ly * sinR, py = cx.y + lx * sinR + ly * cosR
+          parts.push(i === 0 && !started ? `M${px},${py}` : `L${px},${py}`)
+          if (i === 0) started = true
+        }
+      }
+    }
+    if (started) parts.push('Z')
+  } else if (bp.polyline?.vertices && bp.polyline.vertices.length >= 2) {
+    const vts = bp.polyline.vertices
+    parts.push(`M${vts[0].x},${vts[0].y}`)
+    for (let i = 1; i < vts.length; i++) {
+      parts.push(`L${vts[i].x},${vts[i].y}`)
+    }
+    parts.push('Z')
+  }
+  return parts.join('')
+}
+
+/** HATCH 엔티티에서 패턴 데이터 추출 (boundary outline은 기존 parseDxfSegments가 처리) */
+export function parseDxfHatches(
+  entities: Array<Record<string, unknown>>,
+  layerDefs: Record<string, { lineweight?: number; colorIndex?: number; color?: number }>,
+): DxfHatch[] {
+  const hatches: DxfHatch[] = []
+  for (const e of entities) {
+    if (e.type !== 'HATCH') continue
+    const layer = (e.layer as string) || undefined
+    const paths = e.boundaryPaths as HatchBoundaryPath[] | undefined
+    if (!paths || paths.length === 0) continue
+
+    // 색상 해석
+    let color: string | undefined
+    const entTrueColor = typeof e.color === 'number' ? e.color : 0
+    const entColorIndex = typeof e.colorIndex === 'number' ? e.colorIndex : 0
+    if (entTrueColor > 0) {
+      color = trueColorToHex(entTrueColor)
+    } else if (entColorIndex > 0) {
+      color = aciToHex(entColorIndex)
+    } else if (layer && layerDefs[layer]) {
+      const lc = layerDefs[layer]
+      if (typeof lc.color === 'number' && lc.color > 0) color = trueColorToHex(lc.color)
+      else if (typeof lc.colorIndex === 'number' && lc.colorIndex > 0) color = aciToHex(lc.colorIndex)
+    }
+
+    // 패턴 정보 추출
+    const patternName = (e.patternName as string) ?? (e.name as string) ?? 'SOLID'
+    const patternScale = (e.patternScale as number) ?? 1
+    const patternAngle = (e.patternAngle as number) ?? 0
+
+    // 각 boundary를 SVG path로 변환
+    const svgParts: string[] = []
+    let sumX = 0, sumY = 0, ptCount = 0
+    for (const bp of paths) {
+      const pathStr = boundaryToSvgPath(bp)
+      if (pathStr) {
+        svgParts.push(pathStr)
+        // 중심점 계산용 좌표 수집
+        if (bp.edges) {
+          for (const edge of bp.edges) {
+            if (edge.start) { sumX += edge.start.x; sumY += edge.start.y; ptCount++ }
+            if (edge.end) { sumX += edge.end.x; sumY += edge.end.y; ptCount++ }
+            if (edge.center) { sumX += edge.center.x; sumY += edge.center.y; ptCount++ }
+          }
+        } else if (bp.polyline?.vertices) {
+          for (const v of bp.polyline.vertices) { sumX += v.x; sumY += v.y; ptCount++ }
+        }
+      }
+    }
+
+    if (svgParts.length > 0 && ptCount > 0) {
+      hatches.push({
+        pathData: svgParts.join(''),
+        patternName: patternName.toUpperCase(),
+        patternScale,
+        patternAngle,
+        color,
+        layer,
+        cx: sumX / ptCount,
+        cy: sumY / ptCount,
+      })
+    }
+  }
+  return hatches
+}
+
 // ── INSERT/BLOCK 재귀 확장 ──
 
 /** Block definitions from DXF */
@@ -719,6 +868,80 @@ function collectTextsWithBlocks(
   return allTexts
 }
 
+/**
+ * HATCH 엔티티를 재귀적으로 수집 (INSERT 블록 내부 포함).
+ * collectTextsWithBlocks와 동일한 변환 로직.
+ */
+function collectHatchesWithBlocks(
+  entities: Array<Record<string, unknown>>,
+  layerDefs: Record<string, { lineweight?: number; colorIndex?: number; color?: number }>,
+  blocks: DxfBlocks,
+  depth = 0,
+): DxfHatch[] {
+  if (depth > 8) return []
+  const allHatches: DxfHatch[] = []
+
+  // 1. HATCH 엔티티 직접 파싱
+  const hatchEntities = entities.filter(e => e.type === 'HATCH')
+  if (hatchEntities.length > 0) {
+    allHatches.push(...parseDxfHatches(hatchEntities, layerDefs))
+  }
+
+  // 2. INSERT 블록 재귀
+  for (const e of entities) {
+    if (e.type !== 'INSERT') continue
+    const blockName = e.name as string
+    if (!blockName || SKIP_BLOCK_NAMES.has(blockName)) continue
+    const block = blocks[blockName]
+    if (!block?.entities?.length) continue
+
+    const pos = e.position as { x: number; y: number } | undefined
+    const bpos = block.position
+    const rot = ((e.rotation as number) ?? 0) * Math.PI / 180
+    const xs = (e.xScale as number) ?? 1
+    const ys = (e.yScale as number) ?? 1
+    const cos = Math.cos(rot), sin = Math.sin(rot)
+    const tx = pos?.x ?? 0, ty = pos?.y ?? 0
+    const bx = bpos?.x ?? 0, by = bpos?.y ?? 0
+    const insertLayer = (e.layer as string) || undefined
+
+    const blockHatches = collectHatchesWithBlocks(
+      block.entities as Array<Record<string, unknown>>,
+      layerDefs, blocks, depth + 1,
+    )
+
+    for (const h of blockHatches) {
+      // 중심점 변환
+      const px = (h.cx - bx) * xs, py = (h.cy - by) * ys
+      h.cx = px * cos - py * sin + tx
+      h.cy = px * sin + py * cos + ty
+
+      // pathData의 좌표들을 affine transform (정규식으로 숫자 좌표 변환)
+      h.pathData = transformSvgPath(h.pathData, bx, by, xs, ys, cos, sin, tx, ty)
+
+      if ((!h.layer || h.layer === '0') && insertLayer) h.layer = insertLayer
+    }
+    allHatches.push(...blockHatches)
+  }
+
+  return allHatches
+}
+
+/** SVG path 문자열의 좌표를 affine transform */
+function transformSvgPath(
+  path: string,
+  bx: number, by: number, xs: number, ys: number,
+  cos: number, sin: number, tx: number, ty: number,
+): string {
+  return path.replace(/([ML])([\d.e+-]+),([\d.e+-]+)/g, (_, cmd, xStr, yStr) => {
+    const ox = parseFloat(xStr), oy = parseFloat(yStr)
+    const px = (ox - bx) * xs, py = (oy - by) * ys
+    const nx = px * cos - py * sin + tx
+    const ny = px * sin + py * cos + ty
+    return `${cmd}${nx},${ny}`
+  })
+}
+
 /** 현재 캔버스에 이미 임포트된 DXF 핑거프린트 목록 조회 */
 function getImportedFingerprints(editor: Editor): Set<string> {
   const fps = new Set<string>()
@@ -761,6 +984,7 @@ export interface CadParseResult {
   /** 내부 데이터 (commitCadImport에서 사용) */
   _segs: DxfSeg[]
   _texts: DxfText[]
+  _hatches: DxfHatch[]
 }
 
 const STRUCTURAL_KEYWORDS = /wall|window|win(?!ter)|door|stair|column|beam|slab|elev|건축|벽|창문|문/i
@@ -837,12 +1061,16 @@ export async function parseCadFile(
     }
   }
 
-  // INSERT/BLOCK 재귀 확장 포함 세그먼트 + 텍스트 수집
+  // INSERT/BLOCK 재귀 확장 포함 세그먼트 + 텍스트 + 해치 수집
   const segs = collectSegmentsWithBlocks(
     dxf.entities as unknown as Array<Record<string, unknown>>,
     layerDefs, blocks,
   )
   const texts = collectTextsWithBlocks(
+    dxf.entities as unknown as Array<Record<string, unknown>>,
+    layerDefs, blocks,
+  )
+  const hatches = collectHatchesWithBlocks(
     dxf.entities as unknown as Array<Record<string, unknown>>,
     layerDefs, blocks,
   )
@@ -886,6 +1114,7 @@ export async function parseCadFile(
     unitToMm,
     _segs: segs,
     _texts: texts,
+    _hatches: hatches,
   }
 }
 
@@ -1110,6 +1339,32 @@ export function commitCadImport(
     maxY = Math.max(maxY, t.y)
   }
 
+  // ── HATCH 좌표 변환 (DXF → px, Y flip, SVG path 좌표 변환) ──
+  type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; color?: string; layer?: string; cx: number; cy: number }
+  const pxHatches: PxHatch[] = (result._hatches ?? [])
+    .filter(h => selectedLayers.has(h.layer || '0'))
+    .map(h => {
+      // SVG path 좌표 변환: scale + Y flip
+      const transformedPath = h.pathData.replace(
+        /([ML])([\d.e+-]+),([\d.e+-]+)/g,
+        (_, cmd, xStr, yStr) => {
+          const nx = parseFloat(xStr) * scale
+          const ny = -parseFloat(yStr) * scale
+          return `${cmd}${nx},${ny}`
+        }
+      )
+      return {
+        pathData: transformedPath,
+        patternName: h.patternName,
+        patternScale: h.patternScale,
+        patternAngle: h.patternAngle,
+        color: h.color,
+        layer: h.layer,
+        cx: h.cx * scale,
+        cy: -h.cy * scale,
+      }
+    })
+
   // ── 100+ segments: 레이어별 DxfGroup shape로 묶기 (React 컴포넌트 수 대폭 감소) ──
   if (merged.length >= 100) {
     // 레이어별 그루핑
@@ -1121,8 +1376,9 @@ export function commitCadImport(
       g.push(s)
     }
 
-    // 텍스트 배정용 Set (이미 할당된 텍스트 인덱스)
+    // 배정 추적용 Set
     const assignedTextIdx = new Set<number>()
+    const assignedHatchIdx = new Set<number>()
 
     const groupShapes: unknown[] = []
     for (const [layer, segs] of layerGroups) {
@@ -1159,6 +1415,32 @@ export function commitCadImport(
           }
         })
 
+        // 이 클러스터 바운딩박스 내의 HATCH 수집
+        const localHatches: Array<{ d: string; p: string; s: number; a: number; c?: string }> = []
+        pxHatches.forEach((h, idx) => {
+          if (assignedHatchIdx.has(idx)) return
+          if (h.cx >= gMinX - margin && h.cx <= gMaxX + margin &&
+              h.cy >= gMinY - margin && h.cy <= gMaxY + margin) {
+            // pathData를 shape-local 좌표로 변환
+            const localPath = h.pathData.replace(
+              /([ML])([\d.e+-]+),([\d.e+-]+)/g,
+              (_, cmd, xStr, yStr) => {
+                const lx = parseFloat(xStr) - gMinX
+                const ly = parseFloat(yStr) - gMinY
+                return `${cmd}${lx.toFixed(1)},${ly.toFixed(1)}`
+              }
+            )
+            localHatches.push({
+              d: localPath,
+              p: h.patternName,
+              s: h.patternScale,
+              a: h.patternAngle,
+              c: h.color,
+            })
+            assignedHatchIdx.add(idx)
+          }
+        })
+
         const gx = gMinX - offsetX
         const gy = gMinY - offsetY
         const w = Math.max(gMaxX - gMinX, 1)
@@ -1183,6 +1465,7 @@ export function commitCadImport(
           props: {
             w, h, pathData, thickness: thickness * 0.3, segCount: cluster.length,
             textsJson: localTexts.length ? JSON.stringify(localTexts) : '',
+            hatchesJson: localHatches.length ? JSON.stringify(localHatches) : '',
           },
           meta: {
             dxfFingerprint: result.fingerprint,
@@ -1227,7 +1510,7 @@ export function commitCadImport(
           type: 'dxfgroup',
           x: tMinX - offsetX,
           y: tMinY - offsetY,
-          props: { w, h, pathData: '', thickness: 0, segCount: 0, textsJson: JSON.stringify(localTexts) },
+          props: { w, h, pathData: '', thickness: 0, segCount: 0, textsJson: JSON.stringify(localTexts), hatchesJson: '' },
           meta: { dxfFingerprint: result.fingerprint, dxfLayer: layer },
         })
       }

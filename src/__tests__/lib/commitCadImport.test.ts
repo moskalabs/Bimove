@@ -306,6 +306,7 @@ function parseDxfText(text: string, fileName = 'test.dxf'): CadParseResult {
     unitToMm,
     _segs: segs,
     _texts: [],
+    _hatches: [],
   }
 }
 
