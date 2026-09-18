@@ -5,8 +5,10 @@ import {
   Copy, Move, RotateCw,
   Ruler, Type,
 } from 'lucide-react'
-import { PageRecordType } from 'tldraw'
+import { PageRecordType, createShapeId } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
+import { startZoneDraw } from '../lib/drawingState'
+import { nextZoneColor } from '../shapes/ZoneShape'
 
 /* ── 커스텀 SVG 아이콘 (건축 특화, 모노톤) ── */
 function WallIcon() {
@@ -194,6 +196,32 @@ export function TopBar() {
 
   const selectTool = (id: string) => {
     setActiveTool(id)
+
+    // 공간지정: 오버레이 기반 폴리곤 드로잉
+    if (id === 'zone' && editor) {
+      startZoneDraw((result) => {
+        const { points, areaM2, perimeterM } = result
+        const origin = points[0]
+        const localPoints = points.map(p => ({ x: p.x - origin.x, y: p.y - origin.y }))
+        const shapeId = createShapeId()
+        editor.createShape({
+          id: shapeId,
+          type: 'zone',
+          x: origin.x,
+          y: origin.y,
+          props: {
+            points: localPoints,
+            label: '',
+            wallHeightMm: 2400,
+            areaM2,
+            perimeterM,
+            color: nextZoneColor(),
+          },
+        })
+        window.dispatchEvent(new CustomEvent('bimova:zone-name', { detail: { shapeId } }))
+      })
+      return
+    }
 
     const mapped = TOOL_MAP[id]
     if (mapped && editor) {

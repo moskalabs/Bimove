@@ -3176,6 +3176,73 @@ html[data-dark="true"] .cad-layer-cancel {
   color: #e53e3e;
 }
 
+/* ── Zone Name Popup ── */
+.zone-name-popup {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+  z-index: 400;
+  min-width: 200px;
+}
+.zone-name-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: #333;
+}
+.zone-name-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #555;
+}
+.zone-name-field span { min-width: 48px; }
+.zone-name-field input {
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 12px;
+  outline: none;
+}
+.zone-name-field input:focus { border-color: #1a73e8; }
+.zone-name-submit {
+  width: 100%;
+  padding: 6px 0;
+  background: #1a73e8;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.zone-name-submit:hover { background: #1557b0; }
+
+html[data-dark="true"] .zone-name-popup { background: #2a2a30; border-color: #444; }
+html[data-dark="true"] .zone-name-title { color: #eee; }
+html[data-dark="true"] .zone-name-field { color: #bbb; }
+html[data-dark="true"] .zone-name-field input { background: #333; border-color: #555; color: #eee; }
+
+/* ── Finishing 공간 가져오기 버튼 ── */
+.ft-row-btns { display: flex; gap: 6px; }
+.ft-row-btns .ft-add-row { flex: 1; }
+.ft-import-zone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #34a853;
+  border-color: #34a853;
+}
+.ft-import-zone:hover { background: #f0faf3; color: #2d8e47; }
+
 /* ── Layout (배치) Panel ── */
 .layout-page-list {
   display: flex;

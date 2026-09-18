@@ -64,3 +64,36 @@ export function cancelAreaMeasure() {
   areaMeasureState.callback = null
   window.dispatchEvent(new CustomEvent('bimova:area-measure', { detail: { active: false } }))
 }
+
+// ── 공간지정(Zone) 드로잉 모드 ──
+
+export type ZoneDrawResult = {
+  points: { x: number; y: number }[]
+  areaM2: number
+  perimeterM: number
+}
+
+export const zoneDrawState = {
+  active: false,
+  callback: null as ((result: ZoneDrawResult) => void) | null,
+}
+
+export function startZoneDraw(cb: (result: ZoneDrawResult) => void) {
+  zoneDrawState.active = true
+  zoneDrawState.callback = cb
+  window.dispatchEvent(new CustomEvent('bimova:zone-draw', { detail: { active: true } }))
+}
+
+export function completeZoneDraw(result: ZoneDrawResult) {
+  const cb = zoneDrawState.callback
+  zoneDrawState.active = false
+  zoneDrawState.callback = null
+  window.dispatchEvent(new CustomEvent('bimova:zone-draw', { detail: { active: false } }))
+  cb?.(result)
+}
+
+export function cancelZoneDraw() {
+  zoneDrawState.active = false
+  zoneDrawState.callback = null
+  window.dispatchEvent(new CustomEvent('bimova:zone-draw', { detail: { active: false } }))
+}

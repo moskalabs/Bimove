@@ -1,8 +1,9 @@
 // 마감재 Tables 탭 — 카테고리 트리 + 자재별 상세 물량표
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronRight, ChevronDown, Plus, Upload, MoreHorizontal, Trash2, Pencil } from 'lucide-react'
+import { ChevronRight, ChevronDown, Plus, Upload, MoreHorizontal, Trash2, Pencil, MapPin } from 'lucide-react'
 import { startAreaMeasure } from '../../../lib/drawingState'
 import { useProjectId } from '../../../context/ProjectContext'
+import { useEditor } from '../../../context/EditorContext'
 import {
   loadFinishingData, saveFinishingData,
   createVariant, uid,
@@ -73,6 +74,7 @@ function FloorTable({ item, variant, onUpdate }: {
   variant: MaterialVariant
   onUpdate: (zones: ZoneRow[]) => void
 }) {
+  const editor = useEditor()
   const isPaint = item.calcType === 'paint'
 
   const updateZone = (idx: number, patch: Partial<ZoneRow>) => {
@@ -86,6 +88,23 @@ function FloorTable({ item, variant, onUpdate }: {
     startAreaMeasure(({ areaM2 }) => {
       updateZone(idx, { floorAreaM2: areaM2 })
     })
+  }
+
+  const importZones = () => {
+    if (!editor) return
+    const zoneShapes = editor.getCurrentPageShapes().filter(s => s.type === 'zone')
+    if (zoneShapes.length === 0) return
+    const newZones: ZoneRow[] = zoneShapes.map(s => {
+      const p = s.props as { label: string; areaM2: number; perimeterM: number; wallHeightMm: number }
+      return {
+        id: uid(),
+        label: p.label || '미지정',
+        floorAreaM2: p.areaM2,
+        wallLengthM: p.perimeterM,
+        wallHeightM: p.wallHeightMm / 1000,
+      }
+    })
+    onUpdate(newZones)
   }
 
   return (
@@ -138,7 +157,12 @@ function FloorTable({ item, variant, onUpdate }: {
           ))}
         </tbody>
       </table>
-      <button className="ft-add-row" onClick={addZone}>+ 행 추가</button>
+      <div className="ft-row-btns">
+        <button className="ft-add-row" onClick={addZone}>+ 행 추가</button>
+        <button className="ft-add-row ft-import-zone" onClick={importZones} title="캔버스 공간(Zone)을 가져옵니다">
+          <MapPin size={12} /> 공간 가져오기
+        </button>
+      </div>
     </div>
   )
 }

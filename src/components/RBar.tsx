@@ -493,6 +493,65 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
     )
   }
 
+  if (sel.type === 'zone') {
+    const zp = sel.props as { label: string; wallHeightMm: number; areaM2: number; perimeterM: number; color: string }
+    const [zLabel, setZLabel] = useState(zp.label)
+    const [zHeight, setZHeight] = useState(String(zp.wallHeightMm / 1000))
+
+    const commitZone = () => {
+      if (!editor) return
+      editor.updateShape({
+        id: sel.id,
+        type: 'zone',
+        props: {
+          label: zLabel.trim() || '미지정',
+          wallHeightMm: Math.round((parseFloat(zHeight) || 2.4) * 1000),
+        },
+      } as never)
+    }
+
+    return (
+      <>
+        {lockBtn}
+        <section className="rbar-section">
+          <h3 style={{ color: zp.color }}>공간 (Zone)</h3>
+          <div className="rbar-prop-row">
+            <span className="rbar-prop-label">이름</span>
+            <input
+              className="rbar-prop-input"
+              value={zLabel}
+              onChange={e => setZLabel(e.target.value)}
+              onBlur={commitZone}
+              onKeyDown={e => { if (e.key === 'Enter') commitZone() }}
+            />
+          </div>
+          <div className="rbar-prop-row">
+            <span className="rbar-prop-label">층고</span>
+            <input
+              className="rbar-prop-input"
+              type="number"
+              step="0.1"
+              value={zHeight}
+              onChange={e => setZHeight(e.target.value)}
+              onBlur={commitZone}
+              onKeyDown={e => { if (e.key === 'Enter') commitZone() }}
+              style={{ width: 60 }}
+            />
+            <span className="rbar-prop-unit">m</span>
+          </div>
+          <div className="rbar-prop-row">
+            <span className="rbar-prop-label">면적</span>
+            <span className="rbar-prop-value">{zp.areaM2.toFixed(2)} m²</span>
+          </div>
+          <div className="rbar-prop-row">
+            <span className="rbar-prop-label">둘레</span>
+            <span className="rbar-prop-value">{zp.perimeterM.toFixed(2)} m</span>
+          </div>
+        </section>
+      </>
+    )
+  }
+
   if (sel.type === 'block') {
     const p = sel.props as { w: number; h: number; blockId: string }
     const shape = editor?.getShape(sel.id)

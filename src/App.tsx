@@ -9,6 +9,8 @@ import { ToolOverlay } from './components/ToolOverlay'
 import { RoomOverlay } from './components/RoomOverlay'
 import { CanvasPickOverlay } from './components/CanvasPickOverlay'
 import { AreaMeasureOverlay } from './components/AreaMeasureOverlay'
+import { ZoneDrawOverlay } from './components/ZoneDrawOverlay'
+import { ZoneNamePopup } from './components/ZoneNamePopup'
 import { ScaleRuler } from './components/ScaleRuler'
 import { ChatPanel } from './components/ChatPanel'
 import { ProjectsPage } from './components/ProjectsPage'
@@ -23,6 +25,7 @@ import { WindowShapeUtil } from './shapes/WindowShape'
 import { BlockShapeUtil } from './shapes/BlockShape'
 import { CommentShapeUtil } from './shapes/CommentShape'
 import { DimensionShapeUtil } from './shapes/DimensionShape'
+import { ZoneShapeUtil } from './shapes/ZoneShape'
 import { WallTool } from './tools/WallTool'
 import { DoorTool } from './tools/DoorTool'
 import { WindowTool } from './tools/WindowTool'
@@ -42,7 +45,7 @@ import './App.css'
 initGrayscaleAttr()
 initDarkAttr()
 
-const SHAPE_UTILS = [WallShapeUtil, DxfGroupShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil, CommentShapeUtil, DimensionShapeUtil]
+const SHAPE_UTILS = [WallShapeUtil, DxfGroupShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil, CommentShapeUtil, DimensionShapeUtil, ZoneShapeUtil]
 const TOOLS = [WallTool, DoorTool, WindowTool, BlockTool, CommentTool, DimensionTool]
 
 function EmptyCanvasHint({ editor }: { editor: Editor | null }) {
@@ -288,6 +291,8 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
             <EmptyCanvasHint editor={editor} />
             <CanvasPickOverlay />
             <AreaMeasureOverlay />
+            <ZoneDrawOverlay />
+            <ZoneNamePopup />
             <RoomOverlay />
             <ScaleRuler />
             <ChatPanel />
