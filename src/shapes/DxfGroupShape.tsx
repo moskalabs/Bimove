@@ -13,15 +13,24 @@ import {
   Vec,
   useEditor,
 } from 'tldraw'
-import { getGrayscaleMode } from '../lib/settings'
+import { getGrayscaleMode, getDarkMode } from '../lib/settings'
+
+/** 색상의 상대 밝기 (0~1) */
+function luminance(hex: string): number {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+  if (!m) return 0.5
+  const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16)
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255
+}
 
 /** #ffffff 등 배경과 구분 안 되는 밝은 색 감지 */
 function isNearWhite(hex: string): boolean {
-  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
-  if (!m) return false
-  const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16)
-  // relative luminance > 0.85 → 배경(흰색)과 구분 어려움
-  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.85
+  return luminance(hex) > 0.85
+}
+
+/** #000000 등 어두운 배경에서 안 보이는 색 감지 */
+function isNearBlack(hex: string): boolean {
+  return luminance(hex) < 0.15
 }
 
 export type DxfGroupShapeProps = {
@@ -42,6 +51,7 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
   const editor = useEditor()
   const [zoom, setZoom] = useState(() => editor.getZoomLevel())
   const [grayscale, setGrayscale] = useState(getGrayscaleMode)
+  const [darkMode, setDarkModeState] = useState(getDarkMode)
   // meta 변경 감지용 (재질 적용 시 re-render 트리거)
   const [meta, setMeta] = useState(() => shape.meta as Record<string, unknown>)
 
@@ -71,7 +81,10 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
   }, [editor, shape.id])
 
   useEffect(() => {
-    const onSettings = () => setGrayscale(getGrayscaleMode())
+    const onSettings = () => {
+      setGrayscale(getGrayscaleMode())
+      setDarkModeState(getDarkMode())
+    }
     window.addEventListener('bimova:settings', onSettings)
     return () => window.removeEventListener('bimova:settings', onSettings)
   }, [])
@@ -80,9 +93,13 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
   const matFill = (meta.fill as string) || ''
   const matStroke = (meta.stroke as string) || ''
 
-  // ACI 7 = #ffffff 등 밝은 색은 라이트 배경에서 안 보이므로 보정
-  const rawColor = matStroke || (meta.dxfColor as string) || '#333'
-  const stroke = grayscale ? '#333' : (isNearWhite(rawColor) ? '#333' : rawColor)
+  // 배경 대비 색상 보정: 라이트 배경에서 밝은 색, 다크 배경에서 어두운 색 보정
+  const rawColor = matStroke || (meta.dxfColor as string) || (darkMode ? '#ccc' : '#333')
+  const stroke = grayscale
+    ? (darkMode ? '#ccc' : '#333')
+    : darkMode
+      ? (isNearBlack(rawColor) ? '#ccc' : rawColor)
+      : (isNearWhite(rawColor) ? '#333' : rawColor)
   const dxfLw = (meta.dxfLineweight as number) ?? 0
   const baseStrokeW = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
   const minStroke = 0.5 / Math.max(zoom, 0.001)
@@ -116,7 +133,12 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
       )}
       {texts.map((t, i) => {
         const fontSize = Math.max(t.h, 2 / Math.max(zoom, 0.001))
-        const textColor = grayscale ? '#555' : (t.c && !isNearWhite(t.c) ? t.c : '#555')
+        const defaultTextColor = darkMode ? '#bbb' : '#555'
+        const textColor = grayscale
+          ? defaultTextColor
+          : t.c
+            ? (darkMode ? (isNearBlack(t.c) ? '#bbb' : t.c) : (isNearWhite(t.c) ? '#555' : t.c))
+            : defaultTextColor
         return (
           <text
             key={i}
