@@ -5,6 +5,9 @@ import {
   getShowWallLengths, setShowWallLengths,
   getShowRoomAreas, setShowRoomAreas,
   getRoomNames, setRoomName,
+  getSnapEnabled, setSnapEnabled,
+  getSnapMode, setSnapMode, getActiveSnapModes,
+  type SnapMode,
 } from '../../lib/settings'
 
 describe('wall thickness', () => {
@@ -100,5 +103,92 @@ describe('room names', () => {
   it('handles corrupted localStorage gracefully', () => {
     localStorage.setItem('bimova_room_names', 'NOT_JSON')
     expect(getRoomNames()).toEqual({})
+  })
+})
+
+// ── 스냅 토글 (요청사항 5: 스냅 상세설정 드롭다운) ──
+
+describe('snap enabled (ortho)', () => {
+  it('defaults to true', () => {
+    expect(getSnapEnabled()).toBe(true)
+  })
+
+  it('persists false', () => {
+    setSnapEnabled(false)
+    expect(getSnapEnabled()).toBe(false)
+  })
+
+  it('persists true after false', () => {
+    setSnapEnabled(false)
+    setSnapEnabled(true)
+    expect(getSnapEnabled()).toBe(true)
+  })
+})
+
+describe('individual snap modes', () => {
+  const ALL_MODES: SnapMode[] = ['endpoint', 'midpoint', 'intersection', 'perpendicular', 'extension']
+
+  it('endpoint defaults to true', () => {
+    localStorage.clear()
+    expect(getSnapMode('endpoint')).toBe(true)
+  })
+
+  it('midpoint defaults to true', () => {
+    localStorage.clear()
+    expect(getSnapMode('midpoint')).toBe(true)
+  })
+
+  it('intersection defaults to true', () => {
+    localStorage.clear()
+    expect(getSnapMode('intersection')).toBe(true)
+  })
+
+  it('perpendicular defaults to false', () => {
+    localStorage.clear()
+    expect(getSnapMode('perpendicular')).toBe(false)
+  })
+
+  it('extension defaults to false', () => {
+    localStorage.clear()
+    expect(getSnapMode('extension')).toBe(false)
+  })
+
+  it('toggle endpoint off and on', () => {
+    setSnapMode('endpoint', false)
+    expect(getSnapMode('endpoint')).toBe(false)
+    setSnapMode('endpoint', true)
+    expect(getSnapMode('endpoint')).toBe(true)
+  })
+
+  it('toggle perpendicular on', () => {
+    setSnapMode('perpendicular', true)
+    expect(getSnapMode('perpendicular')).toBe(true)
+  })
+
+  it('each mode is independent', () => {
+    setSnapMode('endpoint', false)
+    setSnapMode('midpoint', true)
+    expect(getSnapMode('endpoint')).toBe(false)
+    expect(getSnapMode('midpoint')).toBe(true)
+  })
+
+  it('getActiveSnapModes returns all modes', () => {
+    localStorage.clear()
+    const modes = getActiveSnapModes()
+    expect(modes).toEqual({
+      endpoint: true,
+      midpoint: true,
+      intersection: true,
+      perpendicular: false,
+      extension: false,
+    })
+  })
+
+  it('getActiveSnapModes reflects changes', () => {
+    setSnapMode('endpoint', false)
+    setSnapMode('extension', true)
+    const modes = getActiveSnapModes()
+    expect(modes.endpoint).toBe(false)
+    expect(modes.extension).toBe(true)
   })
 })

@@ -87,7 +87,7 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
 }
 
 /** pathData("M0,0L100,0 M0,50L100,50 ...")에서 개별 선분 추출 후 point 근접 여부 판단 */
-function isPointNearPath(pathData: string, pt: VecLike, margin: number): boolean {
+export function isPointNearPath(pathData: string, pt: VecLike, margin: number): boolean {
   // pathData는 "Mx1,y1Lx2,y2 Mx3,y3Lx4,y4 ..." 형태
   const re = /M([\d.e+-]+),([\d.e+-]+)L([\d.e+-]+),([\d.e+-]+)/g
   let m
@@ -99,7 +99,7 @@ function isPointNearPath(pathData: string, pt: VecLike, margin: number): boolean
 }
 
 /** 점 (px,py)에서 선분 (ax,ay)-(bx,by)까지의 최단 거리 */
-function distPointToSeg(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+export function distPointToSeg(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
   const dx = bx - ax, dy = by - ay
   const lenSq = dx * dx + dy * dy
   if (lenSq === 0) return Math.hypot(px - ax, py - ay)
