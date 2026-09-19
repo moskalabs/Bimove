@@ -891,11 +891,24 @@ function getImportedFingerprints(editor: Editor): Set<string> {
   return fps
 }
 
-/** DWG 바이너리를 DXF 텍스트로 변환 (dwgdxf WASM) */
-async function dwgToDxfText(buffer: ArrayBuffer): Promise<string> {
+/** DWG 바이너리를 DXF 바이트로 변환 (dwgdxf WASM) */
+async function dwgToDxfBytes(buffer: ArrayBuffer): Promise<Uint8Array> {
   const dwgBytes = new Uint8Array(buffer)
-  const dxfBytes = await convertDwgToDxf(dwgBytes, { wasmBase: CDN_WASM_BASE })
-  return new TextDecoder().decode(dxfBytes)
+  return await convertDwgToDxf(dwgBytes, { wasmBase: CDN_WASM_BASE })
+}
+
+/** raw DXF 바이트를 인코딩 감지 후 텍스트로 디코딩 */
+function decodeDxfBytes(dxfBytes: Uint8Array): string {
+  // Uint8Array.buffer가 WASM memory 전체일 수 있으므로 복사
+  const buf = dxfBytes.buffer.byteLength === dxfBytes.byteLength
+    ? dxfBytes.buffer
+    : dxfBytes.slice().buffer
+  const encoding = detectDxfEncoding(buf)
+  try {
+    return new TextDecoder(encoding).decode(dxfBytes)
+  } catch {
+    return new TextDecoder('utf-8').decode(dxfBytes)
+  }
 }
 
 /**
@@ -1273,24 +1286,16 @@ export async function parseCadFile(
     try {
       ;(notify?.onInfo ?? notify?.onSuccess)?.('DWG → DXF 변환 중…')
       const buffer = await file.arrayBuffer()
-      text = await dwgToDxfText(buffer)
+      const dxfBytes = await dwgToDxfBytes(buffer)
+      text = decodeDxfBytes(dxfBytes)
     } catch (err) {
       notify?.onError?.(`DWG 변환 실패: ${err instanceof Error ? err.message : String(err)}`)
       return null
     }
   } else {
-    // DXF 인코딩 감지: 한국 AutoCAD는 EUC-KR(CP949) 사용
+    // DXF/DWG 모두 인코딩 감지: 한국 AutoCAD는 EUC-KR(CP949) 사용
     const buffer = await file.arrayBuffer()
-    const encoding = detectDxfEncoding(buffer)
-    if (encoding === 'euc-kr') {
-      try {
-        text = new TextDecoder('euc-kr').decode(buffer)
-      } catch {
-        text = new TextDecoder('utf-8').decode(buffer)
-      }
-    } else {
-      text = new TextDecoder('utf-8').decode(buffer)
-    }
+    text = decodeDxfBytes(new Uint8Array(buffer))
   }
 
   let dxf: ReturnType<DxfParser['parseSync']>
