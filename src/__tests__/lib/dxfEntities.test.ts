@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import DxfParser from 'dxf-parser'
-import { parseDxfSegments, parseDxfHatches, commitCadImport, detectDxfEncoding, type CadParseResult, type DxfSeg } from '../../lib/dxf'
+import { parseDxfSegments, parseDxfHatches, commitCadImport, detectDxfEncoding, reverseDoubleEncodingIfNeeded, type CadParseResult, type DxfSeg } from '../../lib/dxf'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1109,5 +1109,45 @@ describe('detectDxfEncoding: raw byte detection', () => {
       0x45, 0x4F, 0x46, 0x0A,
     ]
     expect(detectDxfEncoding(bytesToBuffer(eucKrBytes))).toBe('euc-kr')
+  })
+})
+
+// ─── Double encoding reversal ──────────────────────────────────────────────
+
+describe('reverseDoubleEncodingIfNeeded: Latin-1 → EUC-KR', () => {
+  it('reverses double-encoded "현장명" (ÇöÀå¸í → 현장명)', () => {
+    // EUC-KR 현장명 = C7 F6 C0 E5 B8 ED
+    // Double-encoded as Latin-1 in UTF-8: Ç ö À å ¸ í
+    const mojibake = '\u00C7\u00F6\u00C0\u00E5\u00B8\u00ED'
+    const result = reverseDoubleEncodingIfNeeded(mojibake)
+    expect(result).toBe('현장명')
+  })
+
+  it('reverses "내부 리모델링" from Latin-1 mojibake', () => {
+    const mojibake = '\u00B3\u00BB\u00BA\u00CE \u00B8\u00AE\u00B8\u00F0\u00B5\u00A8\u00B8\u00B5'
+    const result = reverseDoubleEncodingIfNeeded(mojibake)
+    expect(result).toBe('내부 리모델링')
+  })
+
+  it('reverses "디자인 설계도면" from Latin-1 mojibake', () => {
+    const mojibake = '\u00B5\u00F0\u00C0\u00DA\u00C0\u00CE \u00BC\u00B3\u00B0\u00E8\u00B5\u00B5\u00B8\u00E9'
+    const result = reverseDoubleEncodingIfNeeded(mojibake)
+    expect(result).toBe('디자인 설계도면')
+  })
+
+  it('preserves text that already contains Korean', () => {
+    const korean = '이미 한글이 있는 텍스트'
+    expect(reverseDoubleEncodingIfNeeded(korean)).toBe(korean)
+  })
+
+  it('preserves plain ASCII text', () => {
+    const ascii = 'SECTION\nHEADER\nENDSEC\nEOF'
+    expect(reverseDoubleEncodingIfNeeded(ascii)).toBe(ascii)
+  })
+
+  it('preserves legitimate Latin text without Korean', () => {
+    // Few high chars that don't form EUC-KR pairs = no reversal
+    const latin = 'CAD file v2.0'
+    expect(reverseDoubleEncodingIfNeeded(latin)).toBe(latin)
   })
 })

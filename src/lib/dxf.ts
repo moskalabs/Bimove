@@ -904,11 +904,46 @@ function decodeDxfBytes(dxfBytes: Uint8Array): string {
     ? dxfBytes.buffer
     : dxfBytes.slice().buffer
   const encoding = detectDxfEncoding(buf)
+  let text: string
   try {
-    return new TextDecoder(encoding).decode(dxfBytes)
+    text = new TextDecoder(encoding).decode(dxfBytes)
   } catch {
-    return new TextDecoder('utf-8').decode(dxfBytes)
+    text = new TextDecoder('utf-8').decode(dxfBytes)
   }
+  // 이중 인코딩 복원: DWG→DXF 변환기가 EUC-KR 바이트를 Latin-1로 해석 후
+  // UTF-8로 인코딩하는 경우 ($DWGCODEPAGE=ANSI_1252 but 실제 EUC-KR)
+  // → ÇöÀå (Latin chars) 가 되어야 할 텍스트가 현장 (Korean) 으로 복원
+  return reverseDoubleEncodingIfNeeded(text)
+}
+
+/**
+ * 이중 인코딩 감지 및 복원.
+ * EUC-KR bytes → Latin-1 해석 → UTF-8 인코딩 된 경우를 역전.
+ * 한글이 없으면서 Latin Extended(U+0080-U+00FF) 문자가 많으면 시도.
+ */
+export function reverseDoubleEncodingIfNeeded(text: string): string {
+  // 이미 한글이 있으면 정상 디코딩됨 → 스킵
+  if (/[\uAC00-\uD7AF]/.test(text)) return text
+
+  // Latin Extended 문자 (U+0080-U+00FF) 확인
+  const sample = text.slice(0, 50000)
+  const highCharCount = (sample.match(/[\u0080-\u00FF]/g) || []).length
+  if (highCharCount < 5) return text // high chars 거의 없음 → 스킵
+
+  // 전체 텍스트를 Latin-1 바이트로 변환 → EUC-KR 디코딩 시도
+  try {
+    const bytes = new Uint8Array(text.length)
+    for (let i = 0; i < text.length; i++) {
+      const cp = text.charCodeAt(i)
+      if (cp > 0xFF) return text // Latin-1 범위 초과 → 이중 인코딩 아님
+      bytes[i] = cp
+    }
+    const decoded = new TextDecoder('euc-kr').decode(bytes)
+    // 복원 결과에 한글이 있으면 성공
+    if (/[\uAC00-\uD7AF]/.test(decoded)) return decoded
+  } catch { /* ignore */ }
+
+  return text
 }
 
 /**
