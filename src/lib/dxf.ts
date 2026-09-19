@@ -959,6 +959,37 @@ async function dwgToDxfText(buffer: ArrayBuffer): Promise<string> {
   return new TextDecoder().decode(dxfBytes)
 }
 
+/**
+ * DXF 텍스트가 UTF-8이 아닌 인코딩(EUC-KR 등)인지 감지.
+ * $DWGCODEPAGE 헤더 + UTF-8 replacement character(�) 기반 판단.
+ */
+function detectNonUtf8(text: string): boolean {
+  // 1. $DWGCODEPAGE에 한국어/일본어/중국어 코드페이지가 있는지 확인
+  const cpMatch = text.match(/\$DWGCODEPAGE[\s\S]*?\n(\S+)/i)
+  if (cpMatch) {
+    const cp = cpMatch[1].toUpperCase()
+    // ANSI_949 = Korean, ANSI_936 = Chinese Simplified, ANSI_950 = Chinese Traditional, ANSI_932 = Japanese
+    if (cp.includes('949') || cp.includes('936') || cp.includes('950') || cp.includes('932') ||
+        cp === 'ANSI_1252' || cp.includes('KSC')) {
+      return true
+    }
+  }
+
+  // 2. UTF-8 디코딩 시 replacement character(U+FFFD, �)가 많으면 잘못된 인코딩
+  const replacementCount = (text.match(/\uFFFD/g) || []).length
+  if (replacementCount > 5) return true
+
+  // 3. 전형적인 EUC-KR → UTF-8 mojibake 패턴 감지
+  // (Latin-1으로 해석된 한글 바이트가 있으면)
+  if (/[\xC0-\xFF]{2,}/.test(text.slice(0, 5000))) {
+    // 상위 5000자 내에 연속된 high-byte 문자가 있으면 비-UTF8 가능성
+    const highByteRatio = (text.slice(0, 5000).match(/[\x80-\xFF]/g) || []).length / Math.min(text.length, 5000)
+    if (highByteRatio > 0.02) return true
+  }
+
+  return false
+}
+
 // ── 레이어 선택 지원 CAD 임포트 (2-phase) ──
 
 /** 레이어별 세그먼트 요약 */
@@ -1030,7 +1061,19 @@ export async function parseCadFile(
       return null
     }
   } else {
-    text = await file.text()
+    // DXF 인코딩 감지: 한국 AutoCAD는 EUC-KR(CP949) 사용
+    const buffer = await file.arrayBuffer()
+    text = new TextDecoder('utf-8').decode(buffer)
+
+    // $DWGCODEPAGE 헤더에서 인코딩 확인 + 깨진 한글 감지
+    const needsEucKr = detectNonUtf8(text)
+    if (needsEucKr) {
+      try {
+        text = new TextDecoder('euc-kr').decode(buffer)
+      } catch {
+        // euc-kr 디코더 없으면 UTF-8 fallback
+      }
+    }
   }
 
   let dxf: ReturnType<DxfParser['parseSync']>
