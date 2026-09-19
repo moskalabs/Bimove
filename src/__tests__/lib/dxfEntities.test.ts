@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import DxfParser from 'dxf-parser'
-import { parseDxfSegments, parseDxfHatches, commitCadImport, type CadParseResult, type DxfSeg } from '../../lib/dxf'
+import { parseDxfSegments, parseDxfHatches, commitCadImport, detectDxfEncoding, type CadParseResult, type DxfSeg } from '../../lib/dxf'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1040,5 +1040,74 @@ describe('parseDxfHatches: pattern extraction', () => {
     // At least 2 M commands (one per boundary)
     const mCount = (hatches[0].pathData.match(/M/g) || []).length
     expect(mCount).toBeGreaterThanOrEqual(2)
+  })
+})
+
+// ─── Encoding detection ────────────────────────────────────────────────────
+
+describe('detectDxfEncoding: raw byte detection', () => {
+  /** Helper: string → ArrayBuffer (UTF-8) */
+  function strToBuffer(s: string): ArrayBuffer {
+    return new TextEncoder().encode(s).buffer
+  }
+
+  /** Helper: raw byte array → ArrayBuffer */
+  function bytesToBuffer(arr: number[]): ArrayBuffer {
+    return new Uint8Array(arr).buffer
+  }
+
+  it('detects $DWGCODEPAGE ANSI_949 from raw bytes', () => {
+    const dxf = '  9\n$DWGCODEPAGE\n  3\nANSI_949\n  0\nEOF\n'
+    expect(detectDxfEncoding(strToBuffer(dxf))).toBe('euc-kr')
+  })
+
+  it('detects $DWGCODEPAGE ANSI_936 (Chinese)', () => {
+    const dxf = '  9\n$DWGCODEPAGE\n  3\nANSI_936\n  0\nEOF\n'
+    expect(detectDxfEncoding(strToBuffer(dxf))).toBe('euc-kr')
+  })
+
+  it('returns utf-8 for ASCII-only DXF', () => {
+    const dxf = '  0\nSECTION\n  2\nHEADER\n  9\n$INSUNITS\n 70\n4\n  0\nENDSEC\n  0\nEOF\n'
+    expect(detectDxfEncoding(strToBuffer(dxf))).toBe('utf-8')
+  })
+
+  it('returns utf-8 for DXF with valid UTF-8 Korean', () => {
+    // 유효한 UTF-8 한글 → euc-kr 패턴 없음 → utf-8
+    const dxf = '  0\nTEXT\n  1\n평면도\n  0\nEOF\n'
+    expect(detectDxfEncoding(strToBuffer(dxf))).toBe('utf-8')
+  })
+
+  it('detects EUC-KR byte patterns without $DWGCODEPAGE header', () => {
+    // "평면" in EUC-KR = 0xC6, 0xF2, 0xB8, 0xE9
+    // 0xB8 is in range 0xB0-0xC8, 0xE9 is in range 0xA1-0xFE → detected
+    const eucKrBytes = [
+      0x20, 0x20, 0x30, 0x0A, // "  0\n"
+      0x54, 0x45, 0x58, 0x54, 0x0A, // "TEXT\n"
+      0x20, 0x20, 0x31, 0x0A, // "  1\n"
+      0xC6, 0xF2, 0xB8, 0xE9, 0x0A, // "평면" in EUC-KR + \n
+      0x20, 0x20, 0x30, 0x0A, // "  0\n"
+      0x45, 0x4F, 0x46, 0x0A, // "EOF\n"
+    ]
+    expect(detectDxfEncoding(bytesToBuffer(eucKrBytes))).toBe('euc-kr')
+  })
+
+  it('detects EUC-KR even when bytes form valid UTF-8 sequences', () => {
+    // "타일" in EUC-KR = 0xC5, 0xB8, 0xC0, 0xCF
+    // 0xC5 0xB8 is a valid UTF-8 2-byte sequence → no U+FFFD!
+    // But 0xC5 is in range 0xB0-0xC8, would fail. Let's use enough chars
+    // "가나다라" in EUC-KR: B0 A1, B3 AA, B4 D9, B6 F3
+    const eucKrBytes = [
+      0x20, 0x20, 0x30, 0x0A,
+      0x54, 0x45, 0x58, 0x54, 0x0A,
+      0x20, 0x20, 0x31, 0x0A,
+      0xB0, 0xA1, // 가
+      0xB3, 0xAA, // 나
+      0xB4, 0xD9, // 다
+      0xB6, 0xF3, // 라
+      0x0A,
+      0x20, 0x20, 0x30, 0x0A,
+      0x45, 0x4F, 0x46, 0x0A,
+    ]
+    expect(detectDxfEncoding(bytesToBuffer(eucKrBytes))).toBe('euc-kr')
   })
 })

@@ -899,41 +899,81 @@ async function dwgToDxfText(buffer: ArrayBuffer): Promise<string> {
 }
 
 /**
- * DXF 텍스트가 UTF-8이 아닌 인코딩(EUC-KR 등)인지 감지.
- * $DWGCODEPAGE 헤더 + UTF-8 replacement character(�) 기반 판단.
+ * raw bytes에서 DXF 인코딩 감지.
+ * UTF-8 디코딩 전에 원본 바이트를 직접 검사하므로 mojibake 패턴에 의존하지 않음.
+ *
+ * 1. $DWGCODEPAGE 헤더에서 CJK 코드페이지 확인 (ASCII 바이트 직접 검색)
+ * 2. EUC-KR(CP949) 한글 바이트 패턴 감지 (0xB0-0xC8 + 0xA1-0xFE)
+ * 3. Fallback: UTF-8 디코딩 후 U+FFFD replacement char 확인
  */
-function detectNonUtf8(text: string): boolean {
-  // 1. $DWGCODEPAGE 헤더 확인 (DXF group code 3 or 1 값)
+export function detectDxfEncoding(buffer: ArrayBuffer): 'utf-8' | 'euc-kr' {
+  const bytes = new Uint8Array(buffer)
+  const scanLen = Math.min(bytes.length, 100000)
+
+  // 1. $DWGCODEPAGE 헤더 찾기 (raw ASCII 바이트 검색)
   // DXF format: "  9\n$DWGCODEPAGE\n  3\nANSI_949"
-  const cpMatch = text.match(/\$DWGCODEPAGE\s*\n\s*\d+\s*\n\s*(\S+)/i)
-  if (cpMatch) {
-    const cp = cpMatch[1].toUpperCase()
-    if (cp.includes('949') || cp.includes('936') || cp.includes('950') || cp.includes('932') ||
-        cp.includes('KSC') || cp.includes('JOHAB') || cp.includes('WANSUNG')) {
-      return true
+  const needle = [0x24, 0x44, 0x57, 0x47, 0x43, 0x4F, 0x44, 0x45, 0x50, 0x41, 0x47, 0x45] // "$DWGCODEPAGE"
+  outer: for (let i = 0; i + needle.length < scanLen; i++) {
+    if (bytes[i] !== 0x24) continue // '$'
+    for (let j = 1; j < needle.length; j++) {
+      if (bytes[i + j] !== needle[j]) continue outer
+    }
+    // $DWGCODEPAGE 발견 → 다음 2줄(group code + value) 읽기
+    let pos = i + needle.length
+    let nlCount = 0
+    while (pos < scanLen && nlCount < 2) {
+      if (bytes[pos] === 0x0A) nlCount++
+      pos++
+    }
+    // value 읽기 (ASCII)
+    let val = ''
+    while (pos < scanLen && bytes[pos] !== 0x0A && bytes[pos] !== 0x0D) {
+      if (bytes[pos] >= 0x20 && bytes[pos] < 0x7F) val += String.fromCharCode(bytes[pos])
+      pos++
+    }
+    val = val.trim().toUpperCase()
+    if (val.includes('949') || val.includes('936') || val.includes('950') || val.includes('932') ||
+        val.includes('KSC') || val.includes('JOHAB') || val.includes('WANSUNG')) {
+      return 'euc-kr'
+    }
+    break
+  }
+
+  // 2. EUC-KR 한글 바이트 패턴 직접 감지
+  // 완성형 한글: first byte 0xB0-0xC8, second byte 0xA1-0xFE
+  // (가-힣 범위의 대부분. 0xB0=가~깋, 0xB1=까~낗, ... 0xC8=하~힣 근처)
+  let eucKrCount = 0
+  for (let i = 0; i < scanLen - 1; i++) {
+    const b1 = bytes[i], b2 = bytes[i + 1]
+    if (b1 >= 0xB0 && b1 <= 0xC8 && b2 >= 0xA1 && b2 <= 0xFE) {
+      eucKrCount++
+      i++ // 2nd byte skip
     }
   }
+  if (eucKrCount >= 2) return 'euc-kr'
 
-  // 2. UTF-8 디코딩 시 replacement character(U+FFFD, □)가 있으면 잘못된 인코딩
-  const replacementCount = (text.match(/\uFFFD/g) || []).length
-  if (replacementCount > 3) return true
-
-  // 3. UTF-8 invalid sequence 감지: 0xC0-0xFF 바이트가 유효하지 않은 UTF-8 시퀀스를 이루는 경우
-  // TextDecoder('utf-8')은 invalid bytes를 U+FFFD로 대체하므로,
-  // 원본 바이너리에서 0x80+ 바이트가 많았는데 텍스트에 한글이 없으면 인코딩 문제
-  const sample = text.slice(0, 10000)
-
-  // 한국어 유니코드 범위(가-힣, ㄱ-ㅎ, ㅏ-ㅣ)가 하나도 없는데
-  // Latin Extended(Â,Ã,Æ,Ç,È 등) 문자가 많으면 EUC-KR을 UTF-8로 잘못 읽은 것
-  const hasKorean = /[\uAC00-\uD7AF\u3130-\u318F]/.test(sample)
-  if (!hasKorean) {
-    // mojibake 패턴: EUC-KR 한글(0xB0-0xFD + 0xA1-0xFE)이 UTF-8로 읽히면
-    // Latin-1 high chars(À-ý)로 나타남
-    const mojibakeChars = (sample.match(/[\xC0-\xFD][\x80-\xFE]/g) || []).length
-    if (mojibakeChars > 5) return true
+  // 3. Fallback: 넓은 CP949 확장 범위 (한자/특수문자 포함)
+  // first byte 0x81-0xFE, second byte 0x41-0x5A | 0x61-0x7A | 0x81-0xFE
+  let cp949Count = 0
+  for (let i = 0; i < scanLen - 1; i++) {
+    const b1 = bytes[i], b2 = bytes[i + 1]
+    if (b1 >= 0x81 && b1 <= 0xFE) {
+      if ((b2 >= 0x41 && b2 <= 0x5A) || (b2 >= 0x61 && b2 <= 0x7A) || (b2 >= 0x81 && b2 <= 0xFE)) {
+        cp949Count++
+        i++
+      }
+    }
   }
+  if (cp949Count > 5) return 'euc-kr'
 
-  return false
+  // 4. 최종 fallback: UTF-8 디코딩 후 U+FFFD 확인
+  try {
+    const utf8Text = new TextDecoder('utf-8').decode(bytes.subarray(0, scanLen))
+    const fffdCount = (utf8Text.match(/\uFFFD/g) || []).length
+    if (fffdCount > 3) return 'euc-kr'
+  } catch { /* ignore */ }
+
+  return 'utf-8'
 }
 
 // ── Raw DXF HATCH 파서 (dxf-parser가 HATCH를 스킵하므로 직접 파싱) ──
@@ -1241,16 +1281,15 @@ export async function parseCadFile(
   } else {
     // DXF 인코딩 감지: 한국 AutoCAD는 EUC-KR(CP949) 사용
     const buffer = await file.arrayBuffer()
-    text = new TextDecoder('utf-8').decode(buffer)
-
-    // $DWGCODEPAGE 헤더에서 인코딩 확인 + 깨진 한글 감지
-    const needsEucKr = detectNonUtf8(text)
-    if (needsEucKr) {
+    const encoding = detectDxfEncoding(buffer)
+    if (encoding === 'euc-kr') {
       try {
         text = new TextDecoder('euc-kr').decode(buffer)
       } catch {
-        // euc-kr 디코더 없으면 UTF-8 fallback
+        text = new TextDecoder('utf-8').decode(buffer)
       }
+    } else {
+      text = new TextDecoder('utf-8').decode(buffer)
     }
   }
 
