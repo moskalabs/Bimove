@@ -785,6 +785,18 @@ function collectSegmentsWithBlocks(
   return allSegs.slice(0, maxSegments)
 }
 
+/** DXF 특수문자 코드(%%X) → 유니코드 변환 */
+function decodeDxfSpecialChars(text: string): string {
+  return text
+    .replace(/%%[Pp]/g, '±')    // plus-minus
+    .replace(/%%[Dd]/g, '°')    // degree
+    .replace(/%%[Cc]/g, '∅')    // diameter
+    .replace(/%%[Uu]/g, '')     // underline toggle (삭제)
+    .replace(/%%[Oo]/g, '')     // overline toggle (삭제)
+    .replace(/%%%/g, '%')       // literal percent
+    .replace(/%%(\d{3})/g, (_, code) => String.fromCharCode(parseInt(code))) // %%nnn → char
+}
+
 /**
  * TEXT/MTEXT 엔티티를 재귀적으로 수집 (INSERT 블록 내부 포함).
  * collectSegmentsWithBlocks와 동일한 변환 로직 적용.
@@ -811,7 +823,7 @@ function collectTextsWithBlocks(
     if (e.type === 'TEXT') {
       const sp = (e.startPoint ?? e.position) as { x: number; y: number } | undefined
       if (!sp) continue
-      const txt = (e.text as string)?.trim()
+      const txt = decodeDxfSpecialChars((e.text as string)?.trim() ?? '')
       if (!txt) continue
       allTexts.push({
         x: sp.x, y: sp.y, text: txt,
@@ -826,6 +838,7 @@ function collectTextsWithBlocks(
       if (!txt) continue
       // MTEXT 서식 코드 정리: \P=줄바꿈, {\f...;...}=폰트 등
       txt = txt.replace(/\\P/g, ' ').replace(/\{[^}]*\}/g, '').replace(/\\[a-zA-Z][^;]*;/g, '').trim()
+      txt = decodeDxfSpecialChars(txt)
       if (!txt) continue
       allTexts.push({
         x: pos.x, y: pos.y, text: txt,
