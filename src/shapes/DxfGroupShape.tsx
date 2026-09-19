@@ -58,13 +58,13 @@ function dxfHatchPatternDef(
 
   const rotate = angle !== 0 ? `rotate(${angle})` : undefined
 
-  if (upper === 'ANSI31' || upper === 'ANSI32' || upper.includes('LINE') || upper === 'HATCH') {
+  if (upper === 'ANSI31' || upper === 'ANSI32') {
     // 사선 해칭 (45도)
     const gap = upper === 'ANSI32' ? sz * 0.5 : sz
     return (
       <pattern id={id} width={gap} height={gap} patternUnits="userSpaceOnUse"
         patternTransform={rotate ?? 'rotate(45)'}>
-        <line x1={0} y1={0} x2={gap} y2={0} stroke={color} strokeWidth={0.5} opacity={0.6} />
+        <line x1={0} y1={0} x2={gap} y2={0} stroke={color} strokeWidth={0.6} opacity={0.7} />
       </pattern>
     )
   }
@@ -74,18 +74,20 @@ function dxfHatchPatternDef(
     return (
       <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
         patternTransform={rotate ?? 'rotate(-45)'}>
-        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={0.5} opacity={0.6} />
+        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={0.6} opacity={0.7} />
       </pattern>
     )
   }
 
   if (upper.startsWith('AR-CONC') || upper === 'CONCRETE') {
     // 콘크리트 점 패턴
+    const d = sz * 1.5
     return (
-      <pattern id={id} width={sz * 1.5} height={sz * 1.5} patternUnits="userSpaceOnUse"
+      <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <circle cx={sz * 0.3} cy={sz * 0.3} r={1} fill={color} opacity={0.45} />
-        <circle cx={sz * 1.1} cy={sz * 0.9} r={0.7} fill={color} opacity={0.3} />
+        <circle cx={d * 0.2} cy={d * 0.2} r={1} fill={color} opacity={0.55} />
+        <circle cx={d * 0.7} cy={d * 0.6} r={0.7} fill={color} opacity={0.45} />
+        <circle cx={d * 0.4} cy={d * 0.9} r={0.5} fill={color} opacity={0.4} />
       </pattern>
     )
   }
@@ -96,10 +98,20 @@ function dxfHatchPatternDef(
     return (
       <pattern id={id} width={w} height={h2} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={0} x2={w} y2={0} stroke={color} strokeWidth={0.5} opacity={0.5} />
-        <line x1={0} y1={h2 / 2} x2={w} y2={h2 / 2} stroke={color} strokeWidth={0.5} opacity={0.5} />
-        <line x1={w / 2} y1={0} x2={w / 2} y2={h2 / 2} stroke={color} strokeWidth={0.5} opacity={0.5} />
-        <line x1={0} y1={h2 / 2} x2={0} y2={h2} stroke={color} strokeWidth={0.5} opacity={0.5} />
+        <line x1={0} y1={0} x2={w} y2={0} stroke={color} strokeWidth={0.6} opacity={0.6} />
+        <line x1={0} y1={h2 / 2} x2={w} y2={h2 / 2} stroke={color} strokeWidth={0.6} opacity={0.6} />
+        <line x1={w / 2} y1={0} x2={w / 2} y2={h2 / 2} stroke={color} strokeWidth={0.6} opacity={0.6} />
+        <line x1={0} y1={h2 / 2} x2={0} y2={h2} stroke={color} strokeWidth={0.6} opacity={0.6} />
+      </pattern>
+    )
+  }
+
+  if (upper === 'LINE' || upper === 'HATCH') {
+    // 단순 수평선 패턴
+    return (
+      <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
+        patternTransform={rotate}>
+        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={0.5} opacity={0.6} />
       </pattern>
     )
   }
@@ -109,8 +121,96 @@ function dxfHatchPatternDef(
     return (
       <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={0.5} opacity={0.5} />
-        <line x1={0} y1={0} x2={0} y2={sz} stroke={color} strokeWidth={0.5} opacity={0.5} />
+        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={0.5} opacity={0.6} />
+        <line x1={0} y1={0} x2={0} y2={sz} stroke={color} strokeWidth={0.5} opacity={0.6} />
+      </pattern>
+    )
+  }
+
+  if (upper === 'DOTS' || upper === 'DOT') {
+    // 점 패턴 (불규칙 점)
+    const d = sz * 1.2
+    return (
+      <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
+        patternTransform={rotate}>
+        <circle cx={d * 0.2} cy={d * 0.2} r={0.8} fill={color} opacity={0.6} />
+        <circle cx={d * 0.7} cy={d * 0.6} r={0.6} fill={color} opacity={0.5} />
+        <circle cx={d * 0.4} cy={d * 0.85} r={0.7} fill={color} opacity={0.55} />
+      </pattern>
+    )
+  }
+
+  if (upper.startsWith('AR-SAND') || upper === 'SAND') {
+    // 모래/샌드 패턴 (밀집 점)
+    const d = sz * 0.9
+    return (
+      <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
+        patternTransform={rotate}>
+        <circle cx={d * 0.15} cy={d * 0.15} r={0.5} fill={color} opacity={0.5} />
+        <circle cx={d * 0.55} cy={d * 0.1} r={0.4} fill={color} opacity={0.4} />
+        <circle cx={d * 0.85} cy={d * 0.35} r={0.5} fill={color} opacity={0.45} />
+        <circle cx={d * 0.3} cy={d * 0.5} r={0.4} fill={color} opacity={0.4} />
+        <circle cx={d * 0.7} cy={d * 0.65} r={0.5} fill={color} opacity={0.5} />
+        <circle cx={d * 0.1} cy={d * 0.8} r={0.4} fill={color} opacity={0.35} />
+        <circle cx={d * 0.5} cy={d * 0.9} r={0.45} fill={color} opacity={0.45} />
+        <circle cx={d * 0.9} cy={d * 0.85} r={0.4} fill={color} opacity={0.4} />
+      </pattern>
+    )
+  }
+
+  if (upper.startsWith('AR-RROOF') || upper === 'AR-RSHKE') {
+    // 지붕/루핑 패턴 (불규칙 수평선)
+    const d = sz * 1.4
+    return (
+      <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
+        patternTransform={rotate}>
+        <line x1={0} y1={d * 0.2} x2={d * 0.45} y2={d * 0.2} stroke={color} strokeWidth={0.5} opacity={0.6} />
+        <line x1={d * 0.55} y1={d * 0.2} x2={d} y2={d * 0.2} stroke={color} strokeWidth={0.4} opacity={0.5} />
+        <line x1={d * 0.2} y1={d * 0.5} x2={d * 0.8} y2={d * 0.5} stroke={color} strokeWidth={0.5} opacity={0.55} />
+        <line x1={0} y1={d * 0.8} x2={d * 0.35} y2={d * 0.8} stroke={color} strokeWidth={0.4} opacity={0.5} />
+        <line x1={d * 0.5} y1={d * 0.8} x2={d} y2={d * 0.8} stroke={color} strokeWidth={0.5} opacity={0.6} />
+      </pattern>
+    )
+  }
+
+  if (upper === 'NET' || upper === 'HONEY') {
+    // 그물/네트 패턴 (60도 격자)
+    return (
+      <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
+        patternTransform={rotate}>
+        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={0.4} opacity={0.5} />
+        <line x1={0} y1={0} x2={sz * 0.5} y2={sz} stroke={color} strokeWidth={0.4} opacity={0.5} />
+        <line x1={sz} y1={0} x2={sz * 0.5} y2={sz} stroke={color} strokeWidth={0.4} opacity={0.5} />
+      </pattern>
+    )
+  }
+
+  if (upper === 'GRATE') {
+    // 그레이트/격자 (정사각형 격자, CROSS보다 촘촘)
+    const g = sz * 0.6
+    return (
+      <pattern id={id} width={g} height={g} patternUnits="userSpaceOnUse"
+        patternTransform={rotate}>
+        <line x1={0} y1={0} x2={g} y2={0} stroke={color} strokeWidth={0.6} opacity={0.6} />
+        <line x1={0} y1={0} x2={0} y2={g} stroke={color} strokeWidth={0.6} opacity={0.6} />
+      </pattern>
+    )
+  }
+
+  if (upper.includes('WOOD') || upper === 'DOLMIT') {
+    // 나무결/돌 패턴 (곡선 느낌의 수평선)
+    const d = sz * 1.6
+    return (
+      <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
+        patternTransform={rotate}>
+        <path d={`M0,${d * 0.15} Q${d * 0.25},${d * 0.1} ${d * 0.5},${d * 0.18} T${d},${d * 0.15}`}
+          stroke={color} fill="none" strokeWidth={0.5} opacity={0.55} />
+        <path d={`M0,${d * 0.4} Q${d * 0.3},${d * 0.35} ${d * 0.6},${d * 0.42} T${d},${d * 0.38}`}
+          stroke={color} fill="none" strokeWidth={0.4} opacity={0.45} />
+        <path d={`M0,${d * 0.62} Q${d * 0.2},${d * 0.58} ${d * 0.45},${d * 0.65} T${d},${d * 0.6}`}
+          stroke={color} fill="none" strokeWidth={0.5} opacity={0.5} />
+        <path d={`M0,${d * 0.85} Q${d * 0.35},${d * 0.82} ${d * 0.55},${d * 0.88} T${d},${d * 0.84}`}
+          stroke={color} fill="none" strokeWidth={0.4} opacity={0.45} />
       </pattern>
     )
   }
@@ -236,14 +336,14 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
         if (hd.isSolid) {
           return (
             <path key={`h${i}`} d={h.d}
-              fill={hd.color} stroke="none" opacity={0.55} pointerEvents="none" />
+              fill={hd.color} stroke="none" opacity={0.85} pointerEvents="none" />
           )
         }
         // 패턴 해치: 배경색 + 패턴 오버레이
         return (
           <g key={`h${i}`} pointerEvents="none">
-            <path d={h.d} fill={hd.color} stroke="none" opacity={0.25} />
-            <path d={h.d} fill={`url(#${hd.id})`} stroke="none" opacity={0.7} />
+            <path d={h.d} fill={hd.color} stroke="none" opacity={0.4} />
+            <path d={h.d} fill={`url(#${hd.id})`} stroke="none" opacity={0.85} />
           </g>
         )
       })}
@@ -382,12 +482,12 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
         {hatches.map((h, i) => {
           const hd = svgHatchDefs[i]
           if (hd.isSolid) {
-            return <path key={`h${i}`} d={h.d} fill={hd.color} stroke="none" opacity={0.55} />
+            return <path key={`h${i}`} d={h.d} fill={hd.color} stroke="none" opacity={0.85} />
           }
           return (
             <g key={`h${i}`}>
-              <path d={h.d} fill={hd.color} stroke="none" opacity={0.25} />
-              <path d={h.d} fill={`url(#${hd.id})`} stroke="none" opacity={0.7} />
+              <path d={h.d} fill={hd.color} stroke="none" opacity={0.4} />
+              <path d={h.d} fill={`url(#${hd.id})`} stroke="none" opacity={0.85} />
             </g>
           )
         })}
