@@ -977,30 +977,269 @@ async function dwgToDxfText(buffer: ArrayBuffer): Promise<string> {
  * $DWGCODEPAGE 헤더 + UTF-8 replacement character(�) 기반 판단.
  */
 function detectNonUtf8(text: string): boolean {
-  // 1. $DWGCODEPAGE에 한국어/일본어/중국어 코드페이지가 있는지 확인
-  const cpMatch = text.match(/\$DWGCODEPAGE[\s\S]*?\n(\S+)/i)
+  // 1. $DWGCODEPAGE 헤더 확인 (DXF group code 3 or 1 값)
+  // DXF format: "  9\n$DWGCODEPAGE\n  3\nANSI_949"
+  const cpMatch = text.match(/\$DWGCODEPAGE\s*\n\s*\d+\s*\n\s*(\S+)/i)
   if (cpMatch) {
     const cp = cpMatch[1].toUpperCase()
-    // ANSI_949 = Korean, ANSI_936 = Chinese Simplified, ANSI_950 = Chinese Traditional, ANSI_932 = Japanese
     if (cp.includes('949') || cp.includes('936') || cp.includes('950') || cp.includes('932') ||
-        cp === 'ANSI_1252' || cp.includes('KSC')) {
+        cp.includes('KSC') || cp.includes('JOHAB') || cp.includes('WANSUNG')) {
       return true
     }
   }
 
-  // 2. UTF-8 디코딩 시 replacement character(U+FFFD, �)가 많으면 잘못된 인코딩
+  // 2. UTF-8 디코딩 시 replacement character(U+FFFD, □)가 있으면 잘못된 인코딩
   const replacementCount = (text.match(/\uFFFD/g) || []).length
-  if (replacementCount > 5) return true
+  if (replacementCount > 3) return true
 
-  // 3. 전형적인 EUC-KR → UTF-8 mojibake 패턴 감지
-  // (Latin-1으로 해석된 한글 바이트가 있으면)
-  if (/[\xC0-\xFF]{2,}/.test(text.slice(0, 5000))) {
-    // 상위 5000자 내에 연속된 high-byte 문자가 있으면 비-UTF8 가능성
-    const highByteRatio = (text.slice(0, 5000).match(/[\x80-\xFF]/g) || []).length / Math.min(text.length, 5000)
-    if (highByteRatio > 0.02) return true
+  // 3. UTF-8 invalid sequence 감지: 0xC0-0xFF 바이트가 유효하지 않은 UTF-8 시퀀스를 이루는 경우
+  // TextDecoder('utf-8')은 invalid bytes를 U+FFFD로 대체하므로,
+  // 원본 바이너리에서 0x80+ 바이트가 많았는데 텍스트에 한글이 없으면 인코딩 문제
+  const sample = text.slice(0, 10000)
+
+  // 한국어 유니코드 범위(가-힣, ㄱ-ㅎ, ㅏ-ㅣ)가 하나도 없는데
+  // Latin Extended(Â,Ã,Æ,Ç,È 등) 문자가 많으면 EUC-KR을 UTF-8로 잘못 읽은 것
+  const hasKorean = /[\uAC00-\uD7AF\u3130-\u318F]/.test(sample)
+  if (!hasKorean) {
+    // mojibake 패턴: EUC-KR 한글(0xB0-0xFD + 0xA1-0xFE)이 UTF-8로 읽히면
+    // Latin-1 high chars(À-ý)로 나타남
+    const mojibakeChars = (sample.match(/[\xC0-\xFD][\x80-\xFE]/g) || []).length
+    if (mojibakeChars > 5) return true
   }
 
   return false
+}
+
+// ── Raw DXF HATCH 파서 (dxf-parser가 HATCH를 스킵하므로 직접 파싱) ──
+
+/**
+ * DXF raw text에서 HATCH 엔티티를 직접 파싱.
+ * dxf-parser v1.x는 HATCH 핸들러가 없어서 완전히 스킵하기 때문에
+ * group code 기반으로 직접 추출.
+ */
+function parseRawHatches(
+  dxfText: string,
+  layerDefs: Record<string, { lineweight?: number; colorIndex?: number; color?: number }>,
+): DxfHatch[] {
+  const hatches: DxfHatch[] = []
+
+  // DXF를 group code/value 쌍으로 분리
+  const lines = dxfText.split(/\r?\n/)
+  const pairs: Array<{ code: number; value: string }> = []
+  for (let i = 0; i < lines.length - 1; i += 2) {
+    const code = parseInt(lines[i].trim(), 10)
+    const value = lines[i + 1]?.trim() ?? ''
+    if (!isNaN(code)) pairs.push({ code, value })
+  }
+
+  // ENTITIES 섹션 내 HATCH 엔티티 찾기
+  let inEntities = false
+  let i = 0
+  while (i < pairs.length) {
+    const p = pairs[i]
+
+    // ENTITIES 섹션 시작/끝
+    if (p.code === 2 && p.value === 'ENTITIES') { inEntities = true; i++; continue }
+    if (p.code === 0 && p.value === 'ENDSEC') { if (inEntities) break; i++; continue }
+
+    if (!inEntities || p.code !== 0 || p.value !== 'HATCH') { i++; continue }
+
+    // HATCH 엔티티 시작 - 다음 0코드까지 파싱
+    i++
+    let layer = '0'
+    let colorIndex = 0
+    let trueColor = 0
+    let patternName = 'SOLID'
+    let patternScale = 1
+    let patternAngle = 0
+    let numBoundaryPaths = 0
+
+    // HATCH 헤더 파싱 (91코드 = boundary path 수 전까지)
+    while (i < pairs.length && pairs[i].code !== 91 && !(pairs[i].code === 0 && pairs[i].value !== 'HATCH')) {
+      const c = pairs[i].code, v = pairs[i].value
+      if (c === 8) layer = v
+      else if (c === 62) colorIndex = parseInt(v) || 0
+      else if (c === 420) trueColor = parseInt(v) || 0
+      else if (c === 2) patternName = v
+      else if (c === 41) patternScale = parseFloat(v) || 1
+      else if (c === 52) patternAngle = parseFloat(v) || 0
+      i++
+    }
+
+    if (i < pairs.length && pairs[i].code === 91) {
+      numBoundaryPaths = parseInt(pairs[i].value) || 0
+      i++
+    }
+
+    // 색상 해석
+    let color: string | undefined
+    if (trueColor > 0) {
+      color = trueColorToHex(trueColor)
+    } else if (colorIndex > 0) {
+      color = aciToHex(colorIndex)
+    } else if (layerDefs[layer]) {
+      const lc = layerDefs[layer]
+      if (typeof lc.color === 'number' && lc.color > 0) color = trueColorToHex(lc.color)
+      else if (typeof lc.colorIndex === 'number' && lc.colorIndex > 0) color = aciToHex(lc.colorIndex)
+    }
+
+    // boundary paths 파싱
+    const svgParts: string[] = []
+    let sumX = 0, sumY = 0, ptCount = 0
+
+    for (let bp = 0; bp < numBoundaryPaths && i < pairs.length; bp++) {
+      // 92: boundary path type flag
+      if (pairs[i].code !== 92) break
+      const pathTypeFlag = parseInt(pairs[i].value) || 0
+      i++
+      const isPolyline = (pathTypeFlag & 2) !== 0
+
+      if (isPolyline) {
+        // Polyline boundary
+        const hasBulge = (i < pairs.length && pairs[i].code === 72) ? (parseInt(pairs[i++].value) || 0) : 0
+        const isClosed = (i < pairs.length && pairs[i].code === 73) ? (parseInt(pairs[i++].value) || 0) : 1
+        const numVerts = (i < pairs.length && pairs[i].code === 93) ? (parseInt(pairs[i++].value) || 0) : 0
+
+        const verts: Array<{ x: number; y: number }> = []
+        for (let v = 0; v < numVerts && i < pairs.length; v++) {
+          let vx = 0, vy = 0
+          if (pairs[i].code === 10) { vx = parseFloat(pairs[i].value) || 0; i++ }
+          if (i < pairs.length && pairs[i].code === 20) { vy = parseFloat(pairs[i].value) || 0; i++ }
+          // skip bulge (42) if present
+          if (hasBulge && i < pairs.length && pairs[i].code === 42) i++
+          verts.push({ x: vx, y: vy })
+          sumX += vx; sumY += vy; ptCount++
+        }
+
+        if (verts.length >= 2) {
+          const parts = [`M${verts[0].x},${verts[0].y}`]
+          for (let v = 1; v < verts.length; v++) {
+            parts.push(`L${verts[v].x},${verts[v].y}`)
+          }
+          if (isClosed) parts.push('Z')
+          svgParts.push(parts.join(''))
+        }
+      } else {
+        // Edge boundary
+        const numEdges = (i < pairs.length && pairs[i].code === 93) ? (parseInt(pairs[i++].value) || 0) : 0
+        const edgeParts: string[] = []
+        let started = false
+
+        for (let e = 0; e < numEdges && i < pairs.length; e++) {
+          // 72: edge type
+          if (pairs[i].code !== 72) break
+          const edgeType = parseInt(pairs[i].value) || 0
+          i++
+
+          if (edgeType === 1) {
+            // Line: 10/20=start, 11/21=end
+            let x1 = 0, y1 = 0, x2 = 0, y2 = 0
+            while (i < pairs.length && pairs[i].code !== 72 && pairs[i].code !== 92 && !(pairs[i].code === 0)) {
+              const c = pairs[i].code, v = parseFloat(pairs[i].value) || 0
+              if (c === 10) x1 = v; else if (c === 20) y1 = v
+              else if (c === 11) x2 = v; else if (c === 21) y2 = v
+              else if (c === 97) break // source boundary count
+              i++
+            }
+            if (!started) { edgeParts.push(`M${x1},${y1}`); started = true }
+            edgeParts.push(`L${x2},${y2}`)
+            sumX += x1 + x2; sumY += y1 + y2; ptCount += 2
+          } else if (edgeType === 2) {
+            // Arc: 10/20=center, 40=radius, 50=start angle, 51=end angle, 73=ccw
+            let cx = 0, cy = 0, r = 0, sa = 0, ea = 360, ccw = 1
+            while (i < pairs.length && pairs[i].code !== 72 && pairs[i].code !== 92 && !(pairs[i].code === 0)) {
+              const c = pairs[i].code, v = parseFloat(pairs[i].value) || 0
+              if (c === 10) cx = v; else if (c === 20) cy = v
+              else if (c === 40) r = v; else if (c === 50) sa = v
+              else if (c === 51) ea = v; else if (c === 73) ccw = v
+              else if (c === 97) break
+              i++
+            }
+            // Arc → line approximation
+            let saRad = sa * Math.PI / 180, eaRad = ea * Math.PI / 180
+            if (!ccw) { const tmp = saRad; saRad = eaRad; eaRad = tmp }
+            if (eaRad <= saRad) eaRad += 2 * Math.PI
+            const steps = Math.max(3, Math.ceil(((eaRad - saRad) * 180) / (Math.PI * 15)))
+            const dt = (eaRad - saRad) / steps
+            for (let s = 0; s <= steps; s++) {
+              const t = saRad + dt * s
+              const px = cx + r * Math.cos(t), py = cy + r * Math.sin(t)
+              edgeParts.push(s === 0 && !started ? `M${px},${py}` : `L${px},${py}`)
+              if (s === 0) started = true
+            }
+            sumX += cx; sumY += cy; ptCount++
+          } else if (edgeType === 3) {
+            // Ellipse: 10/20=center, 11/21=major endpoint, 40=minor/major ratio, 50/51=start/end
+            let cx = 0, cy = 0, mx = 0, my = 0, ratio = 1, esa = 0, eea = 2 * Math.PI
+            while (i < pairs.length && pairs[i].code !== 72 && pairs[i].code !== 92 && !(pairs[i].code === 0)) {
+              const c = pairs[i].code, v = parseFloat(pairs[i].value) || 0
+              if (c === 10) cx = v; else if (c === 20) cy = v
+              else if (c === 11) mx = v; else if (c === 21) my = v
+              else if (c === 40) ratio = v
+              else if (c === 50) esa = v; else if (c === 51) eea = v
+              else if (c === 97) break
+              i++
+            }
+            const a = Math.hypot(mx, my), b = a * ratio
+            const rot = Math.atan2(my, mx)
+            const cosR = Math.cos(rot), sinR = Math.sin(rot)
+            if (eea <= esa) eea += 2 * Math.PI
+            const N = 18, ddt = (eea - esa) / N
+            for (let s = 0; s <= N; s++) {
+              const t = esa + ddt * s
+              const lx = a * Math.cos(t), ly = b * Math.sin(t)
+              const px = cx + lx * cosR - ly * sinR, py = cy + lx * sinR + ly * cosR
+              edgeParts.push(s === 0 && !started ? `M${px},${py}` : `L${px},${py}`)
+              if (s === 0) started = true
+            }
+            sumX += cx; sumY += cy; ptCount++
+          } else {
+            // Spline(4) or unknown - skip until next edge/boundary
+            while (i < pairs.length && pairs[i].code !== 72 && pairs[i].code !== 92 && pairs[i].code !== 0) {
+              if (pairs[i].code === 97) break
+              i++
+            }
+          }
+        }
+
+        if (started) {
+          edgeParts.push('Z')
+          svgParts.push(edgeParts.join(''))
+        }
+      }
+
+      // skip source boundary objects count (97) and handles
+      while (i < pairs.length && (pairs[i].code === 97 || pairs[i].code === 330)) {
+        if (pairs[i].code === 97) {
+          const cnt = parseInt(pairs[i].value) || 0
+          i++
+          for (let s = 0; s < cnt && i < pairs.length; s++) {
+            if (pairs[i].code === 330) i++
+          }
+        } else {
+          i++
+        }
+      }
+    }
+
+    // HATCH 뒤쪽 나머지 (pattern def lines 등) 스킵: 다음 entity(code=0)까지
+    while (i < pairs.length && pairs[i].code !== 0) i++
+
+    if (svgParts.length > 0 && ptCount > 0) {
+      hatches.push({
+        pathData: svgParts.join(''),
+        patternName: patternName.toUpperCase(),
+        patternScale,
+        patternAngle,
+        color,
+        layer,
+        cx: sumX / ptCount,
+        cy: sumY / ptCount,
+      })
+    }
+  }
+
+  return hatches
 }
 
 // ── 레이어 선택 지원 CAD 임포트 (2-phase) ──
@@ -1126,10 +1365,8 @@ export async function parseCadFile(
     dxf.entities as unknown as Array<Record<string, unknown>>,
     layerDefs, blocks,
   )
-  const hatches = collectHatchesWithBlocks(
-    dxf.entities as unknown as Array<Record<string, unknown>>,
-    layerDefs, blocks,
-  )
+  // dxf-parser는 HATCH를 파싱하지 않으므로 raw text에서 직접 추출
+  const hatches = parseRawHatches(text, layerDefs)
   if (!segs.length && !texts.length) {
     notify?.onError?.('DXF에서 도형 데이터를 찾지 못했습니다.')
     return null
