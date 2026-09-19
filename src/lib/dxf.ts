@@ -987,21 +987,30 @@ export function detectDxfEncoding(buffer: ArrayBuffer): 'utf-8' | 'euc-kr' {
     break
   }
 
-  // 2. EUC-KR 한글 바이트 패턴 직접 감지
+  // 2. UTF-8 유효성 확인: valid UTF-8이면 바이트 패턴 체크 스킵
+  // (이중 인코딩 = valid UTF-8이므로 reverseDoubleEncodingIfNeeded에서 처리)
+  let fffdCount = 0
+  try {
+    const utf8Text = new TextDecoder('utf-8').decode(bytes.subarray(0, scanLen))
+    fffdCount = (utf8Text.match(/\uFFFD/g) || []).length
+  } catch { /* ignore */ }
+  if (fffdCount === 0) return 'utf-8' // valid UTF-8 → double encoding은 별도 처리
+
+  // 3. UTF-8 invalid bytes 존재 → EUC-KR 바이트 패턴 감지
+  if (fffdCount > 3) return 'euc-kr'
+
   // 완성형 한글: first byte 0xB0-0xC8, second byte 0xA1-0xFE
-  // (가-힣 범위의 대부분. 0xB0=가~깋, 0xB1=까~낗, ... 0xC8=하~힣 근처)
   let eucKrCount = 0
   for (let i = 0; i < scanLen - 1; i++) {
     const b1 = bytes[i], b2 = bytes[i + 1]
     if (b1 >= 0xB0 && b1 <= 0xC8 && b2 >= 0xA1 && b2 <= 0xFE) {
       eucKrCount++
-      i++ // 2nd byte skip
+      i++
     }
   }
   if (eucKrCount >= 2) return 'euc-kr'
 
-  // 3. Fallback: 넓은 CP949 확장 범위 (한자/특수문자 포함)
-  // first byte 0x81-0xFE, second byte 0x41-0x5A | 0x61-0x7A | 0x81-0xFE
+  // CP949 확장 범위 (한자/특수문자 포함)
   let cp949Count = 0
   for (let i = 0; i < scanLen - 1; i++) {
     const b1 = bytes[i], b2 = bytes[i + 1]
@@ -1013,13 +1022,6 @@ export function detectDxfEncoding(buffer: ArrayBuffer): 'utf-8' | 'euc-kr' {
     }
   }
   if (cp949Count > 5) return 'euc-kr'
-
-  // 4. 최종 fallback: UTF-8 디코딩 후 U+FFFD 확인
-  try {
-    const utf8Text = new TextDecoder('utf-8').decode(bytes.subarray(0, scanLen))
-    const fffdCount = (utf8Text.match(/\uFFFD/g) || []).length
-    if (fffdCount > 3) return 'euc-kr'
-  } catch { /* ignore */ }
 
   return 'utf-8'
 }
