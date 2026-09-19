@@ -900,9 +900,9 @@ async function dwgToDxfBytes(buffer: ArrayBuffer): Promise<Uint8Array> {
 /** raw DXF 바이트를 인코딩 감지 후 텍스트로 디코딩 */
 function decodeDxfBytes(dxfBytes: Uint8Array): string {
   // Uint8Array.buffer가 WASM memory 전체일 수 있으므로 복사
-  const buf = dxfBytes.buffer.byteLength === dxfBytes.byteLength
+  const buf = (dxfBytes.buffer.byteLength === dxfBytes.byteLength
     ? dxfBytes.buffer
-    : dxfBytes.slice().buffer
+    : dxfBytes.slice().buffer) as ArrayBuffer
   const encoding = detectDxfEncoding(buf)
   let text: string
   try {
