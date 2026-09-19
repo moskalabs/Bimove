@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import DxfParser from 'dxf-parser'
-import { parseDxfSegments, parseDxfHatches, commitCadImport, type CadParseResult, type DxfSeg, type DxfHatch } from '../../lib/dxf'
+import { parseDxfSegments, parseDxfHatches, commitCadImport, type CadParseResult, type DxfSeg } from '../../lib/dxf'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
