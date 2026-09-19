@@ -233,15 +233,18 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
       {/* HATCH fills (아웃라인 뒤, 텍스트 앞) */}
       {hatches.map((h, i) => {
         const hd = hatchDefs[i]
+        if (hd.isSolid) {
+          return (
+            <path key={`h${i}`} d={h.d}
+              fill={hd.color} stroke="none" opacity={0.55} pointerEvents="none" />
+          )
+        }
+        // 패턴 해치: 배경색 + 패턴 오버레이
         return (
-          <path
-            key={`h${i}`}
-            d={h.d}
-            fill={hd.isSolid ? hd.color : `url(#${hd.id})`}
-            stroke="none"
-            opacity={0.3}
-            pointerEvents="none"
-          />
+          <g key={`h${i}`} pointerEvents="none">
+            <path d={h.d} fill={hd.color} stroke="none" opacity={0.25} />
+            <path d={h.d} fill={`url(#${hd.id})`} stroke="none" opacity={0.7} />
+          </g>
         )
       })}
       {shape.props.pathData && (
@@ -378,10 +381,14 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
         )}
         {hatches.map((h, i) => {
           const hd = svgHatchDefs[i]
+          if (hd.isSolid) {
+            return <path key={`h${i}`} d={h.d} fill={hd.color} stroke="none" opacity={0.55} />
+          }
           return (
-            <path key={`h${i}`} d={h.d}
-              fill={hd.isSolid ? hd.color : `url(#${hd.id})`}
-              stroke="none" opacity={0.3} />
+            <g key={`h${i}`}>
+              <path d={h.d} fill={hd.color} stroke="none" opacity={0.25} />
+              <path d={h.d} fill={`url(#${hd.id})`} stroke="none" opacity={0.7} />
+            </g>
           )
         })}
         {shape.props.pathData && (
