@@ -33,6 +33,20 @@ function isNearBlack(hex: string): boolean {
   return luminance(hex) < 0.15
 }
 
+/** 라이트 배경에서 밝은 색(cyan, yellow 등)을 어둡게 보정 */
+function darkenForLightBg(hex: string): string {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+  if (!m) return hex
+  const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16)
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  if (lum <= 0.5) return hex // 충분히 어두움
+  const factor = 0.45 / lum
+  const nr = Math.round(Math.min(255, r * factor))
+  const ng = Math.round(Math.min(255, g * factor))
+  const nb = Math.round(Math.min(255, b * factor))
+  return `#${nr.toString(16).padStart(2, '0')}${ng.toString(16).padStart(2, '0')}${nb.toString(16).padStart(2, '0')}`
+}
+
 export type DxfGroupShapeProps = {
   w: number       // bounding width
   h: number       // bounding height
@@ -287,10 +301,10 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
     ? (darkMode ? '#ccc' : '#333')
     : darkMode
       ? (isNearBlack(rawColor) ? '#ccc' : rawColor)
-      : (isNearWhite(rawColor) ? '#333' : rawColor)
+      : darkenForLightBg(rawColor)
   const dxfLw = (meta.dxfLineweight as number) ?? 0
-  const baseStrokeW = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
-  const minStroke = 0.5 / Math.max(zoom, 0.001)
+  const baseStrokeW = dxfLw > 0 ? Math.max(0.5, Math.min(dxfLw / 100, 2)) : 0.8
+  const minStroke = 0.8 / Math.max(zoom, 0.001)
   const strokeW = Math.max(baseStrokeW, minStroke)
 
   // 텍스트 데이터 파싱
@@ -310,7 +324,7 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
     const hColor = grayscale
       ? (darkMode ? '#aaa' : '#666')
       : h.c
-        ? (darkMode ? (isNearBlack(h.c) ? '#aaa' : h.c) : (isNearWhite(h.c) ? '#666' : h.c))
+        ? (darkMode ? (isNearBlack(h.c) ? '#aaa' : h.c) : darkenForLightBg(h.c))
         : (darkMode ? '#aaa' : '#666')
     const patId = `hatch-${shape.id}-${i}`
     const isSolid = h.p.toUpperCase() === 'SOLID'
@@ -370,7 +384,7 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
         const textColor = grayscale
           ? defaultTextColor
           : t.c
-            ? (darkMode ? (isNearBlack(t.c) ? '#bbb' : t.c) : (isNearWhite(t.c) ? '#555' : t.c))
+            ? (darkMode ? (isNearBlack(t.c) ? '#bbb' : t.c) : darkenForLightBg(t.c))
             : defaultTextColor
         return (
           <text
@@ -459,9 +473,9 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
 
   override toSvg(shape: DxfGroupShape) {
     const rawColor = (shape.meta?.dxfColor as string) || '#333'
-    const stroke = isNearWhite(rawColor) ? '#333' : rawColor
+    const stroke = darkenForLightBg(rawColor)
     const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
-    const strokeW = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
+    const strokeW = dxfLw > 0 ? Math.max(0.5, Math.min(dxfLw / 100, 2)) : 0.8
 
     let texts: DxfTextEntry[] = []
     try {
@@ -474,7 +488,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
     } catch { /* ignore */ }
 
     const svgHatchDefs = hatches.map((h, i) => {
-      const hColor = h.c && !isNearWhite(h.c) ? h.c : '#666'
+      const hColor = h.c ? darkenForLightBg(h.c) : '#666'
       const patId = `hatch-svg-${shape.id}-${i}`
       const isSolid = h.p.toUpperCase() === 'SOLID'
       return { id: patId, def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor, Math.max(shape.props.w, shape.props.h)), isSolid, color: hColor }
@@ -514,7 +528,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
             x={t.x}
             y={t.y}
             fontSize={t.h}
-            fill={t.c && !isNearWhite(t.c) ? t.c : '#555'}
+            fill={t.c ? darkenForLightBg(t.c) : '#555'}
             fontFamily="sans-serif"
             dominantBaseline="auto"
             transform={t.r ? `rotate(${-t.r},${t.x},${t.y})` : undefined}
