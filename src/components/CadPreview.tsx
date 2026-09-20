@@ -190,7 +190,12 @@ export default function CadPreview({
  * 1단계: TABLES 섹션에서 LAYER 정의 추출 (색상 포함)
  * 2단계: ENTITIES 섹션에서 그룹코드 8 (레이어명) 스캔하여 엔티티 수 집계
  */
-function extractLayersLightweight(dxfText: string): LayerInfo[] {
+function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
+  // 0. \r\n → \n 정규화 (Windows DXF 호환)
+  const dxfText = rawDxfText.indexOf('\r') >= 0
+    ? rawDxfText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    : rawDxfText
+
   // --- 1. LAYER 테이블에서 정의된 레이어 + 색상 ---
   const layerDefs = new Map<string, number>() // name → ACI color
   const tablesMatch = dxfText.match(/\n0\nSECTION\n2\nTABLES\n([\s\S]*?)\n0\nENDSEC/i)
