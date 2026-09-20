@@ -1508,6 +1508,12 @@ export async function parseCadFile(
     text = decodeDxfBytes(new Uint8Array(buffer))
   }
 
+  // UI 업데이트를 위한 micro-yield (메인스레드 차단 방지)
+  const yieldUI = () => new Promise<void>(r => setTimeout(r, 0))
+
+  ;(notify?.onInfo ?? notify?.onSuccess)?.('도면 구조 분석 중...')
+  await yieldUI()
+
   let dxf: ReturnType<DxfParser['parseSync']>
   try {
     console.log(`[CAD Import] DXF 파싱 시작 (${text.length} chars)...`)
@@ -1541,7 +1547,14 @@ export async function parseCadFile(
   }
 
   // INSERT/BLOCK 재귀 확장 포함 세그먼트 + 텍스트 + 해치 수집
-  console.log(`[CAD Import] 세그먼트 수집 시작 (blocks: ${Object.keys(blocks).length})...`)
+  const entityCount = dxf.entities?.length ?? 0
+  const blockCount = Object.keys(blocks).length
+  ;(notify?.onInfo ?? notify?.onSuccess)?.(
+    `${entityCount.toLocaleString()}개 엔티티 처리 중... (블록 ${blockCount.toLocaleString()}개)`,
+  )
+  await yieldUI()
+
+  console.log(`[CAD Import] 세그먼트 수집 시작 (blocks: ${blockCount})...`)
   const segs = collectSegmentsWithBlocks(
     dxf.entities as unknown as Array<Record<string, unknown>>,
     layerDefs, blocks,
@@ -1552,6 +1565,12 @@ export async function parseCadFile(
     layerDefs, blocks,
   )
   console.log(`[CAD Import] 텍스트: ${texts.length}`)
+
+  ;(notify?.onInfo ?? notify?.onSuccess)?.(
+    `해치 패턴 추출 중... (세그먼트 ${segs.length.toLocaleString()}개)`,
+  )
+  await yieldUI()
+
   // dxf-parser는 HATCH를 파싱하지 않으므로 raw text에서 직접 추출
   const hatches = parseRawHatches(text, layerDefs)
   console.log(`[CAD Import] 해치: ${hatches.length}`)

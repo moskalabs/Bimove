@@ -9,10 +9,11 @@ import { CadLayerDialog } from '../CadLayerDialog'
 export function ImportPanel() {
   const editor = useEditor()
   const { toast } = useToast()
+  const [loadingRef] = useState({ setLoading: (_: string | null) => {} })
   const notify = {
     onSuccess: (msg: string) => toast(msg, 'success'),
-    onError: (msg: string) => toast(msg, 'error'),
-    onInfo: (msg: string) => toast(msg, 'info'),
+    onError: (msg: string) => { toast(msg, 'error'); loadingRef.setLoading(null) },
+    onInfo: (msg: string) => loadingRef.setLoading(msg), // 로딩 오버레이에 진행 상황 표시
   }
   const [cadResult, setCadResult] = useState<CadParseResult | null>(null)
   const [loading, setLoading] = useState<string | null>(null) // 로딩 메시지
@@ -41,7 +42,13 @@ export function ImportPanel() {
     const pageId = editor.getCurrentPageId() as string
     setImportPageId(pageId)
 
-    setLoading('도면 파일 분석 중...')
+    // notify.onInfo가 로딩 메시지를 실시간 업데이트
+    loadingRef.setLoading = setLoading
+    const sizeMB = (file.size / 1024 / 1024).toFixed(1)
+    setLoading(file.name.toLowerCase().endsWith('.dwg')
+      ? `DWG → DXF 변환 중... (${sizeMB}MB)`
+      : `도면 파일 분석 중... (${sizeMB}MB)`,
+    )
     try {
       const result = await parseCadFile(file, notify)
       if (!result) { console.warn('[Import] parseCadFile → null'); setLoading(null); return }
@@ -68,6 +75,8 @@ export function ImportPanel() {
         setLoading(`${result.totalSegments.toLocaleString()}개 세그먼트 변환 중...`)
         await new Promise((r) => setTimeout(r, 50))
         const allLayers = new Set(result.layers.map((l) => l.name))
+        setLoading('도면 shapes 생성 중...')
+        await new Promise((r) => setTimeout(r, 50))
         const count = safeCommit(result, allLayers, pageId)
         const fmt = result.isDwg ? 'DWG' : 'DXF'
         toast(`"${result.fileName}" ${fmt}를 가져왔습니다. (${count}개 벽)`, 'success')
