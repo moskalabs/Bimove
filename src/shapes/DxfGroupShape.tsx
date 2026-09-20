@@ -194,14 +194,13 @@ function dxfHatchPatternDef(
     )
   }
 
-  // --- 그물/네트 ---
+  // --- 그물/네트 (직교 격자, GRID SHEET 등에서 사용) ---
   if (upper === 'NET' || upper === 'HONEY') {
     return (
       <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw * 0.8} opacity={0.7} />
-        <line x1={0} y1={0} x2={sz * 0.5} y2={sz} stroke={color} strokeWidth={sw * 0.8} opacity={0.7} />
-        <line x1={sz} y1={0} x2={sz * 0.5} y2={sz} stroke={color} strokeWidth={sw * 0.8} opacity={0.7} />
+        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw * 0.7} opacity={0.7} />
+        <line x1={0} y1={0} x2={0} y2={sz} stroke={color} strokeWidth={sw * 0.7} opacity={0.7} />
       </pattern>
     )
   }
