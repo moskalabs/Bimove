@@ -1798,15 +1798,31 @@ export function commitCadImport(
 
   // 3단계: 바운딩박스 중심을 캔버스 원점(0,0)으로 정규화
   // DXF 좌표계가 원점에서 멀면 shapes가 캔버스 밖에 생성되는 문제 방지
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  // 아웃라이어(극단값) 제거를 위해 퍼센타일 기반 바운딩박스 사용
+  const allXCoords: number[] = []
+  const allYCoords: number[] = []
   for (const s of finalSegs) {
-    minX = Math.min(minX, s.x1, s.x1 + s.dx)
-    minY = Math.min(minY, s.y1, s.y1 + s.dy)
-    maxX = Math.max(maxX, s.x1, s.x1 + s.dx)
-    maxY = Math.max(maxY, s.y1, s.y1 + s.dy)
+    allXCoords.push(s.x1, s.x1 + s.dx)
+    allYCoords.push(s.y1, s.y1 + s.dy)
   }
+  allXCoords.sort((a, b) => a - b)
+  allYCoords.sort((a, b) => a - b)
 
-  console.log(`[CAD Commit] bbox: x=${minX.toFixed(0)}~${maxX.toFixed(0)}, y=${minY.toFixed(0)}~${maxY.toFixed(0)}`)
+  const n = allXCoords.length
+  if (n === 0) { console.warn('[CAD Commit] 좌표 없음'); return 0 }
+
+  // P2~P98 퍼센타일로 아웃라이어 제거 (좌표가 1000개 이상일 때)
+  const pLo = n > 1000 ? Math.floor(n * 0.02) : 0
+  const pHi = n > 1000 ? Math.ceil(n * 0.98) - 1 : n - 1
+  let minX = allXCoords[pLo]
+  let maxX = allXCoords[pHi]
+  let minY = allYCoords[pLo]
+  let maxY = allYCoords[pHi]
+
+  console.log(`[CAD Commit] bbox (P2~P98): x=${minX.toFixed(0)}~${maxX.toFixed(0)}, y=${minY.toFixed(0)}~${maxY.toFixed(0)}, total coords=${n}`)
+  if (n > 1000) {
+    console.log(`[CAD Commit] raw bbox: x=${allXCoords[0].toFixed(0)}~${allXCoords[n-1].toFixed(0)}, y=${allYCoords[0].toFixed(0)}~${allYCoords[n-1].toFixed(0)}`)
+  }
 
   // NaN/Infinity 방어
   if (!isFinite(minX) || !isFinite(maxX) || !isFinite(minY) || !isFinite(maxY)) {
@@ -1838,8 +1854,13 @@ export function commitCadImport(
       layer: t.layer,
     }))
 
-  // 텍스트도 바운딩박스에 포함
+  // 텍스트도 바운딩박스에 포함 (단, 기존 bbox 범위 ×2 내의 텍스트만)
+  const bboxRangeX = (maxX - minX) || 1
+  const bboxRangeY = (maxY - minY) || 1
   for (const t of pxTexts) {
+    // 아웃라이어 텍스트는 bbox에 포함하지 않음
+    if (t.x < minX - bboxRangeX || t.x > maxX + bboxRangeX) continue
+    if (t.y < minY - bboxRangeY || t.y > maxY + bboxRangeY) continue
     minX = Math.min(minX, t.x)
     minY = Math.min(minY, t.y - t.height)
     maxX = Math.max(maxX, t.x + t.text.length * t.height * 0.6)
