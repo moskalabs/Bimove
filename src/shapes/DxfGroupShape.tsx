@@ -65,183 +65,272 @@ function dxfHatchPatternDef(
   id: string, patternName: string, scale: number, angle: number, color: string,
   shapeMaxDim?: number,
 ): React.ReactElement | null {
-  // shape 크기에 비례해서 패턴 셀 크기 결정 (약 40~60회 반복 목표)
+  // shape 크기에 비례해서 패턴 셀 크기 결정 (약 30~50회 반복 목표)
   const dim = shapeMaxDim ?? 400
-  const baseSz = Math.max(8, dim / 50)
+  const baseSz = Math.max(10, dim / 40)
   const sz = baseSz * Math.max(0.5, scale) // 패턴 셀 크기
-  const sw = Math.max(0.5, sz * 0.06) // 선 두께도 비례
+  const sw = Math.max(0.8, sz * 0.10) // 선 두께 비례 (더 굵게)
   const upper = patternName.toUpperCase()
 
-  // SOLID: 패턴 없이 단색 fill
-  if (upper === 'SOLID') return null
+  // SOLID / PAINT: 패턴 없이 단색 fill
+  if (upper === 'SOLID' || upper === 'PAINT') return null
 
   const rotate = angle !== 0 ? `rotate(${angle})` : undefined
 
+  // --- 사선 해칭 (ANSI) ---
   if (upper === 'ANSI31' || upper === 'ANSI32') {
-    // 사선 해칭 (45도)
     const gap = upper === 'ANSI32' ? sz * 0.5 : sz
     return (
       <pattern id={id} width={gap} height={gap} patternUnits="userSpaceOnUse"
         patternTransform={rotate ?? 'rotate(45)'}>
-        <line x1={0} y1={0} x2={gap} y2={0} stroke={color} strokeWidth={sw} opacity={0.7} />
+        <line x1={0} y1={0} x2={gap} y2={0} stroke={color} strokeWidth={sw} opacity={0.85} />
       </pattern>
     )
   }
 
   if (upper === 'ANSI37' || upper === 'ANSI38') {
-    // 역방향 사선
     return (
       <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
         patternTransform={rotate ?? 'rotate(-45)'}>
-        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw} opacity={0.7} />
+        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw} opacity={0.85} />
       </pattern>
     )
   }
 
+  // --- 콘크리트 ---
   if (upper.startsWith('AR-CONC') || upper === 'CONCRETE') {
-    // 콘크리트 점 패턴
     const d = sz * 1.5
-    const r1 = Math.max(0.5, sz * 0.1)
+    const r1 = Math.max(0.8, sz * 0.12)
     return (
       <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <circle cx={d * 0.2} cy={d * 0.2} r={r1} fill={color} opacity={0.55} />
-        <circle cx={d * 0.7} cy={d * 0.6} r={r1 * 0.7} fill={color} opacity={0.45} />
-        <circle cx={d * 0.4} cy={d * 0.9} r={r1 * 0.5} fill={color} opacity={0.4} />
+        <circle cx={d * 0.2} cy={d * 0.2} r={r1} fill={color} opacity={0.7} />
+        <circle cx={d * 0.7} cy={d * 0.6} r={r1 * 0.7} fill={color} opacity={0.6} />
+        <circle cx={d * 0.4} cy={d * 0.9} r={r1 * 0.5} fill={color} opacity={0.55} />
       </pattern>
     )
   }
 
-  if (upper.startsWith('AR-BRST') || upper === 'BRICK') {
-    // 벽돌 패턴
+  // --- 벽돌 ---
+  if (upper.startsWith('AR-BRST') || upper === 'BRICK' || upper === 'AR-BRSTD') {
     const bw = sz * 1.75, bh = sz
     return (
       <pattern id={id} width={bw} height={bh} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={0} x2={bw} y2={0} stroke={color} strokeWidth={sw} opacity={0.6} />
-        <line x1={0} y1={bh / 2} x2={bw} y2={bh / 2} stroke={color} strokeWidth={sw} opacity={0.6} />
-        <line x1={bw / 2} y1={0} x2={bw / 2} y2={bh / 2} stroke={color} strokeWidth={sw} opacity={0.6} />
-        <line x1={0} y1={bh / 2} x2={0} y2={bh} stroke={color} strokeWidth={sw} opacity={0.6} />
+        <line x1={0} y1={0} x2={bw} y2={0} stroke={color} strokeWidth={sw} opacity={0.8} />
+        <line x1={0} y1={bh / 2} x2={bw} y2={bh / 2} stroke={color} strokeWidth={sw} opacity={0.8} />
+        <line x1={bw / 2} y1={0} x2={bw / 2} y2={bh / 2} stroke={color} strokeWidth={sw} opacity={0.8} />
+        <line x1={0} y1={bh / 2} x2={0} y2={bh} stroke={color} strokeWidth={sw} opacity={0.8} />
       </pattern>
     )
   }
 
+  // --- 단순 수평선 ---
   if (upper === 'LINE' || upper === 'HATCH') {
-    // 단순 수평선 패턴
     return (
       <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw} opacity={0.6} />
+        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw} opacity={0.8} />
       </pattern>
     )
   }
 
+  // --- 격자 ---
   if (upper === 'CROSS' || upper === 'GRID') {
-    // 격자 패턴
     return (
       <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw} opacity={0.6} />
-        <line x1={0} y1={0} x2={0} y2={sz} stroke={color} strokeWidth={sw} opacity={0.6} />
+        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw} opacity={0.8} />
+        <line x1={0} y1={0} x2={0} y2={sz} stroke={color} strokeWidth={sw} opacity={0.8} />
       </pattern>
     )
   }
 
+  // --- 점 패턴 ---
   if (upper === 'DOTS' || upper === 'DOT') {
-    // 점 패턴 (불규칙 점)
     const d = sz * 1.2
-    const r1 = Math.max(0.5, sz * 0.08)
+    const r1 = Math.max(0.8, sz * 0.10)
     return (
       <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <circle cx={d * 0.2} cy={d * 0.2} r={r1} fill={color} opacity={0.6} />
-        <circle cx={d * 0.7} cy={d * 0.6} r={r1 * 0.75} fill={color} opacity={0.5} />
-        <circle cx={d * 0.4} cy={d * 0.85} r={r1 * 0.85} fill={color} opacity={0.55} />
+        <circle cx={d * 0.2} cy={d * 0.2} r={r1} fill={color} opacity={0.75} />
+        <circle cx={d * 0.7} cy={d * 0.6} r={r1 * 0.75} fill={color} opacity={0.65} />
+        <circle cx={d * 0.4} cy={d * 0.85} r={r1 * 0.85} fill={color} opacity={0.7} />
       </pattern>
     )
   }
 
-  if (upper.startsWith('AR-SAND') || upper === 'SAND') {
-    // 모래/샌드 패턴 (밀집 점)
+  // --- 모래/자갈 ---
+  if (upper.startsWith('AR-SAND') || upper === 'SAND' || upper === 'GRAVEL') {
     const d = sz * 0.9
-    const r1 = Math.max(0.3, sz * 0.05)
+    const r1 = Math.max(0.5, sz * 0.07)
     return (
       <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <circle cx={d * 0.15} cy={d * 0.15} r={r1} fill={color} opacity={0.5} />
-        <circle cx={d * 0.55} cy={d * 0.1} r={r1 * 0.8} fill={color} opacity={0.4} />
-        <circle cx={d * 0.85} cy={d * 0.35} r={r1} fill={color} opacity={0.45} />
-        <circle cx={d * 0.3} cy={d * 0.5} r={r1 * 0.8} fill={color} opacity={0.4} />
-        <circle cx={d * 0.7} cy={d * 0.65} r={r1} fill={color} opacity={0.5} />
-        <circle cx={d * 0.1} cy={d * 0.8} r={r1 * 0.8} fill={color} opacity={0.35} />
-        <circle cx={d * 0.5} cy={d * 0.9} r={r1 * 0.9} fill={color} opacity={0.45} />
-        <circle cx={d * 0.9} cy={d * 0.85} r={r1 * 0.8} fill={color} opacity={0.4} />
+        <circle cx={d * 0.15} cy={d * 0.15} r={r1} fill={color} opacity={0.65} />
+        <circle cx={d * 0.55} cy={d * 0.1} r={r1 * 0.8} fill={color} opacity={0.55} />
+        <circle cx={d * 0.85} cy={d * 0.35} r={r1} fill={color} opacity={0.6} />
+        <circle cx={d * 0.3} cy={d * 0.5} r={r1 * 0.8} fill={color} opacity={0.55} />
+        <circle cx={d * 0.7} cy={d * 0.65} r={r1} fill={color} opacity={0.65} />
+        <circle cx={d * 0.1} cy={d * 0.8} r={r1 * 0.8} fill={color} opacity={0.5} />
+        <circle cx={d * 0.5} cy={d * 0.9} r={r1 * 0.9} fill={color} opacity={0.6} />
+        <circle cx={d * 0.9} cy={d * 0.85} r={r1 * 0.8} fill={color} opacity={0.55} />
       </pattern>
     )
   }
 
+  // --- 지붕/루핑 ---
   if (upper.startsWith('AR-RROOF') || upper === 'AR-RSHKE') {
-    // 지붕/루핑 패턴 (불규칙 수평선)
     const d = sz * 1.4
     return (
       <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={d * 0.2} x2={d * 0.45} y2={d * 0.2} stroke={color} strokeWidth={sw} opacity={0.6} />
-        <line x1={d * 0.55} y1={d * 0.2} x2={d} y2={d * 0.2} stroke={color} strokeWidth={sw * 0.8} opacity={0.5} />
-        <line x1={d * 0.2} y1={d * 0.5} x2={d * 0.8} y2={d * 0.5} stroke={color} strokeWidth={sw} opacity={0.55} />
-        <line x1={0} y1={d * 0.8} x2={d * 0.35} y2={d * 0.8} stroke={color} strokeWidth={sw * 0.8} opacity={0.5} />
-        <line x1={d * 0.5} y1={d * 0.8} x2={d} y2={d * 0.8} stroke={color} strokeWidth={sw} opacity={0.6} />
+        <line x1={0} y1={d * 0.2} x2={d * 0.45} y2={d * 0.2} stroke={color} strokeWidth={sw} opacity={0.75} />
+        <line x1={d * 0.55} y1={d * 0.2} x2={d} y2={d * 0.2} stroke={color} strokeWidth={sw * 0.8} opacity={0.65} />
+        <line x1={d * 0.2} y1={d * 0.5} x2={d * 0.8} y2={d * 0.5} stroke={color} strokeWidth={sw} opacity={0.7} />
+        <line x1={0} y1={d * 0.8} x2={d * 0.35} y2={d * 0.8} stroke={color} strokeWidth={sw * 0.8} opacity={0.65} />
+        <line x1={d * 0.5} y1={d * 0.8} x2={d} y2={d * 0.8} stroke={color} strokeWidth={sw} opacity={0.75} />
       </pattern>
     )
   }
 
+  // --- 그물/네트 ---
   if (upper === 'NET' || upper === 'HONEY') {
-    // 그물/네트 패턴 (60도 격자)
     return (
       <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw * 0.8} opacity={0.5} />
-        <line x1={0} y1={0} x2={sz * 0.5} y2={sz} stroke={color} strokeWidth={sw * 0.8} opacity={0.5} />
-        <line x1={sz} y1={0} x2={sz * 0.5} y2={sz} stroke={color} strokeWidth={sw * 0.8} opacity={0.5} />
+        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw * 0.8} opacity={0.7} />
+        <line x1={0} y1={0} x2={sz * 0.5} y2={sz} stroke={color} strokeWidth={sw * 0.8} opacity={0.7} />
+        <line x1={sz} y1={0} x2={sz * 0.5} y2={sz} stroke={color} strokeWidth={sw * 0.8} opacity={0.7} />
       </pattern>
     )
   }
 
+  // --- 그레이트 ---
   if (upper === 'GRATE') {
-    // 그레이트/격자 (정사각형 격자, CROSS보다 촘촘)
     const g = sz * 0.6
     return (
       <pattern id={id} width={g} height={g} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={0} x2={g} y2={0} stroke={color} strokeWidth={sw} opacity={0.6} />
-        <line x1={0} y1={0} x2={0} y2={g} stroke={color} strokeWidth={sw} opacity={0.6} />
+        <line x1={0} y1={0} x2={g} y2={0} stroke={color} strokeWidth={sw} opacity={0.8} />
+        <line x1={0} y1={0} x2={0} y2={g} stroke={color} strokeWidth={sw} opacity={0.8} />
       </pattern>
     )
   }
 
+  // --- 나무결 ---
   if (upper.includes('WOOD') || upper === 'DOLMIT') {
-    // 나무결/돌 패턴 (곡선 느낌의 수평선)
     const d = sz * 1.6
     return (
       <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <path d={`M0,${d * 0.15} Q${d * 0.25},${d * 0.1} ${d * 0.5},${d * 0.18} T${d},${d * 0.15}`}
-          stroke={color} fill="none" strokeWidth={sw} opacity={0.55} />
-        <path d={`M0,${d * 0.4} Q${d * 0.3},${d * 0.35} ${d * 0.6},${d * 0.42} T${d},${d * 0.38}`}
-          stroke={color} fill="none" strokeWidth={sw * 0.8} opacity={0.45} />
-        <path d={`M0,${d * 0.62} Q${d * 0.2},${d * 0.58} ${d * 0.45},${d * 0.65} T${d},${d * 0.6}`}
-          stroke={color} fill="none" strokeWidth={sw} opacity={0.5} />
-        <path d={`M0,${d * 0.85} Q${d * 0.35},${d * 0.82} ${d * 0.55},${d * 0.88} T${d},${d * 0.84}`}
-          stroke={color} fill="none" strokeWidth={sw * 0.8} opacity={0.45} />
+        <path d={`M0,${d * 0.12} Q${d * 0.25},${d * 0.06} ${d * 0.5},${d * 0.15} T${d},${d * 0.12}`}
+          stroke={color} fill="none" strokeWidth={sw * 1.2} opacity={0.7} />
+        <path d={`M0,${d * 0.35} Q${d * 0.3},${d * 0.28} ${d * 0.6},${d * 0.37} T${d},${d * 0.33}`}
+          stroke={color} fill="none" strokeWidth={sw} opacity={0.6} />
+        <path d={`M0,${d * 0.55} Q${d * 0.2},${d * 0.50} ${d * 0.45},${d * 0.58} T${d},${d * 0.54}`}
+          stroke={color} fill="none" strokeWidth={sw * 1.1} opacity={0.65} />
+        <path d={`M0,${d * 0.78} Q${d * 0.35},${d * 0.72} ${d * 0.55},${d * 0.80} T${d},${d * 0.76}`}
+          stroke={color} fill="none" strokeWidth={sw} opacity={0.6} />
+        <path d={`M0,${d * 0.95} Q${d * 0.15},${d * 0.92} ${d * 0.4},${d * 0.97} T${d},${d * 0.94}`}
+          stroke={color} fill="none" strokeWidth={sw * 0.8} opacity={0.55} />
       </pattern>
     )
   }
 
-  // 기본 fallback: 45도 사선
+  // --- 유리 (가는 수평선 + 넓은 간격) ---
+  if (upper === 'GLASS' || upper === 'GLAZE') {
+    const d = sz * 2
+    return (
+      <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
+        patternTransform={rotate}>
+        <line x1={0} y1={d * 0.25} x2={d} y2={d * 0.25} stroke={color} strokeWidth={sw * 0.6} opacity={0.5} />
+        <line x1={0} y1={d * 0.75} x2={d} y2={d * 0.75} stroke={color} strokeWidth={sw * 0.6} opacity={0.5} />
+      </pattern>
+    )
+  }
+
+  // --- 거울 (대각선 얇은 교차) ---
+  if (upper === 'MIRROR') {
+    const d = sz * 1.5
+    return (
+      <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
+        patternTransform={rotate}>
+        <line x1={0} y1={0} x2={d} y2={d} stroke={color} strokeWidth={sw * 0.5} opacity={0.4} />
+        <line x1={d} y1={0} x2={0} y2={d} stroke={color} strokeWidth={sw * 0.5} opacity={0.4} />
+      </pattern>
+    )
+  }
+
+  // --- 단열재 (지그재그) ---
+  if (upper === 'INSUL' || upper === 'INSULATION' || upper === 'BATT' || upper === 'AR-BATT'
+    || upper === 'INSUL_FILL' || upper === 'T27') {
+    const d = sz * 1.2
+    const h = d * 0.8
+    return (
+      <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
+        patternTransform={rotate}>
+        <path d={`M0,${h} L${d * 0.25},${d * 0.1} L${d * 0.5},${h} L${d * 0.75},${d * 0.1} L${d},${h}`}
+          stroke={color} fill="none" strokeWidth={sw} opacity={0.75} />
+      </pattern>
+    )
+  }
+
+  // --- 석재/인조석 (불규칙 블록) ---
+  if (upper === 'STONE' || upper.startsWith('AR-STONE') || upper === 'MUDST'
+    || upper === 'T41' || upper === 'EARTH') {
+    const d = sz * 1.8
+    return (
+      <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
+        patternTransform={rotate}>
+        <line x1={0} y1={d * 0.33} x2={d} y2={d * 0.33} stroke={color} strokeWidth={sw} opacity={0.7} />
+        <line x1={0} y1={d * 0.67} x2={d} y2={d * 0.67} stroke={color} strokeWidth={sw} opacity={0.7} />
+        <line x1={d * 0.4} y1={0} x2={d * 0.4} y2={d * 0.33} stroke={color} strokeWidth={sw * 0.8} opacity={0.6} />
+        <line x1={d * 0.7} y1={d * 0.33} x2={d * 0.7} y2={d * 0.67} stroke={color} strokeWidth={sw * 0.8} opacity={0.6} />
+        <line x1={d * 0.3} y1={d * 0.67} x2={d * 0.3} y2={d} stroke={color} strokeWidth={sw * 0.8} opacity={0.6} />
+      </pattern>
+    )
+  }
+
+  // --- 타일/코킹 (촘촘한 대각선) ---
+  if (upper === 'CAULK' || upper === 'CAULKING' || upper === 'Q4') {
+    const g = sz * 0.7
+    return (
+      <pattern id={id} width={g} height={g} patternUnits="userSpaceOnUse"
+        patternTransform={rotate ?? 'rotate(45)'}>
+        <line x1={0} y1={0} x2={g} y2={0} stroke={color} strokeWidth={sw} opacity={0.8} />
+      </pattern>
+    )
+  }
+
+  // --- 금속/철 (이중 대각선) ---
+  if (upper === 'STEEL' || upper === 'METAL' || upper === 'G28') {
+    const d = sz * 1.2
+    return (
+      <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
+        patternTransform={rotate ?? 'rotate(45)'}>
+        <line x1={0} y1={0} x2={d} y2={0} stroke={color} strokeWidth={sw} opacity={0.8} />
+        <line x1={0} y1={d * 0.4} x2={d} y2={d * 0.4} stroke={color} strokeWidth={sw * 0.6} opacity={0.6} />
+      </pattern>
+    )
+  }
+
+  // --- _USER / 사용자 정의 패턴: 촘촘한 사선 ---
+  if (upper.startsWith('_USER') || upper.startsWith('*')) {
+    const g = sz * 0.8
+    return (
+      <pattern id={id} width={g} height={g} patternUnits="userSpaceOnUse"
+        patternTransform={rotate ?? 'rotate(45)'}>
+        <line x1={0} y1={0} x2={g} y2={0} stroke={color} strokeWidth={sw} opacity={0.75} />
+      </pattern>
+    )
+  }
+
+  // 기본 fallback: 45도 사선 (잘 보이도록)
   return (
     <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
       patternTransform={rotate ?? 'rotate(45)'}>
-      <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw} opacity={0.5} />
+      <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw} opacity={0.75} />
     </pattern>
   )
 }
