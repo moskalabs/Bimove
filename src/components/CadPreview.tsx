@@ -1,12 +1,10 @@
 /**
  * CadPreview: CAD(DXF/DWG) 레이어 선택 다이얼로그
- * dxf 패키지로 파싱하여 레이어 목록을 추출하고,
+ * DXF 텍스트에서 경량으로 레이어 목록을 추출 (전체 파싱 없이).
  * 선택된 레이어만 tldraw 캔버스에 임포트.
  * 기존 bimove UI 스타일(cad-layer-*)에 맞춤.
  */
 import { useEffect, useState, useMemo, useCallback } from 'react'
-// @ts-ignore -- no types for dxf
-import { parseString as dxfParseString, denormalise as dxfDenormalise } from 'dxf'
 
 const STRUCTURAL_KEYWORDS = /wall|window|win(?!ter)|door|stair|column|beam|slab|elev|건축|벽|창문|문/i
 
@@ -38,68 +36,38 @@ export default function CadPreview({
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [parsing, setParsing] = useState(true)
 
-  // 모달 열릴 때 body data attr 추가 (온보딩 힌트 숨김)
+  // 모달 열릴 때 body data attr 추가
   useEffect(() => {
     document.body.dataset.modalOpen = 'true'
     return () => { delete document.body.dataset.modalOpen }
   }, [])
 
-  // DXF 파싱 → 레이어 추출
+  // 경량 레이어 추출 (전체 파싱 없이 DXF 텍스트에서 직접)
   useEffect(() => {
-    const t0 = performance.now()
-    try {
-      const parsed = dxfParseString(dxfText)
+    // setTimeout으로 UI 렌더 후 실행 (다이얼로그가 먼저 보이도록)
+    const timer = setTimeout(() => {
+      const t0 = performance.now()
+      try {
+        const result = extractLayersLightweight(dxfText)
+        setLayers(result)
 
-      // denormalise로 블록 확장된 엔티티 가져오기
-      const entities = dxfDenormalise(parsed)
+        const hasStructural = result.some((l) => l.likelyStructural)
+        const initialSelected = hasStructural
+          ? new Set(result.filter((l) => l.likelyStructural).map((l) => l.name))
+          : new Set(result.map((l) => l.name))
+        setSelected(initialSelected)
 
-      // 레이어별 엔티티 수 집계
-      const layerMap = new Map<string, { count: number; color: string }>()
-
-      // 레이어 테이블에서 색상 정보 추출
-      const layerTable = (parsed.tables?.layer?.layers ?? {}) as Record<string, { color?: number; colorNumber?: number }>
-
-      for (const ent of entities) {
-        const name = (ent as { layer?: string }).layer || '0'
-        const existing = layerMap.get(name)
-        if (existing) {
-          existing.count++
-        } else {
-          // 레이어 색상 결정
-          const lt = layerTable[name]
-          const colorNum = lt?.colorNumber ?? lt?.color ?? 7
-          const hex = aciToHex(colorNum)
-          layerMap.set(name, { count: 1, color: hex })
-        }
+        console.log(`[CadPreview] ${result.length}개 레이어 추출 (${(performance.now() - t0).toFixed(0)}ms)`)
+      } catch (err) {
+        console.error('[CadPreview] 레이어 추출 에러:', err)
+      } finally {
+        setParsing(false)
       }
+    }, 50)
 
-      const layerInfos: LayerInfo[] = [...layerMap.entries()]
-        .map(([name, info]) => ({
-          name,
-          color: info.color,
-          segCount: info.count,
-          likelyStructural: STRUCTURAL_KEYWORDS.test(name),
-        }))
-        .sort((a, b) => b.segCount - a.segCount)
-
-      setLayers(layerInfos)
-
-      // 초기 선택: 구조 레이어가 있으면 구조만, 없으면 전체
-      const hasStructural = layerInfos.some((l) => l.likelyStructural)
-      const initialSelected = hasStructural
-        ? new Set(layerInfos.filter((l) => l.likelyStructural).map((l) => l.name))
-        : new Set(layerInfos.map((l) => l.name))
-      setSelected(initialSelected)
-
-      console.log(`[CadPreview] ${layerInfos.length}개 레이어, ${entities.length}개 엔티티 (${(performance.now() - t0).toFixed(0)}ms)`)
-    } catch (err) {
-      console.error('[CadPreview] 파싱 에러:', err)
-    } finally {
-      setParsing(false)
-    }
+    return () => clearTimeout(timer)
   }, [dxfText])
 
-  // 레이어 토글
   const toggleLayer = useCallback((name: string) => {
     setSelected((prev) => {
       const next = new Set(prev)
@@ -131,7 +99,6 @@ export default function CadPreview({
     return total
   }, [layers, selected])
 
-  // 가져오기
   const handleImport = useCallback(() => {
     if (selected.size === 0) return
     onImport(selected, dxfText)
@@ -150,13 +117,11 @@ export default function CadPreview({
   return (
     <div className="cad-layer-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="cad-layer-dialog">
-        {/* 헤더 */}
         <div className="cad-layer-header">
           <strong>{fileName}</strong>{' '}
           <span style={{ fontSize: 12, color: '#888' }}>({fmt}, {sizeMB}MB)</span>
         </div>
 
-        {/* 빠른 선택 */}
         <div className="cad-layer-actions">
           <button className="cad-layer-action-btn" onClick={selectAll}>전체</button>
           <button className="cad-layer-action-btn" onClick={selectNone}>해제</button>
@@ -170,11 +135,10 @@ export default function CadPreview({
           </span>
         </div>
 
-        {/* 레이어 목록 */}
         <div className="cad-layer-list">
           {parsing && (
             <div style={{ padding: 24, textAlign: 'center', color: '#888' }}>
-              도면 파싱 중...
+              레이어 추출 중...
             </div>
           )}
           {!parsing && layers.map((layer) => (
@@ -204,7 +168,6 @@ export default function CadPreview({
           )}
         </div>
 
-        {/* 하단 버튼 */}
         <div className="cad-layer-footer">
           <button className="cad-layer-cancel" onClick={onClose}>취소</button>
           <button
@@ -220,7 +183,76 @@ export default function CadPreview({
   )
 }
 
-/** AutoCAD Color Index → hex 색상 (기본 7색 + fallback) */
+/**
+ * DXF 텍스트에서 경량으로 레이어 정보 추출.
+ * dxf 패키지의 parseString/denormalise를 호출하지 않음 (수백MB 파일에서 메인스레드 블로킹 방지).
+ *
+ * 1단계: TABLES 섹션에서 LAYER 정의 추출 (색상 포함)
+ * 2단계: ENTITIES 섹션에서 그룹코드 8 (레이어명) 스캔하여 엔티티 수 집계
+ */
+function extractLayersLightweight(dxfText: string): LayerInfo[] {
+  // --- 1. LAYER 테이블에서 정의된 레이어 + 색상 ---
+  const layerDefs = new Map<string, number>() // name → ACI color
+  const tablesMatch = dxfText.match(/\n0\nSECTION\n2\nTABLES\n([\s\S]*?)\n0\nENDSEC/i)
+  if (tablesMatch) {
+    const tablesText = tablesMatch[1]
+    // LAYER 엔티티 파싱: 그룹코드 2=이름, 62=색상
+    const layerBlocks = tablesText.split(/\n0\nLAYER\n/)
+    for (let i = 1; i < layerBlocks.length; i++) {
+      const block = layerBlocks[i]
+      const nameMatch = block.match(/\n2\n([^\n]+)/)
+      const colorMatch = block.match(/\n62\n(-?\d+)/)
+      if (nameMatch) {
+        const name = nameMatch[1].trim()
+        const color = colorMatch ? Math.abs(parseInt(colorMatch[1])) : 7
+        layerDefs.set(name, color)
+      }
+    }
+  }
+
+  // --- 2. ENTITIES 섹션에서 레이어별 엔티티 수 ---
+  // DXF 그룹코드 패턴: "줄바꿈 + 그룹코드(정수) + 줄바꿈 + 값"
+  // 엔티티 시작은 항상 "0\n엔티티타입". 그 뒤에 "8\n레이어명"이 나옴.
+  // 엔티티 단위로 끊어서 첫 번째 그룹코드 8만 레이어로 인식.
+  const layerCounts = new Map<string, number>()
+  const entStart = dxfText.indexOf('\n0\nSECTION\n2\nENTITIES\n')
+  const entEnd = dxfText.indexOf('\n0\nENDSEC', entStart > 0 ? entStart + 20 : 0)
+  if (entStart > 0 && entEnd > entStart) {
+    const entText = dxfText.substring(entStart, entEnd)
+    // 엔티티 경계: "\n0\n" 으로 split
+    const entities = entText.split('\n0\n')
+    for (let i = 1; i < entities.length; i++) {
+      const ent = entities[i]
+      // 각 엔티티에서 첫 번째 그룹코드 8 찾기
+      const layerMatch = ent.match(/\n8\n([^\n]+)/)
+      if (layerMatch) {
+        const name = layerMatch[1].trim()
+        layerCounts.set(name, (layerCounts.get(name) || 0) + 1)
+      }
+    }
+  }
+
+  // --- 3. 합치기 ---
+  const allNames = new Set([...layerDefs.keys(), ...layerCounts.keys()])
+  const result: LayerInfo[] = []
+
+  for (const name of allNames) {
+    const count = layerCounts.get(name) || 0
+    if (count === 0) continue // 엔티티 없는 레이어 스킵
+
+    const aci = layerDefs.get(name) ?? 7
+    result.push({
+      name,
+      color: aciToHex(aci),
+      segCount: count,
+      likelyStructural: STRUCTURAL_KEYWORDS.test(name),
+    })
+  }
+
+  return result.sort((a, b) => b.segCount - a.segCount)
+}
+
+/** AutoCAD Color Index → hex 색상 */
 function aciToHex(aci: number): string {
   const map: Record<number, string> = {
     0: '#000000', 1: '#ff0000', 2: '#ffff00', 3: '#00ff00',
