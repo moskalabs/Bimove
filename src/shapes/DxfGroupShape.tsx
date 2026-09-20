@@ -72,8 +72,8 @@ function dxfHatchPatternDef(
   const sw = Math.max(0.8, sz * 0.10) // 선 두께 비례 (더 굵게)
   const upper = patternName.toUpperCase()
 
-  // SOLID / PAINT: 패턴 없이 단색 fill
-  if (upper === 'SOLID' || upper === 'PAINT') return null
+  // SOLID: 패턴 없이 단색 fill
+  if (upper === 'SOLID') return null
 
   const rotate = angle !== 0 ? `rotate(${angle})` : undefined
 
@@ -238,26 +238,51 @@ function dxfHatchPatternDef(
     )
   }
 
-  // --- 유리 (가는 수평선 + 넓은 간격) ---
-  if (upper === 'GLASS' || upper === 'GLAZE') {
-    const d = sz * 2
+  // --- 페인트 (밀집 점/stipple) ---
+  if (upper === 'PAINT') {
+    const d = sz * 0.5
+    const r1 = Math.max(0.3, sz * 0.03)
     return (
       <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={d * 0.25} x2={d} y2={d * 0.25} stroke={color} strokeWidth={sw * 0.6} opacity={0.5} />
-        <line x1={0} y1={d * 0.75} x2={d} y2={d * 0.75} stroke={color} strokeWidth={sw * 0.6} opacity={0.5} />
+        <circle cx={d * 0.1} cy={d * 0.15} r={r1} fill={color} opacity={0.6} />
+        <circle cx={d * 0.5} cy={d * 0.05} r={r1 * 0.8} fill={color} opacity={0.5} />
+        <circle cx={d * 0.85} cy={d * 0.25} r={r1} fill={color} opacity={0.55} />
+        <circle cx={d * 0.3} cy={d * 0.45} r={r1 * 0.9} fill={color} opacity={0.5} />
+        <circle cx={d * 0.7} cy={d * 0.55} r={r1} fill={color} opacity={0.6} />
+        <circle cx={d * 0.15} cy={d * 0.75} r={r1 * 0.8} fill={color} opacity={0.5} />
+        <circle cx={d * 0.55} cy={d * 0.85} r={r1} fill={color} opacity={0.55} />
+        <circle cx={d * 0.9} cy={d * 0.7} r={r1 * 0.8} fill={color} opacity={0.5} />
+        <circle cx={d * 0.4} cy={d * 0.65} r={r1 * 0.7} fill={color} opacity={0.45} />
+        <circle cx={d * 0.75} cy={d * 0.9} r={r1 * 0.9} fill={color} opacity={0.55} />
       </pattern>
     )
   }
 
-  // --- 거울 (대각선 얇은 교차) ---
-  if (upper === 'MIRROR') {
-    const d = sz * 1.5
+  // --- 유리 (대각선 3개, 넓은 간격) ---
+  if (upper === 'GLASS' || upper === 'GLAZE') {
+    const d = sz * 3
     return (
       <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={0} x2={d} y2={d} stroke={color} strokeWidth={sw * 0.5} opacity={0.4} />
-        <line x1={d} y1={0} x2={0} y2={d} stroke={color} strokeWidth={sw * 0.5} opacity={0.4} />
+        <line x1={d * 0.15} y1={0} x2={d * 0.85} y2={d} stroke={color} strokeWidth={sw * 0.7} opacity={0.6} />
+        <line x1={d * 0.4} y1={0} x2={d * 1.1} y2={d} stroke={color} strokeWidth={sw * 0.5} opacity={0.45} />
+        <line x1={-d * 0.1} y1={0} x2={d * 0.6} y2={d} stroke={color} strokeWidth={sw * 0.6} opacity={0.5} />
+      </pattern>
+    )
+  }
+
+  // --- 거울 (촘촘한 대각선 여러개) ---
+  if (upper === 'MIRROR') {
+    const d = sz * 1.8
+    return (
+      <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
+        patternTransform={rotate}>
+        <line x1={0} y1={0} x2={d} y2={d} stroke={color} strokeWidth={sw * 0.6} opacity={0.6} />
+        <line x1={d * 0.3} y1={0} x2={d * 1.3} y2={d} stroke={color} strokeWidth={sw * 0.5} opacity={0.5} />
+        <line x1={d * 0.6} y1={0} x2={d * 1.6} y2={d} stroke={color} strokeWidth={sw * 0.6} opacity={0.55} />
+        <line x1={-d * 0.3} y1={0} x2={d * 0.7} y2={d} stroke={color} strokeWidth={sw * 0.5} opacity={0.5} />
+        <line x1={-d * 0.6} y1={0} x2={d * 0.4} y2={d} stroke={color} strokeWidth={sw * 0.4} opacity={0.45} />
       </pattern>
     )
   }
@@ -276,29 +301,36 @@ function dxfHatchPatternDef(
     )
   }
 
-  // --- 석재/인조석 (불규칙 블록) ---
+  // --- 석재/인조석 (스펙클/점 패턴) ---
   if (upper === 'STONE' || upper.startsWith('AR-STONE') || upper === 'MUDST'
     || upper === 'T41' || upper === 'EARTH') {
-    const d = sz * 1.8
+    const d = sz * 0.8
+    const r1 = Math.max(0.4, sz * 0.04)
     return (
       <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={d * 0.33} x2={d} y2={d * 0.33} stroke={color} strokeWidth={sw} opacity={0.7} />
-        <line x1={0} y1={d * 0.67} x2={d} y2={d * 0.67} stroke={color} strokeWidth={sw} opacity={0.7} />
-        <line x1={d * 0.4} y1={0} x2={d * 0.4} y2={d * 0.33} stroke={color} strokeWidth={sw * 0.8} opacity={0.6} />
-        <line x1={d * 0.7} y1={d * 0.33} x2={d * 0.7} y2={d * 0.67} stroke={color} strokeWidth={sw * 0.8} opacity={0.6} />
-        <line x1={d * 0.3} y1={d * 0.67} x2={d * 0.3} y2={d} stroke={color} strokeWidth={sw * 0.8} opacity={0.6} />
+        <circle cx={d * 0.1} cy={d * 0.1} r={r1} fill={color} opacity={0.6} />
+        <circle cx={d * 0.45} cy={d * 0.05} r={r1 * 1.2} fill={color} opacity={0.5} />
+        <circle cx={d * 0.8} cy={d * 0.15} r={r1 * 0.7} fill={color} opacity={0.55} />
+        <circle cx={d * 0.25} cy={d * 0.35} r={r1} fill={color} opacity={0.5} />
+        <circle cx={d * 0.65} cy={d * 0.4} r={r1 * 0.9} fill={color} opacity={0.6} />
+        <circle cx={d * 0.9} cy={d * 0.55} r={r1 * 1.1} fill={color} opacity={0.5} />
+        <circle cx={d * 0.15} cy={d * 0.6} r={r1 * 0.8} fill={color} opacity={0.55} />
+        <circle cx={d * 0.5} cy={d * 0.7} r={r1} fill={color} opacity={0.5} />
+        <circle cx={d * 0.35} cy={d * 0.9} r={r1 * 1.1} fill={color} opacity={0.55} />
+        <circle cx={d * 0.75} cy={d * 0.85} r={r1 * 0.8} fill={color} opacity={0.5} />
       </pattern>
     )
   }
 
-  // --- 타일/코킹 (촘촘한 대각선) ---
+  // --- 코킹 (촘촘한 교차 해칭, X자 크로스) ---
   if (upper === 'CAULK' || upper === 'CAULKING' || upper === 'Q4') {
-    const g = sz * 0.7
+    const g = sz * 0.6
     return (
       <pattern id={id} width={g} height={g} patternUnits="userSpaceOnUse"
-        patternTransform={rotate ?? 'rotate(45)'}>
-        <line x1={0} y1={0} x2={g} y2={0} stroke={color} strokeWidth={sw} opacity={0.8} />
+        patternTransform={rotate}>
+        <line x1={0} y1={0} x2={g} y2={g} stroke={color} strokeWidth={sw * 0.8} opacity={0.8} />
+        <line x1={g} y1={0} x2={0} y2={g} stroke={color} strokeWidth={sw * 0.8} opacity={0.8} />
       </pattern>
     )
   }
