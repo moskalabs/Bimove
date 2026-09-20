@@ -18,6 +18,7 @@ import { AuthPage } from './components/AuthPage'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { ToastProvider, useToast } from './context/ToastContext'
 const Viewer3D = lazy(() => import('./components/Viewer3D').then(m => ({ default: m.Viewer3D })))
+const CadPreview = lazy(() => import('./components/CadPreview'))
 import { WallShapeUtil } from './shapes/WallShape'
 import { DxfGroupShapeUtil } from './shapes/DxfGroupShape'
 import { DoorShapeUtil } from './shapes/DoorShape'
@@ -37,7 +38,7 @@ import { ProjectContext } from './context/ProjectContext'
 import { loadSnapshot, saveSnapshot, saveThumbnail, touchProject } from './lib/projectStore'
 import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase } from './lib/supabaseSync'
 import { saveVersion } from './lib/versions'
-import { parseCadFile, commitCadImport } from './lib/dxf'
+import { dwgToDxfBytes, decodeDxfBytes, commitCadImportV2 } from './lib/dxf'
 import { initGrayscaleAttr, initDarkAttr, getDarkMode } from './lib/settings'
 import './App.css'
 
@@ -90,9 +91,17 @@ function EmptyCanvasHint({ editor }: { editor: Editor | null }) {
   )
 }
 
+interface PendingCadPreview {
+  dxfText: string
+  fileName: string
+  fileSize: number
+  isDwg: boolean
+}
+
 function EditorView({ projectId, onBack }: { projectId: string; projectName?: string; onBack: () => void }) {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [show3D, setShow3D] = useState(false)
+  const [pendingCadPreview, setPendingCadPreview] = useState<PendingCadPreview | null>(null)
   const { toast } = useToast()
 
   // Supabase에서 로드 시 받아온 서버 타임스탬프 (충돌 방지용)
@@ -147,17 +156,30 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
       })
       setEditor(ed)
 
-      // 대시보드에서 "DWG 불러오기"로 생성된 경우: 자동 임포트
+      // 대시보드에서 "DWG 불러오기"로 생성된 경우: CadPreview 모달로 전달
       const win = window as unknown as Record<string, unknown>
       const pendingFile = win.__pendingCadFile as File | undefined
       if (pendingFile) {
         delete win.__pendingCadFile
-        parseCadFile(pendingFile).then(result => {
-          if (!result) return
-          const allLayers = new Set(result.layers.map(l => l.name))
-          commitCadImport(ed, result, allLayers)
-          requestAnimationFrame(() => ed.zoomToFit())
-        })
+        ;(async () => {
+          try {
+            const isDwg = pendingFile.name.toLowerCase().endsWith('.dwg')
+            let dxfText: string
+            if (isDwg) {
+              const buffer = await pendingFile.arrayBuffer()
+              const dxfBytes = await dwgToDxfBytes(buffer)
+              if (!dxfBytes || dxfBytes.length < 100) return
+              dxfText = decodeDxfBytes(dxfBytes)
+            } else {
+              const buffer = await pendingFile.arrayBuffer()
+              dxfText = decodeDxfBytes(new Uint8Array(buffer))
+            }
+            if (!dxfText || (!dxfText.includes('SECTION') && !dxfText.includes('ENTITIES'))) return
+            setPendingCadPreview({ dxfText, fileName: pendingFile.name, fileSize: pendingFile.size, isDwg })
+          } catch (err) {
+            console.error('[App] pending CAD file 처리 에러:', err)
+          }
+        })()
       }
     })()
   }
@@ -339,6 +361,38 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
             </div>
           }>
             <Viewer3D onClose={() => setShow3D(false)} />
+          </Suspense>
+        )}
+
+        {pendingCadPreview && editor && (
+          <Suspense fallback={
+            <div style={{ position: 'fixed', inset: 0, zIndex: 700, background: '#1a1a2e',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontSize: 15 }}>
+              CAD 미리보기 로딩 중…
+            </div>
+          }>
+            <CadPreview
+              dxfText={pendingCadPreview.dxfText}
+              fileName={pendingCadPreview.fileName}
+              fileSize={pendingCadPreview.fileSize}
+              isDwg={pendingCadPreview.isDwg}
+              onImport={(selectedLayers, dxfText) => {
+                const prev = pendingCadPreview
+                setPendingCadPreview(null)
+                try {
+                  const count = commitCadImportV2(editor, dxfText, selectedLayers, prev.fileName, prev.fileSize, prev.isDwg)
+                  const fmt = prev.isDwg ? 'DWG' : 'DXF'
+                  if (count > 0) {
+                    toast(`"${prev.fileName}" ${fmt} 가져옴 (${count.toLocaleString()}개)`, 'success')
+                  }
+                  requestAnimationFrame(() => editor.zoomToFit())
+                } catch (err) {
+                  console.error('[App] CAD import 에러:', err)
+                  toast('도면 렌더링 중 오류가 발생했습니다.', 'error')
+                }
+              }}
+              onClose={() => setPendingCadPreview(null)}
+            />
           </Suspense>
         )}
       </div>

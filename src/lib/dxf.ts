@@ -987,15 +987,7 @@ function collectTextsWithBlocks(
   return allTexts
 }
 
-/** 현재 캔버스에 이미 임포트된 DXF 핑거프린트 목록 조회 */
-function getImportedFingerprints(editor: Editor): Set<string> {
-  const fps = new Set<string>()
-  for (const s of editor.getCurrentPageShapes()) {
-    const fp = (s.meta as Record<string, unknown>)?.dxfFingerprint
-    if (typeof fp === 'string') fps.add(fp)
-  }
-  return fps
-}
+// getImportedFingerprints 제거됨 — importDxf 레거시와 함께 제거
 
 /** DWG 바이너리를 DXF 바이트로 변환 (dwgdxf WASM) */
 export async function dwgToDxfBytes(buffer: ArrayBuffer): Promise<Uint8Array> {
@@ -2448,29 +2440,4 @@ export function commitCadImportV2(
   return shapes.length
 }
 
-/** 레거시: 레이어 선택 없이 전체 임포트 (이전 호환) */
-export function importDxf(
-  editor: Editor,
-  notify?: { onSuccess?: (msg: string) => void; onError?: (msg: string) => void },
-) {
-  pickCadFile().then(async (file) => {
-    if (!file) return
-    const result = await parseCadFile(file, notify)
-    if (!result) return
-
-    // 중복 체크
-    const existing = getImportedFingerprints(editor)
-    if (existing.has(result.fingerprint)) {
-      const proceed = confirm(
-        `"${file.name}" 파일이 이미 임포트된 것 같습니다.\n그래도 다시 임포트하시겠습니까?`
-      )
-      if (!proceed) return
-    }
-
-    // 모든 레이어 선택
-    const allLayers = new Set(result.layers.map((l) => l.name))
-    const count = commitCadImport(editor, result, allLayers)
-    const fmt = result.isDwg ? 'DWG' : 'DXF'
-    notify?.onSuccess?.(`"${file.name}" ${fmt}를 가져왔습니다. (${count}개 벽)`)
-  })
-}
+// importDxf() 레거시 함수 제거됨 — ImportPanel + CadPreview(V2) 플로우로 대체
