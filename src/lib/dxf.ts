@@ -1480,7 +1480,17 @@ export async function parseCadFile(
       ;(notify?.onInfo ?? notify?.onSuccess)?.('DWG → DXF 변환 중…')
       const buffer = await file.arrayBuffer()
       const dxfBytes = await dwgToDxfBytes(buffer)
+      // DWG→DXF 변환 결과 검증
+      if (!dxfBytes || dxfBytes.length < 100) {
+        notify?.onError?.('DWG 변환 실패: 변환된 데이터가 비어있습니다.')
+        return null
+      }
       text = decodeDxfBytes(dxfBytes)
+      // 변환된 텍스트가 DXF 형식인지 기본 검증
+      if (!text || (!text.includes('SECTION') && !text.includes('ENTITIES'))) {
+        notify?.onError?.('DWG 변환 실패: 유효한 DXF 데이터가 아닙니다.')
+        return null
+      }
     } catch (err) {
       notify?.onError?.(`DWG 변환 실패: ${err instanceof Error ? err.message : String(err)}`)
       return null
@@ -1974,13 +1984,14 @@ export function commitCadImport(
 
     editor.createShapes(groupShapes as never)
 
-    setTimeout(() => {
+    // shapes 생성 직후 zoomToFit (requestAnimationFrame으로 렌더 완료 보장)
+    requestAnimationFrame(() => {
       try {
         editor.selectAll()
         editor.zoomToFit({ animation: { duration: 0 } })
         editor.selectNone()
       } catch { /* ignore */ }
-    }, 200)
+    })
 
     return merged.length
   }
@@ -2003,13 +2014,13 @@ export function commitCadImport(
   if (shapes.length) {
     editor.createShapes(shapes as never)
 
-    setTimeout(() => {
+    requestAnimationFrame(() => {
       try {
         editor.selectAll()
         editor.zoomToFit({ animation: { duration: 0 } })
         editor.selectNone()
       } catch { /* ignore */ }
-    }, 200)
+    })
   }
   return shapes.length
 }

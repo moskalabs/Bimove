@@ -16,18 +16,34 @@ export function ImportPanel() {
   }
   const [cadResult, setCadResult] = useState<CadParseResult | null>(null)
   const [loading, setLoading] = useState<string | null>(null) // 로딩 메시지
+  // 임포트 시작 시점의 페이지 ID 추적 (비동기 작업 중 페이지 전환 보호)
+  const [importPageId, setImportPageId] = useState<string | null>(null)
+
+  /** 임포트 전 원래 페이지로 복원 + shapes 생성 */
+  const safeCommit = (result: CadParseResult, layers: Set<string>, pageId: string) => {
+    // 현재 페이지가 임포트 시작 시점과 다르면 원래 페이지로 복원
+    const currentPageId = editor.getCurrentPageId()
+    if (currentPageId !== pageId) {
+      try { editor.setCurrentPage(pageId as ReturnType<typeof editor.getCurrentPageId>) } catch { /* page deleted */ }
+    }
+    return commitCadImport(editor, result, layers)
+  }
 
   const handleCadImport = async () => {
     if (!editor) return
     const file = await pickCadFile()
     if (!file) return
 
+    // 임포트 시작 시점의 페이지 ID 저장
+    const pageId = editor.getCurrentPageId() as string
+    setImportPageId(pageId)
+
     setLoading('도면 파일 분석 중...')
     try {
       const result = await parseCadFile(file, notify)
       if (!result) { setLoading(null); return }
 
-      // 중복 체크
+      // 중복 체크 (원래 페이지 기준)
       const existingFps = new Set(
         editor.getCurrentPageShapes()
           .map((s) => (s.meta as Record<string, unknown>)?.dxfFingerprint)
@@ -46,10 +62,9 @@ export function ImportPanel() {
         setCadResult(result)
       } else {
         setLoading(`${result.totalSegments.toLocaleString()}개 세그먼트 변환 중...`)
-        // UI 갱신 후 무거운 작업 실행
         await new Promise((r) => setTimeout(r, 50))
         const allLayers = new Set(result.layers.map((l) => l.name))
-        const count = commitCadImport(editor, result, allLayers)
+        const count = safeCommit(result, allLayers, pageId)
         const fmt = result.isDwg ? 'DWG' : 'DXF'
         toast(`"${result.fileName}" ${fmt}를 가져왔습니다. (${count}개 벽)`, 'success')
       }
@@ -60,16 +75,17 @@ export function ImportPanel() {
 
   const handleLayerConfirm = async (selectedLayers: Set<string>) => {
     if (!editor || !cadResult) return
+    const pageId = importPageId || (editor.getCurrentPageId() as string)
     const segCount = cadResult.layers
       .filter((l) => selectedLayers.has(l.name))
       .reduce((sum, l) => sum + l.segCount, 0)
     setLoading(`${segCount.toLocaleString()}개 세그먼트 변환 중...`)
-    // UI 갱신 후 무거운 작업 실행
     await new Promise((r) => setTimeout(r, 50))
-    const count = commitCadImport(editor, cadResult, selectedLayers)
+    const count = safeCommit(cadResult, selectedLayers, pageId)
     const fmt = cadResult.isDwg ? 'DWG' : 'DXF'
     toast(`"${cadResult.fileName}" ${fmt}를 가져왔습니다. (${count}개 벽, ${selectedLayers.size}개 레이어)`, 'success')
     setCadResult(null)
+    setImportPageId(null)
     setLoading(null)
   }
 
