@@ -209,14 +209,14 @@ export default function CadPreview({
 
   return (
     <div style={{
-      position: 'fixed', inset: 0, zIndex: 600,
+      position: 'fixed', inset: 0, zIndex: 9999,
       background: '#1e2228', display: 'flex', flexDirection: 'column',
     }}>
       {/* 상단바 */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
         padding: '8px 16px', background: '#2a2e35', borderBottom: '1px solid #3a3f47',
-        zIndex: 601,
+        zIndex: 10000,
       }}>
         <span style={{ color: '#ddd', fontSize: 14, flex: 1 }}>
           {fileName} <span style={{ color: '#888', fontSize: 12 }}>({fmt}, {sizeMB}MB)</span>

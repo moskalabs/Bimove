@@ -366,7 +366,7 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
 
         {pendingCadPreview && editor && (
           <Suspense fallback={
-            <div style={{ position: 'fixed', inset: 0, zIndex: 700, background: '#1a1a2e',
+            <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: '#1a1a2e',
               display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontSize: 15 }}>
               CAD 미리보기 로딩 중…
             </div>
