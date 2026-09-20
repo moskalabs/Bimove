@@ -439,9 +439,14 @@ function entityToPolyline(
 
 // ===== Main parsing orchestrator =====
 
-function parseDxfFast(dxfText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number } {
+function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number } {
   const t0 = performance.now()
   const layerSet = new Set(selectedLayers)
+
+  // 0. \r\n → \n 정규화 (Windows DXF 파일 호환)
+  progress('줄바꿈 정규화', 2)
+  const dxfText = rawText.indexOf('\r') >= 0 ? rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n') : rawText
+  console.log(`[fast-worker] 텍스트 길이: ${dxfText.length} chars (정규화: ${rawText !== dxfText})`)
 
   // 1. Header → units
   progress('헤더 분석', 5)
@@ -454,9 +459,18 @@ function parseDxfFast(dxfText: string, selectedLayers: string[], progress: (phas
 
   // 3. Entities section
   progress('엔티티 섹션 추출', 20)
-  const entHdr = '\n0\nSECTION\n2\nENTITIES\n'
-  const entIdx = dxfText.indexOf(entHdr)
-  if (entIdx < 0) return { polylines: [], insUnits }
+  // 첫 섹션은 앞에 \n이 없을 수 있으므로 두 가지 패턴 시도
+  let entHdr = '\n0\nSECTION\n2\nENTITIES\n'
+  let entIdx = dxfText.indexOf(entHdr)
+  if (entIdx < 0) {
+    // 파일 시작이 0\nSECTION 인 경우 (HEADER 없는 DXF)
+    entHdr = '0\nSECTION\n2\nENTITIES\n'
+    entIdx = dxfText.indexOf(entHdr)
+  }
+  if (entIdx < 0) {
+    console.warn('[fast-worker] ENTITIES 섹션 없음')
+    return { polylines: [], insUnits }
+  }
   const entStart = entIdx + entHdr.length
   const entEnd = dxfText.indexOf('\n0\nENDSEC', entStart)
   if (entEnd <= entStart) return { polylines: [], insUnits }
@@ -473,83 +487,88 @@ function parseDxfFast(dxfText: string, selectedLayers: string[], progress: (phas
   // Handle POLYLINE (old-style): accumulate VERTEX entities
   let polylineState: { layer: string; colorNum: number; vertices: Vertex[]; closed: boolean } | null = null
 
+  let errCount = 0
   for (let i = 0; i < totalChunks; i++) {
     // Progress every 5000 chunks
     if (i > 0 && i % 5000 === 0) {
       progress('도면 요소 변환', 30 + Math.round((i / totalChunks) * 60))
     }
 
-    const chunk = chunks[i]
-    const nlIdx = chunk.indexOf('\n')
-    const type = (nlIdx > 0 ? chunk.substring(0, nlIdx) : chunk).trim()
+    try {
+      const chunk = chunks[i]
+      const nlIdx = chunk.indexOf('\n')
+      const type = (nlIdx > 0 ? chunk.substring(0, nlIdx) : chunk).trim()
 
-    // POLYLINE state machine
-    if (type === 'VERTEX' && polylineState) {
-      // Add vertex to current POLYLINE
-      const xm = chunk.match(/\n10\n([^\n]+)/)
-      const ym = chunk.match(/\n20\n([^\n]+)/)
-      const bm = chunk.match(/\n42\n([^\n]+)/)
-      if (xm && ym) {
-        polylineState.vertices.push({
-          x: parseFloat(xm[1]), y: parseFloat(ym[1]),
-          bulge: bm ? parseFloat(bm[1]) : 0,
-        })
-      }
-      continue
-    }
-
-    if (type === 'SEQEND' && polylineState) {
-      // Finalize POLYLINE
-      const verts = polylineState.vertices
-      if (polylineState.closed && verts.length > 0) verts.push({ ...verts[0], bulge: 0 })
-      if (verts.length >= 2) {
-        const poly: number[][] = []
-        for (let j = 0; j < verts.length - 1; j++) {
-          const f = verts[j], t = verts[j + 1]
-          poly.push([f.x, f.y])
-          if (f.bulge) poly.push(...bulgeArc(f.x, f.y, t.x, t.y, f.bulge))
-          if (j === verts.length - 2) poly.push([t.x, t.y])
+      // POLYLINE state machine
+      if (type === 'VERTEX' && polylineState) {
+        const xm = chunk.match(/\n10\n([^\n]+)/)
+        const ym = chunk.match(/\n20\n([^\n]+)/)
+        const bm = chunk.match(/\n42\n([^\n]+)/)
+        if (xm && ym) {
+          polylineState.vertices.push({
+            x: parseFloat(xm[1]), y: parseFloat(ym[1]),
+            bulge: bm ? parseFloat(bm[1]) : 0,
+          })
         }
-        if (poly.length >= 2) {
-          output.push({ vertices: poly, layer: polylineState.layer, colorNumber: polylineState.colorNum })
+        continue
+      }
+
+      if (type === 'SEQEND' && polylineState) {
+        const verts = polylineState.vertices
+        if (polylineState.closed && verts.length > 0) verts.push({ ...verts[0], bulge: 0 })
+        if (verts.length >= 2) {
+          const poly: number[][] = []
+          for (let j = 0; j < verts.length - 1; j++) {
+            const f = verts[j], t = verts[j + 1]
+            poly.push([f.x, f.y])
+            if (f.bulge) poly.push(...bulgeArc(f.x, f.y, t.x, t.y, f.bulge))
+            if (j === verts.length - 2) poly.push([t.x, t.y])
+          }
+          if (poly.length >= 2) {
+            output.push({ vertices: poly, layer: polylineState.layer, colorNumber: polylineState.colorNum })
+          }
         }
+        polylineState = null
+        continue
       }
-      polylineState = null
-      continue
-    }
 
-    // Finalize any orphaned POLYLINE before processing new entity
-    if (polylineState && type !== 'VERTEX') {
-      polylineState = null
-    }
-
-    // Quick layer check (fast reject) — find group code 8 value
-    const layerMatch = chunk.match(/\n8\n([^\n]+)/)
-    const entityLayer = layerMatch ? layerMatch[1].trim() : '0'
-
-    if (!layerSet.has(entityLayer)) continue  // ← THE KEY OPTIMIZATION
-
-    // Start POLYLINE state
-    if (type === 'POLYLINE') {
-      const flag = parseInt(chunk.match(/\n70\n([^\n]+)/)?.[1] ?? '0')
-      const colorMatch = chunk.match(/\n62\n([^\n]+)/)
-      polylineState = {
-        layer: entityLayer,
-        colorNum: colorMatch ? parseInt(colorMatch[1]) : -1,
-        vertices: [],
-        closed: (flag & 1) !== 0,
+      // Finalize any orphaned POLYLINE
+      if (polylineState && type !== 'VERTEX') {
+        polylineState = null
       }
-      continue
-    }
 
-    // Parse full entity and convert to polylines
-    const { codes } = parseGroupCodes(chunk)
-    entityToPolyline(type, codes, blocks, '', [], 0, layerSet, output)
+      // Quick layer check (fast reject)
+      const layerMatch = chunk.match(/\n8\n([^\n]+)/)
+      const entityLayer = layerMatch ? layerMatch[1].trim() : '0'
+
+      if (!layerSet.has(entityLayer)) continue  // ← THE KEY OPTIMIZATION
+
+      // Start POLYLINE state
+      if (type === 'POLYLINE') {
+        const flag = parseInt(chunk.match(/\n70\n([^\n]+)/)?.[1] ?? '0')
+        const colorMatch = chunk.match(/\n62\n([^\n]+)/)
+        polylineState = {
+          layer: entityLayer,
+          colorNum: colorMatch ? parseInt(colorMatch[1]) : -1,
+          vertices: [],
+          closed: (flag & 1) !== 0,
+        }
+        continue
+      }
+
+      // Parse full entity and convert to polylines
+      const { codes } = parseGroupCodes(chunk)
+      entityToPolyline(type, codes, blocks, '', [], 0, layerSet, output)
+
+    } catch (err) {
+      errCount++
+      if (errCount <= 5) console.warn(`[fast-worker] 엔티티 #${i} 파싱 에러:`, err)
+    }
   }
 
   progress('완료', 95)
   const elapsed = (performance.now() - t0).toFixed(0)
-  console.log(`[fast-worker] 파싱 완료: ${output.length}개 폴리라인 (${elapsed}ms)`)
+  console.log(`[fast-worker] 파싱 완료: ${output.length}개 폴리라인, ${errCount}개 에러 (${elapsed}ms)`)
 
   return { polylines: output, insUnits }
 }

@@ -2256,11 +2256,36 @@ export async function commitCadImportV2(
   const layerArr = [...selectedLayers]
   console.log(`[CAD V2] 시작: selectedLayers=${layerArr.join(',')}`)
 
-  // 1. Worker에서 DXF 파싱 (메인스레드 블로킹 없음)
+  // 1. Worker에서 DXF 파싱 (메인스레드 블로킹 없음, 실패 시 동기 fallback)
   onProgress?.('도면 파싱 중...')
-  const { polylines, insUnits } = await runFastWorker(dxfText, layerArr, onProgress)
+  let polylines: PolylineData[]
+  let insUnits: number
+  try {
+    const result = await runFastWorker(dxfText, layerArr, onProgress)
+    polylines = result.polylines
+    insUnits = result.insUnits
+  } catch (workerErr) {
+    console.warn(`[CAD V2] Worker 실패, 동기 fallback 사용:`, workerErr)
+    onProgress?.('동기 파싱으로 전환 중...')
+    // @ts-ignore -- dxf package fallback
+    const { parseString: dxfParseString, toPolylines: dxfToPolylines } = await import('dxf')
+    const parsed = dxfParseString(dxfText)
+    const result = dxfToPolylines(parsed)
+    const header = parsed.header as Record<string, unknown> | undefined
+    insUnits = (header?.['$INSUNITS'] as number | undefined) ?? 4
+    polylines = (result.polylines as Array<{ vertices: number[][]; rgb: number[]; layer: { name: string; colorNumber?: number } | null }>)
+      .filter((pl: { layer: { name: string } | null }) => {
+        const ln = pl.layer?.name || '0'
+        return selectedLayers.has(ln)
+      })
+      .map((pl: { vertices: number[][]; rgb: number[]; layer: { name: string; colorNumber?: number } | null }) => ({
+        vertices: pl.vertices,
+        layer: pl.layer?.name || '0',
+        colorNumber: pl.layer?.colorNumber ?? -1,
+      }))
+  }
   const parseMs = (performance.now() - t0).toFixed(0)
-  console.log(`[CAD V2] Worker 파싱 완료: ${polylines.length}개 폴리라인 (${parseMs}ms)`)
+  console.log(`[CAD V2] 파싱 완료: ${polylines.length}개 폴리라인 (${parseMs}ms)`)
 
   // 2. 유닛 스케일
   const unit = insUnits
