@@ -1698,7 +1698,7 @@ function clusterConnectedSegs(segs: RawSeg[]): RawSeg[][] {
 type RawSeg = { x1: number; y1: number; dx: number; dy: number; layer?: string; lineweight?: number; color?: string }
 
 function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
-  // 각도(3°) + 수직거리(10px) 기준으로 버킷팅
+  // 각도(3°) + 수직거리(10px) + 색상 기준으로 버킷팅
   const buckets = new Map<string, RawSeg[]>()
   for (const s of segs) {
     const len = Math.hypot(s.dx, s.dy)
@@ -1708,7 +1708,7 @@ function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
     if (ang >= 180) ang -= 180
     const nx = -s.dy / len, ny = s.dx / len
     const perp = nx * s.x1 + ny * s.y1
-    const key = `${Math.round(ang / 3)}|${Math.round(perp / 10)}`
+    const key = `${Math.round(ang / 3)}|${Math.round(perp / 10)}|${s.color || ''}`
     let b = buckets.get(key)
     if (!b) { b = []; buckets.set(key, b) }
     b.push(s)
@@ -1749,7 +1749,7 @@ function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
       if (hi - lo < 1) return
       const sx = first.x1 + lo * ux, sy = first.y1 + lo * uy
       const ex = first.x1 + hi * ux, ey = first.y1 + hi * uy
-      out.push({ x1: sx, y1: sy, dx: ex - sx, dy: ey - sy, layer: first.layer })
+      out.push({ x1: sx, y1: sy, dx: ex - sx, dy: ey - sy, layer: first.layer, color: first.color })
     }
 
     for (let i = 1; i < intervals.length; i++) {
@@ -2450,18 +2450,19 @@ export async function commitCadImportV2(
 
   // ── 100+ segs: DxfGroup 모드 ──
   if (finalSegs.length >= 100) {
-    // 레이어별 그루핑
-    const layerGroups = new Map<string, RawSeg[]>()
+    // 레이어+색상별 그루핑 (같은 색상끼리 묶어야 렌더링 시 색 적용 가능)
+    const layerGroups = new Map<string, { layer: string; color?: string; segs: RawSeg[] }>()
     for (const s of finalSegs) {
-      const key = s.layer || '0'
+      const layer = s.layer || '0'
+      const key = `${layer}\0${s.color || ''}`
       let g = layerGroups.get(key)
-      if (!g) { g = []; layerGroups.set(key, g) }
-      g.push(s)
+      if (!g) { g = { layer, color: s.color, segs: [] }; layerGroups.set(key, g) }
+      g.segs.push(s)
     }
 
     const assignedTextIdx = new Set<number>()
     const groupShapes: unknown[] = []
-    for (const [layer, segs] of layerGroups) {
+    for (const [, { layer, color: groupColor, segs }] of layerGroups) {
       // 대형 레이어는 클러스터링 생략
       const clusters = segs.length > 3000 ? [segs] : clusterConnectedSegs(segs)
 
@@ -2507,7 +2508,6 @@ export async function commitCadImportV2(
           return `M${x1.toFixed(1)},${y1.toFixed(1)}L${x2.toFixed(1)},${y2.toFixed(1)}`
         }).join('')
 
-        const firstSeg = cluster[0]
         groupShapes.push({
           id: createShapeId(),
           type: 'dxfgroup',
@@ -2520,7 +2520,7 @@ export async function commitCadImportV2(
           meta: {
             dxfFingerprint: fingerprint,
             dxfLayer: layer,
-            ...(firstSeg.color ? { dxfColor: firstSeg.color } : {}),
+            ...(groupColor ? { dxfColor: groupColor } : {}),
           },
         })
       }
