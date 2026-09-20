@@ -74,32 +74,40 @@ export default function CadPreview({
         })
         viewerRef.current = viewer
 
-        // 로드
+        // 로드 (Worker 로드 실패 시 메인스레드 fallback)
         setProgress('도면 파싱 중...')
-        await viewer.Load({
-          url: blobUrl,
-          progressCbk: (phase: string, processedSize: number, totalSize: number) => {
-            if (destroyed) return
-            const pct = totalSize > 0 ? Math.round((processedSize / totalSize) * 100) : 0
-            if (phase === 'fetch') {
-              setProgress(`다운로드 ${pct}%`)
-            } else if (phase === 'parse') {
-              setProgress(`파싱 ${pct}%`)
-            } else {
-              setProgress(`렌더 준비 ${pct}%`)
-            }
-          },
-          workerFactory: () =>
-            new Worker(
-              new URL('../lib/dxf-viewer.worker.ts', import.meta.url),
-              { type: 'module' },
-            ),
-        })
+        const progressCbk = (phase: string, processedSize: number, totalSize: number) => {
+          if (destroyed) return
+          const pct = totalSize > 0 ? Math.round((processedSize / totalSize) * 100) : 0
+          if (phase === 'fetch') {
+            setProgress(`다운로드 ${pct}%`)
+          } else if (phase === 'parse') {
+            setProgress(`파싱 ${pct}%`)
+          } else {
+            setProgress(`렌더 준비 ${pct}%`)
+          }
+        }
+
+        try {
+          await viewer.Load({
+            url: blobUrl,
+            progressCbk,
+            workerFactory: () =>
+              new Worker(
+                new URL('../lib/dxf-viewer.worker.ts', import.meta.url),
+                { type: 'module' },
+              ),
+          })
+        } catch (workerErr) {
+          console.warn('[CadPreview] Worker 로드 실패, 메인스레드 fallback:', workerErr)
+          // Worker 없이 재시도 (메인 스레드 파싱)
+          await viewer.Load({ url: blobUrl, progressCbk })
+        }
 
         if (destroyed) return
 
         // 레이어 추출
-        const rawLayers = viewer.GetLayers() as Array<{ name: string; color: number }>
+        const rawLayers = [...(viewer.GetLayers() as Iterable<{ name: string; color: number }>)]
         const layerInfos: LayerInfo[] = rawLayers.map((l) => ({
           name: l.name,
           color: l.color,
