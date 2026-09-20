@@ -1,4 +1,6 @@
 import DxfParser from 'dxf-parser'
+// @ts-ignore -- no types available for dxf package
+import { parseString as dxfParseString, toPolylines as dxfToPolylines } from 'dxf'
 import { convertDwgToDxf, CDN_WASM_BASE } from 'dwgdxf'
 import { createShapeId, type Editor } from 'tldraw'
 import { getScaleConfig } from './scaleConfig'
@@ -996,13 +998,13 @@ function getImportedFingerprints(editor: Editor): Set<string> {
 }
 
 /** DWG 바이너리를 DXF 바이트로 변환 (dwgdxf WASM) */
-async function dwgToDxfBytes(buffer: ArrayBuffer): Promise<Uint8Array> {
+export async function dwgToDxfBytes(buffer: ArrayBuffer): Promise<Uint8Array> {
   const dwgBytes = new Uint8Array(buffer)
   return await convertDwgToDxf(dwgBytes, { wasmBase: CDN_WASM_BASE })
 }
 
 /** raw DXF 바이트를 인코딩 감지 후 텍스트로 디코딩 */
-function decodeDxfBytes(dxfBytes: Uint8Array): string {
+export function decodeDxfBytes(dxfBytes: Uint8Array): string {
   // Uint8Array.buffer가 WASM memory 전체일 수 있으므로 복사
   const buf = (dxfBytes.buffer.byteLength === dxfBytes.byteLength
     ? dxfBytes.buffer
@@ -1980,7 +1982,7 @@ export function commitCadImport(
 
     const groupShapes: unknown[] = []
     let totalClusters = 0
-    const MAX_SHAPES = 500 // tldraw 렌더 성능 보호
+    // MAX_SHAPES = 500 — tldraw 렌더 성능 보호 (현재 미사용, 추후 활용)
     const tCluster = typeof performance !== 'undefined' ? performance.now() : Date.now()
     for (const [layer, segs] of layerGroups) {
       // 세그먼트가 너무 많으면 클러스터링 생략 (전체를 하나의 shape로)
@@ -2194,6 +2196,255 @@ export function commitCadImport(
       } catch { /* ignore */ }
     }, 300)
   }
+  return shapes.length
+}
+
+// ════════════════════════════════════════════════════════════════════
+// V2: dxf 패키지 기반 임포트 (블록 확장/bulge/좌표 변환 자동 처리)
+// ════════════════════════════════════════════════════════════════════
+
+/**
+ * dxf 패키지의 toPolylines()를 사용하는 새 임포트 함수.
+ * - 블록 확장(INSERT), bulge 호 변환, 좌표 변환이 라이브러리에서 자동 처리
+ * - 좌표 오버플로우(10^58) 문제 없음
+ * - 기존 DxfGroupShape 생성 파이프라인 재사용
+ */
+export function commitCadImportV2(
+  editor: Editor,
+  dxfText: string,
+  selectedLayers: Set<string>,
+  fileName: string,
+  fileSize: number,
+  _isDwg: boolean,
+): number {
+  const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now()
+
+  console.log(`[CAD V2] 시작: selectedLayers=${[...selectedLayers].join(',')}`)
+
+  // 1. 파싱 + 폴리라인 변환 (블록 확장 + bulge 호 자동)
+  const tParse = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  const parsed = dxfParseString(dxfText)
+  const { polylines } = dxfToPolylines(parsed) as {
+    bbox: { min: { x: number; y: number }; max: { x: number; y: number } }
+    polylines: Array<{
+      vertices: number[][]
+      rgb: number[]
+      layer: { name: string; colorNumber?: number } | null
+    }>
+  }
+  const parseMs = ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - tParse).toFixed(0)
+  console.log(`[CAD V2] 파싱 완료: ${polylines.length}개 폴리라인 (${parseMs}ms)`)
+
+  // 2. 유닛 스케일
+  const header = parsed.header as Record<string, unknown> | undefined
+  const unit = (header?.['$INSUNITS'] as number | undefined) ?? 4
+  const unitToMm = unit === 1 ? 25.4 : unit === 2 ? 304.8 : unit === 5 ? 10 : unit === 6 ? 1000 : 1
+  const scale = getScaleConfig(editor).pxPerMm * unitToMm
+  const thickness = getDefaultWallThicknessMm() * getScaleConfig(editor).pxPerMm
+  console.log(`[CAD V2] scale=${scale}, unitToMm=${unitToMm}`)
+
+  // 3. 폴리라인 → RawSeg 변환 (레이어 필터 + Y flip + 스케일)
+  const rawSegsAll: RawSeg[] = []
+  for (const pl of polylines) {
+    const layerName = pl.layer?.name || '0'
+    if (!selectedLayers.has(layerName)) continue
+
+    const verts = pl.vertices
+    if (!verts || verts.length < 2) continue
+
+    // RGB → hex color
+    const color = pl.rgb ? `#${pl.rgb.map(c => c.toString(16).padStart(2, '0')).join('')}` : undefined
+
+    for (let i = 0; i < verts.length - 1; i++) {
+      const x1 = verts[i][0] * scale
+      const y1 = -verts[i][1] * scale // Y flip
+      const x2 = verts[i + 1][0] * scale
+      const y2 = -verts[i + 1][1] * scale
+      rawSegsAll.push({
+        x1, y1,
+        dx: x2 - x1,
+        dy: y2 - y1,
+        layer: layerName,
+        color,
+      })
+    }
+  }
+  console.log(`[CAD V2] rawSegsAll: ${rawSegsAll.length}개 세그먼트`)
+
+  if (rawSegsAll.length === 0) {
+    console.warn('[CAD V2] 세그먼트 0개 → 종료')
+    return 0
+  }
+
+  // 4. 좌표 sanity 필터 (dxf 패키지 결과는 보통 안전하지만 방어용)
+  const COORD_LIMIT = 1e8
+  const saneSegs = rawSegsAll.filter((s) => {
+    const x2 = s.x1 + s.dx, y2 = s.y1 + s.dy
+    return Math.abs(s.x1) < COORD_LIMIT && Math.abs(s.y1) < COORD_LIMIT &&
+           Math.abs(x2) < COORD_LIMIT && Math.abs(y2) < COORD_LIMIT &&
+           isFinite(s.x1) && isFinite(s.y1) && isFinite(s.dx) && isFinite(s.dy)
+  })
+
+  // 5. 1px 필터 (0.1px fallback)
+  let rawSegs = saneSegs.filter((s) => Math.hypot(s.dx, s.dy) >= 1)
+  if (!rawSegs.length && saneSegs.length > 0) {
+    rawSegs = saneSegs.filter((s) => Math.hypot(s.dx, s.dy) >= 0.1)
+    if (!rawSegs.length) rawSegs = saneSegs
+  }
+  console.log(`[CAD V2] 필터 후: ${rawSegs.length}개 (sanity: ${saneSegs.length}, 1px: ${rawSegs.length})`)
+
+  // 6. 동일선상 병합
+  const merged = mergeDxfSegments(rawSegs)
+  const finalSegs = merged.length > 0 ? merged : rawSegs
+  console.log(`[CAD V2] 병합: ${rawSegs.length} → ${finalSegs.length}`)
+
+  // 7. 퍼센타일 bbox (P2~P98)
+  const allXCoords: number[] = []
+  const allYCoords: number[] = []
+  for (const s of finalSegs) {
+    allXCoords.push(s.x1, s.x1 + s.dx)
+    allYCoords.push(s.y1, s.y1 + s.dy)
+  }
+  allXCoords.sort((a, b) => a - b)
+  allYCoords.sort((a, b) => a - b)
+  const n = allXCoords.length
+  const pLo = n > 1000 ? Math.floor(n * 0.02) : 0
+  const pHi = n > 1000 ? Math.ceil(n * 0.98) - 1 : n - 1
+  let minX = allXCoords[pLo], maxX = allXCoords[pHi]
+  let minY = allYCoords[pLo], maxY = allYCoords[pHi]
+
+  // 8. autoScale
+  const MAX_CANVAS_SPAN = 12000
+  const spanX = maxX - minX || 1
+  const spanY = maxY - minY || 1
+  const maxSpan = Math.max(spanX, spanY)
+  let autoScale = 1
+  if (maxSpan > MAX_CANVAS_SPAN) {
+    autoScale = MAX_CANVAS_SPAN / maxSpan
+    for (const s of finalSegs) {
+      s.x1 *= autoScale; s.y1 *= autoScale; s.dx *= autoScale; s.dy *= autoScale
+    }
+    minX *= autoScale; maxX *= autoScale; minY *= autoScale; maxY *= autoScale
+  }
+  console.log(`[CAD V2] autoScale=${autoScale.toFixed(6)}, bbox=(${minX.toFixed(0)},${minY.toFixed(0)})~(${maxX.toFixed(0)},${maxY.toFixed(0)})`)
+
+  // 9. Viewport centering
+  const cam = editor.getCamera()
+  const vp = editor.getViewportScreenBounds()
+  const vpCenterX = (vp.width / 2) / cam.z - cam.x
+  const vpCenterY = (vp.height / 2) / cam.z - cam.y
+  const offsetX = (minX + maxX) / 2 - vpCenterX
+  const offsetY = (minY + maxY) / 2 - vpCenterY
+
+  // 10. Fingerprint
+  const entityCount = polylines.length
+  const fingerprint = dxfFingerprint(fileName, fileSize, entityCount)
+
+  // ── 100+ segs: DxfGroup 모드 ──
+  if (finalSegs.length >= 100) {
+    // 레이어별 그루핑
+    const layerGroups = new Map<string, RawSeg[]>()
+    for (const s of finalSegs) {
+      const key = s.layer || '0'
+      let g = layerGroups.get(key)
+      if (!g) { g = []; layerGroups.set(key, g) }
+      g.push(s)
+    }
+
+    const groupShapes: unknown[] = []
+    for (const [layer, segs] of layerGroups) {
+      // 대형 레이어는 클러스터링 생략
+      const clusters = segs.length > 3000 ? [segs] : clusterConnectedSegs(segs)
+
+      for (const cluster of clusters) {
+        let gMinX = Infinity, gMinY = Infinity, gMaxX = -Infinity, gMaxY = -Infinity
+        for (const s of cluster) {
+          gMinX = Math.min(gMinX, s.x1, s.x1 + s.dx)
+          gMinY = Math.min(gMinY, s.y1, s.y1 + s.dy)
+          gMaxX = Math.max(gMaxX, s.x1, s.x1 + s.dx)
+          gMaxY = Math.max(gMaxY, s.y1, s.y1 + s.dy)
+        }
+
+        const gx = gMinX - offsetX
+        const gy = gMinY - offsetY
+        const w = Math.max(gMaxX - gMinX, 1)
+        const h = Math.max(gMaxY - gMinY, 1)
+
+        const pathData = cluster.map((s) => {
+          const x1 = s.x1 - gMinX
+          const y1 = s.y1 - gMinY
+          const x2 = x1 + s.dx
+          const y2 = y1 + s.dy
+          return `M${x1.toFixed(1)},${y1.toFixed(1)}L${x2.toFixed(1)},${y2.toFixed(1)}`
+        }).join('')
+
+        const firstSeg = cluster[0]
+        groupShapes.push({
+          id: createShapeId(),
+          type: 'dxfgroup',
+          x: gx, y: gy,
+          props: {
+            w, h, pathData, thickness: thickness * autoScale * 0.3, segCount: cluster.length,
+            textsJson: '', hatchesJson: '',
+          },
+          meta: {
+            dxfFingerprint: fingerprint,
+            dxfLayer: layer,
+            ...(firstSeg.color ? { dxfColor: firstSeg.color } : {}),
+          },
+        })
+      }
+    }
+
+    console.log(`[CAD V2] ${groupShapes.length}개 DxfGroup 생성`)
+
+    // 배치 생성
+    const BATCH = 1000
+    for (let i = 0; i < groupShapes.length; i += BATCH) {
+      editor.createShapes(groupShapes.slice(i, i + BATCH) as never)
+    }
+
+    setTimeout(() => {
+      try {
+        editor.selectAll()
+        editor.zoomToFit({ animation: { duration: 0 } })
+        editor.selectNone()
+      } catch { /* ignore */ }
+    }, 300)
+
+    const totalMs = ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0).toFixed(0)
+    console.log(`[CAD V2] ✅ 완료: ${finalSegs.length}개 seg → ${groupShapes.length}개 shape (${totalMs}ms)`)
+    return finalSegs.length
+  }
+
+  // ── 100개 미만: 개별 wall shape ──
+  const scaledThickness = thickness * autoScale
+  const shapes = finalSegs.map((s) => ({
+    id: createShapeId(),
+    type: 'wall' as const,
+    x: s.x1 - offsetX,
+    y: s.y1 - offsetY,
+    props: { x2: s.dx, y2: s.dy, thickness: scaledThickness },
+    meta: {
+      dxfFingerprint: fingerprint,
+      ...(s.layer ? { dxfLayer: s.layer } : {}),
+      ...(s.color ? { dxfColor: s.color } : {}),
+    },
+  }))
+
+  if (shapes.length) {
+    editor.createShapes(shapes as never)
+    setTimeout(() => {
+      try {
+        editor.selectAll()
+        editor.zoomToFit({ animation: { duration: 0 } })
+        editor.selectNone()
+      } catch { /* ignore */ }
+    }, 300)
+  }
+
+  const totalMs = ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0).toFixed(0)
+  console.log(`[CAD V2] ✅ 완료: ${shapes.length}개 wall shape (${totalMs}ms)`)
   return shapes.length
 }
 

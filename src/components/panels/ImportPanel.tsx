@@ -1,119 +1,111 @@
-import { useState } from 'react'
+import { useState, Suspense, lazy } from 'react'
 import { useEditor } from '../../context/EditorContext'
 import { useToast } from '../../context/ToastContext'
 import { uploadImage } from '../../lib/project'
-import { pickCadFile, parseCadFile, commitCadImport, type CadParseResult } from '../../lib/dxf'
+import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2 } from '../../lib/dxf'
 import { importPdf } from '../../lib/pdfImport'
-import { CadLayerDialog } from '../CadLayerDialog'
+
+const CadPreview = lazy(() => import('../CadPreview'))
+
+interface PreviewData {
+  dxfText: string
+  fileName: string
+  fileSize: number
+  isDwg: boolean
+}
 
 export function ImportPanel() {
   const editor = useEditor()
   const { toast } = useToast()
-  const [loadingRef] = useState({ setLoading: (_: string | null) => {} })
+  const [loading, setLoading] = useState<string | null>(null)
+  const [previewData, setPreviewData] = useState<PreviewData | null>(null)
+
   const notify = {
     onSuccess: (msg: string) => toast(msg, 'success'),
-    onError: (msg: string) => { toast(msg, 'error'); loadingRef.setLoading(null) },
-    onInfo: (msg: string) => loadingRef.setLoading(msg), // 로딩 오버레이에 진행 상황 표시
-  }
-  const [cadResult, setCadResult] = useState<CadParseResult | null>(null)
-  const [loading, setLoading] = useState<string | null>(null) // 로딩 메시지
-  // 임포트 시작 시점의 페이지 ID 추적 (비동기 작업 중 페이지 전환 보호)
-  const [importPageId, setImportPageId] = useState<string | null>(null)
-
-  /** 임포트 전 원래 페이지로 복원 + shapes 생성 */
-  const safeCommit = (result: CadParseResult, layers: Set<string>, pageId: string) => {
-    if (!editor) return 0
-    // 현재 페이지가 임포트 시작 시점과 다르면 원래 페이지로 복원
-    const currentPageId = editor.getCurrentPageId()
-    if (currentPageId !== pageId) {
-      try { editor.setCurrentPage(pageId as ReturnType<typeof editor.getCurrentPageId>) } catch { /* page deleted */ }
-    }
-    return commitCadImport(editor, result, layers)
+    onError: (msg: string) => { toast(msg, 'error'); setLoading(null) },
   }
 
   const handleCadImport = async () => {
-    if (!editor) { console.error('[Import] editor 없음'); return }
-    console.log('[Import] 파일 선택 대기...')
+    if (!editor) return
     const file = await pickCadFile()
-    if (!file) { console.warn('[Import] 파일 선택 취소 또는 null'); return }
-    console.log(`[Import] 파일 선택됨: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)}MB)`)
+    if (!file) return
 
-    // 임포트 시작 시점의 페이지 ID 저장
-    const pageId = editor.getCurrentPageId() as string
-    setImportPageId(pageId)
-
-    // notify.onInfo가 로딩 메시지를 실시간 업데이트
-    loadingRef.setLoading = setLoading
     const sizeMB = (file.size / 1024 / 1024).toFixed(1)
-    setLoading(file.name.toLowerCase().endsWith('.dwg')
-      ? `DWG → DXF 변환 중... (${sizeMB}MB)`
-      : `도면 파일 분석 중... (${sizeMB}MB)`,
-    )
+    const isDwg = file.name.toLowerCase().endsWith('.dwg')
+
     try {
-      const result = await parseCadFile(file, notify)
-      if (!result) { console.warn('[Import] parseCadFile → null'); setLoading(null); return }
-      console.log(`[Import] 파싱 완료: segs=${result.totalSegments}, layers=${result.layers.length}`)
+      let dxfText: string
 
-      // 중복 체크 (원래 페이지 기준)
-      const existingFps = new Set(
-        editor.getCurrentPageShapes()
-          .map((s) => (s.meta as Record<string, unknown>)?.dxfFingerprint)
-          .filter((fp): fp is string => typeof fp === 'string'),
-      )
-      if (existingFps.has(result.fingerprint)) {
-        setLoading(null)
-        const proceed = confirm(
-          `"${file.name}" 파일이 이미 임포트된 것 같습니다.\n그래도 다시 임포트하시겠습니까?`,
-        )
-        if (!proceed) return
-      }
-
-      // 레이어가 2개 이상이면 선택 다이얼로그, 1개면 바로 임포트
-      if (result.layers.length > 1) {
-        setCadResult(result)
+      if (isDwg) {
+        // DWG → DXF 변환
+        setLoading(`DWG → DXF 변환 중... (${sizeMB}MB)`)
+        const buffer = await file.arrayBuffer()
+        const dxfBytes = await dwgToDxfBytes(buffer)
+        if (!dxfBytes || dxfBytes.length < 100) {
+          toast('DWG 변환 실패: DXF 데이터가 비어있습니다.', 'error')
+          setLoading(null)
+          return
+        }
+        dxfText = decodeDxfBytes(dxfBytes)
+        if (!dxfText || (!dxfText.includes('SECTION') && !dxfText.includes('ENTITIES'))) {
+          toast('DWG 변환 실패: 유효하지 않은 DXF입니다.', 'error')
+          setLoading(null)
+          return
+        }
       } else {
-        setLoading(`${result.totalSegments.toLocaleString()}개 세그먼트 변환 중...`)
-        await new Promise((r) => setTimeout(r, 50))
-        const allLayers = new Set(result.layers.map((l) => l.name))
-        setLoading('도면 shapes 생성 중...')
-        await new Promise((r) => setTimeout(r, 50))
-        const count = safeCommit(result, allLayers, pageId)
-        const fmt = result.isDwg ? 'DWG' : 'DXF'
-        toast(`"${result.fileName}" ${fmt}를 가져왔습니다. (${count}개 벽)`, 'success')
+        // DXF 직접 읽기
+        setLoading(`도면 파일 읽는 중... (${sizeMB}MB)`)
+        const buffer = await file.arrayBuffer()
+        dxfText = decodeDxfBytes(new Uint8Array(buffer))
       }
-    } finally {
+
+      setLoading(null)
+
+      // CadPreview 모달 열기
+      setPreviewData({
+        dxfText,
+        fileName: file.name,
+        fileSize: file.size,
+        isDwg,
+      })
+    } catch (err) {
+      console.error('[Import] 파일 로드 에러:', err)
+      toast(`파일 로드 실패: ${err instanceof Error ? err.message : String(err)}`, 'error')
       setLoading(null)
     }
   }
 
-  const handleLayerConfirm = async (selectedLayers: Set<string>) => {
-    if (!editor || !cadResult) return
-    const pageId = importPageId || (editor.getCurrentPageId() as string)
-    const segCount = cadResult.layers
-      .filter((l) => selectedLayers.has(l.name))
-      .reduce((sum, l) => sum + l.segCount, 0)
-    setLoading(`${segCount.toLocaleString()}개 세그먼트 변환 중...`)
-    await new Promise((r) => setTimeout(r, 50))
-    let count = 0
-    try {
-      count = safeCommit(cadResult, selectedLayers, pageId)
-    } catch (err) {
-      console.error('[Import] commitCadImport 에러:', err)
-      toast('도면 렌더링 중 오류가 발생했습니다.', 'error')
-      setCadResult(null)
-      setImportPageId(null)
-      setLoading(null)
-      return
-    }
-    const fmt = cadResult.isDwg ? 'DWG' : 'DXF'
-    if (count === 0) {
-      toast('선택한 레이어에 표시할 도형이 없습니다.', 'info')
-    } else {
-      toast(`"${cadResult.fileName}" ${fmt}를 가져왔습니다. (${count}개 벽, ${selectedLayers.size}개 레이어)`, 'success')
-    }
-    setCadResult(null)
-    setImportPageId(null)
-    setLoading(null)
+  const handlePreviewImport = (selectedLayers: Set<string>, dxfText: string) => {
+    if (!editor || !previewData) return
+
+    setPreviewData(null)
+    setLoading('도면 shapes 생성 중...')
+
+    // 약간의 딜레이로 UI 업데이트 후 처리
+    setTimeout(() => {
+      try {
+        const count = commitCadImportV2(
+          editor,
+          dxfText,
+          selectedLayers,
+          previewData.fileName,
+          previewData.fileSize,
+          previewData.isDwg,
+        )
+
+        const fmt = previewData.isDwg ? 'DWG' : 'DXF'
+        if (count === 0) {
+          toast('선택한 레이어에 표시할 도형이 없습니다.', 'info')
+        } else {
+          toast(`"${previewData.fileName}" ${fmt} 가져옴 (${count.toLocaleString()}개 선분, ${selectedLayers.size}개 레이어)`, 'success')
+        }
+      } catch (err) {
+        console.error('[Import] commitCadImportV2 에러:', err)
+        toast('도면 렌더링 중 오류가 발생했습니다.', 'error')
+      } finally {
+        setLoading(null)
+      }
+    }, 100)
   }
 
   return (
@@ -179,13 +171,18 @@ export function ImportPanel() {
 
       </div>
 
-      {/* 레이어 선택 다이얼로그 */}
-      {cadResult && (
-        <CadLayerDialog
-          result={cadResult}
-          onConfirm={handleLayerConfirm}
-          onCancel={() => { setCadResult(null); setLoading(null) }}
-        />
+      {/* WebGL CAD 프리뷰 모달 */}
+      {previewData && (
+        <Suspense fallback={<ImportLoadingOverlay message="CAD 미리보기 로딩 중..." />}>
+          <CadPreview
+            dxfText={previewData.dxfText}
+            fileName={previewData.fileName}
+            fileSize={previewData.fileSize}
+            isDwg={previewData.isDwg}
+            onImport={handlePreviewImport}
+            onClose={() => setPreviewData(null)}
+          />
+        </Suspense>
       )}
 
       {/* 로딩 오버레이 */}
