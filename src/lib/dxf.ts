@@ -1480,36 +1480,46 @@ export async function parseCadFile(
     try {
       ;(notify?.onInfo ?? notify?.onSuccess)?.('DWG → DXF 변환 중…')
       const buffer = await file.arrayBuffer()
+      console.log(`[CAD Import] DWG 파일 읽기 완료: ${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB`)
       const dxfBytes = await dwgToDxfBytes(buffer)
+      console.log(`[CAD Import] DWG→DXF 변환 완료: ${dxfBytes?.length ?? 0} bytes`)
       // DWG→DXF 변환 결과 검증
       if (!dxfBytes || dxfBytes.length < 100) {
+        console.error('[CAD Import] DWG 변환 결과가 비어있음:', dxfBytes?.length)
         notify?.onError?.('DWG 변환 실패: 변환된 데이터가 비어있습니다.')
         return null
       }
       text = decodeDxfBytes(dxfBytes)
+      console.log(`[CAD Import] DXF 텍스트 디코딩 완료: ${text.length} chars, SECTION:${text.includes('SECTION')}, ENTITIES:${text.includes('ENTITIES')}`)
       // 변환된 텍스트가 DXF 형식인지 기본 검증
       if (!text || (!text.includes('SECTION') && !text.includes('ENTITIES'))) {
         notify?.onError?.('DWG 변환 실패: 유효한 DXF 데이터가 아닙니다.')
         return null
       }
     } catch (err) {
+      console.error('[CAD Import] DWG 변환 예외:', err)
       notify?.onError?.(`DWG 변환 실패: ${err instanceof Error ? err.message : String(err)}`)
       return null
     }
   } else {
     // DXF/DWG 모두 인코딩 감지: 한국 AutoCAD는 EUC-KR(CP949) 사용
     const buffer = await file.arrayBuffer()
+    console.log(`[CAD Import] DXF 파일 읽기 완료: ${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB`)
     text = decodeDxfBytes(new Uint8Array(buffer))
   }
 
   let dxf: ReturnType<DxfParser['parseSync']>
   try {
+    console.log(`[CAD Import] DXF 파싱 시작 (${text.length} chars)...`)
     dxf = new DxfParser().parseSync(text)
-  } catch {
+    console.log(`[CAD Import] DXF 파싱 완료: entities=${dxf?.entities?.length ?? 0}`)
+  } catch (parseErr) {
+    console.error('[CAD Import] DXF 파싱 실패:', parseErr)
     notify?.onError?.(`${isDwg ? 'DWG에서 변환된 ' : ''}DXF 파일을 읽을 수 없습니다.`)
     return null
   }
   if (!dxf || !dxf.entities?.length) {
+    console.error('[CAD Import] entities 없음:', { dxf: !!dxf, entities: dxf?.entities?.length })
     notify?.onError?.('DXF에 도면 데이터가 없습니다.')
     return null
   }
@@ -1531,17 +1541,22 @@ export async function parseCadFile(
   }
 
   // INSERT/BLOCK 재귀 확장 포함 세그먼트 + 텍스트 + 해치 수집
+  console.log(`[CAD Import] 세그먼트 수집 시작 (blocks: ${Object.keys(blocks).length})...`)
   const segs = collectSegmentsWithBlocks(
     dxf.entities as unknown as Array<Record<string, unknown>>,
     layerDefs, blocks,
   )
+  console.log(`[CAD Import] 세그먼트: ${segs.length}`)
   const texts = collectTextsWithBlocks(
     dxf.entities as unknown as Array<Record<string, unknown>>,
     layerDefs, blocks,
   )
+  console.log(`[CAD Import] 텍스트: ${texts.length}`)
   // dxf-parser는 HATCH를 파싱하지 않으므로 raw text에서 직접 추출
   const hatches = parseRawHatches(text, layerDefs)
+  console.log(`[CAD Import] 해치: ${hatches.length}`)
   if (!segs.length && !texts.length) {
+    console.error('[CAD Import] 세그먼트/텍스트 0개 → 실패')
     notify?.onError?.('DXF에서 도형 데이터를 찾지 못했습니다.')
     return null
   }
@@ -1746,6 +1761,7 @@ export function commitCadImport(
   result: CadParseResult,
   selectedLayers: Set<string>,
 ): number {
+  console.log(`[CAD Commit] 시작: segs=${result._segs.length}, texts=${result._texts.length}, hatches=${result._hatches.length}, layers=${[...selectedLayers].join(',')}`)
   const scale = getScaleConfig(editor).pxPerMm * result.unitToMm
   const thickness = getDefaultWallThicknessMm() * getScaleConfig(editor).pxPerMm
 
@@ -1760,16 +1776,19 @@ export function commitCadImport(
       return { x1, y1, dx, dy, layer: s.layer, lineweight: s.lineweight, color: s.color }
     })
 
+  console.log(`[CAD Commit] rawSegsAll (레이어 필터 후): ${rawSegsAll.length}, scale=${scale}`)
+
   // 1px 이상 필터 (너무 작은 세그먼트 제거) — 단, 전부 제거되면 원본 사용
   let rawSegs = rawSegsAll.filter((s) => Math.hypot(s.dx, s.dy) >= 1)
   if (!rawSegs.length && rawSegsAll.length > 0) {
     // 스케일이 너무 작아서 모든 세그먼트가 1px 미만 → 0.1px 기준으로 재시도
     rawSegs = rawSegsAll.filter((s) => Math.hypot(s.dx, s.dy) >= 0.1)
     if (!rawSegs.length) rawSegs = rawSegsAll // 그래도 없으면 전부 사용
-    console.warn(`[DXF] Scale too small: all ${rawSegsAll.length} segs < 1px, relaxed filter → ${rawSegs.length} segs`)
+    console.warn(`[CAD Commit] Scale too small: all ${rawSegsAll.length} segs < 1px, relaxed filter → ${rawSegs.length} segs`)
   }
+  console.log(`[CAD Commit] rawSegs (1px 필터 후): ${rawSegs.length}`)
 
-  if (!rawSegs.length) return 0
+  if (!rawSegs.length) { console.warn('[CAD Commit] 세그먼트 0개 → return 0'); return 0 }
 
   // 2단계: 동일선상 세그먼트 병합 (shape 수 30-60% 감소)
   const merged = mergeDxfSegments(rawSegs)
@@ -1787,9 +1806,11 @@ export function commitCadImport(
     maxY = Math.max(maxY, s.y1, s.y1 + s.dy)
   }
 
+  console.log(`[CAD Commit] bbox: x=${minX.toFixed(0)}~${maxX.toFixed(0)}, y=${minY.toFixed(0)}~${maxY.toFixed(0)}`)
+
   // NaN/Infinity 방어
   if (!isFinite(minX) || !isFinite(maxX) || !isFinite(minY) || !isFinite(maxY)) {
-    console.error('[DXF] Invalid bounding box:', { minX, maxX, minY, maxY })
+    console.error('[CAD Commit] Invalid bounding box:', { minX, maxX, minY, maxY })
     return 0
   }
 
@@ -2004,14 +2025,14 @@ export function commitCadImport(
 
     editor.createShapes(groupShapes as never)
 
-    // shapes 생성 직후 zoomToFit (requestAnimationFrame으로 렌더 완료 보장)
-    requestAnimationFrame(() => {
+    // shapes 생성 직후 zoomToFit (tldraw 렌더 완료 대기)
+    setTimeout(() => {
       try {
         editor.selectAll()
         editor.zoomToFit({ animation: { duration: 0 } })
         editor.selectNone()
       } catch { /* ignore */ }
-    })
+    }, 300)
 
     return finalSegs.length
   }

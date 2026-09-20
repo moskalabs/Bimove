@@ -31,9 +31,11 @@ export function ImportPanel() {
   }
 
   const handleCadImport = async () => {
-    if (!editor) return
+    if (!editor) { console.error('[Import] editor 없음'); return }
+    console.log('[Import] 파일 선택 대기...')
     const file = await pickCadFile()
-    if (!file) return
+    if (!file) { console.warn('[Import] 파일 선택 취소 또는 null'); return }
+    console.log(`[Import] 파일 선택됨: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)}MB)`)
 
     // 임포트 시작 시점의 페이지 ID 저장
     const pageId = editor.getCurrentPageId() as string
@@ -42,7 +44,8 @@ export function ImportPanel() {
     setLoading('도면 파일 분석 중...')
     try {
       const result = await parseCadFile(file, notify)
-      if (!result) { setLoading(null); return }
+      if (!result) { console.warn('[Import] parseCadFile → null'); setLoading(null); return }
+      console.log(`[Import] 파싱 완료: segs=${result.totalSegments}, layers=${result.layers.length}`)
 
       // 중복 체크 (원래 페이지 기준)
       const existingFps = new Set(
