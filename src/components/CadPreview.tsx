@@ -1,20 +1,19 @@
 /**
- * CadPreview: WebGL 기반 CAD(DXF/DWG) 전체화면 프리뷰 + 레이어 선택
- * dxf-viewer(Three.js WebGL)를 사용하여 대형 도면도 60fps로 렌더링.
- * 레이어를 선택한 뒤 "가져오기"를 누르면 tldraw로 임포트.
+ * CadPreview: CAD(DXF/DWG) 레이어 선택 다이얼로그
+ * dxf 패키지로 파싱하여 레이어 목록을 추출하고,
+ * 선택된 레이어만 tldraw 캔버스에 임포트.
+ * 기존 bimove UI 스타일(cad-layer-*)에 맞춤.
  */
-import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
-import { DxfViewer } from 'dxf-viewer'
-
-// NOTE: THREE는 import하지 않는다. dxf-viewer가 자체 three@0.161을 번들하므로
-// 앱의 three@0.184와 섞으면 instanceof 충돌 발생.
+import { useEffect, useState, useMemo, useCallback } from 'react'
+// @ts-ignore -- no types for dxf
+import { parseString as dxfParseString, denormalise as dxfDenormalise } from 'dxf'
 
 const STRUCTURAL_KEYWORDS = /wall|window|win(?!ter)|door|stair|column|beam|slab|elev|건축|벽|창문|문/i
 
 interface LayerInfo {
   name: string
-  color: number
-  visible: boolean
+  color: string
+  segCount: number
   likelyStructural: boolean
 }
 
@@ -35,193 +34,102 @@ export default function CadPreview({
   onImport,
   onClose,
 }: CadPreviewProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const viewerRef = useRef<DxfViewer | null>(null)
-  const blobUrlRef = useRef<string | null>(null)
-
   const [layers, setLayers] = useState<LayerInfo[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [loading, setLoading] = useState(true)
-  const [progress, setProgress] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [parsing, setParsing] = useState(true)
 
-  // 모달 열릴 때 body data attr 추가
+  // 모달 열릴 때 body data attr 추가 (온보딩 힌트 숨김)
   useEffect(() => {
     document.body.dataset.modalOpen = 'true'
     return () => { delete document.body.dataset.modalOpen }
   }, [])
 
-  // dxf-viewer 초기화 + 로드
+  // DXF 파싱 → 레이어 추출
   useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
+    const t0 = performance.now()
+    try {
+      const parsed = dxfParseString(dxfText)
 
-    let destroyed = false
+      // denormalise로 블록 확장된 엔티티 가져오기
+      const entities = dxfDenormalise(parsed)
 
-    const init = async () => {
-      try {
-        // Blob URL 생성
-        const blob = new Blob([dxfText], { type: 'text/plain;charset=utf-8' })
-        const blobUrl = URL.createObjectURL(blob)
-        blobUrlRef.current = blobUrl
+      // 레이어별 엔티티 수 집계
+      const layerMap = new Map<string, { count: number; color: string }>()
 
-        // 컨테이너 크기 보장 (flex 레이아웃이 아직 안 잡혔을 수 있음)
-        await new Promise(r => requestAnimationFrame(r))
+      // 레이어 테이블에서 색상 정보 추출
+      const layerTable = (parsed.tables?.layer?.layers ?? {}) as Record<string, { color?: number; colorNumber?: number }>
 
-        console.log('[CadPreview] container size:', container.clientWidth, 'x', container.clientHeight)
-
-        // DxfViewer 생성 — clearColor 생략 시 기본 검정 배경 사용
-        // NOTE: clearColor는 dxf-viewer 내부 three.Color 인스턴스 필요 (앱의 three와 다른 버전)
-        const viewer = new DxfViewer(container, {
-          autoResize: true,
-          colorCorrection: true,
-          blackWhiteInversion: true,
-          antialias: true,
-        })
-        viewerRef.current = viewer
-
-        // 로드 (Worker 로드 실패 시 메인스레드 fallback)
-        setProgress('도면 파싱 중...')
-        const progressCbk = (phase: string, processedSize: number, totalSize: number) => {
-          if (destroyed) return
-          const pct = totalSize > 0 ? Math.round((processedSize / totalSize) * 100) : 0
-          if (phase === 'fetch') {
-            setProgress(`다운로드 ${pct}%`)
-          } else if (phase === 'parse') {
-            setProgress(`파싱 ${pct}%`)
-          } else {
-            setProgress(`렌더 준비 ${pct}%`)
-          }
+      for (const ent of entities) {
+        const name = (ent as { layer?: string }).layer || '0'
+        const existing = layerMap.get(name)
+        if (existing) {
+          existing.count++
+        } else {
+          // 레이어 색상 결정
+          const lt = layerTable[name]
+          const colorNum = lt?.colorNumber ?? lt?.color ?? 7
+          const hex = aciToHex(colorNum)
+          layerMap.set(name, { count: 1, color: hex })
         }
+      }
 
-        try {
-          await viewer.Load({
-            url: blobUrl,
-            progressCbk,
-            workerFactory: () =>
-              new Worker(
-                new URL('../lib/dxf-viewer.worker.ts', import.meta.url),
-                { type: 'module' },
-              ),
-          })
-        } catch (workerErr) {
-          console.warn('[CadPreview] Worker 로드 실패, 메인스레드 fallback:', workerErr)
-          await viewer.Load({ url: blobUrl, progressCbk })
-        }
-
-        if (destroyed) return
-
-        // canvas 확인 및 강제 리사이즈
-        const canvas = container.querySelector('canvas')
-        console.log('[CadPreview] Load 완료, canvas:', canvas?.width, 'x', canvas?.height,
-          'container:', container.clientWidth, 'x', container.clientHeight)
-
-        // DxfViewer의 renderer를 강제 리사이즈 + 재렌더
-        const v = viewer as unknown as {
-          renderer?: { setSize: (w: number, h: number) => void; render: (s: unknown, c: unknown) => void }
-          scene?: unknown
-          camera?: unknown
-          Render?: () => void
-        }
-        if (v.renderer && container.clientWidth > 0) {
-          v.renderer.setSize(container.clientWidth, container.clientHeight)
-          if (v.scene && v.camera) {
-            v.renderer.render(v.scene, v.camera)
-          }
-        }
-
-        // 레이어 추출
-        const rawLayers = [...(viewer.GetLayers() as Iterable<{ name: string; color: number }>)]
-        console.log('[CadPreview] 레이어:', rawLayers.length, '개')
-
-        const layerInfos: LayerInfo[] = rawLayers.map((l) => ({
-          name: l.name,
-          color: l.color,
-          visible: true,
-          likelyStructural: STRUCTURAL_KEYWORDS.test(l.name),
+      const layerInfos: LayerInfo[] = [...layerMap.entries()]
+        .map(([name, info]) => ({
+          name,
+          color: info.color,
+          segCount: info.count,
+          likelyStructural: STRUCTURAL_KEYWORDS.test(name),
         }))
-        setLayers(layerInfos)
+        .sort((a, b) => b.segCount - a.segCount)
 
-        // 초기 선택: 구조 레이어가 있으면 구조만, 없으면 전체
-        const hasStructural = layerInfos.some((l) => l.likelyStructural)
-        const initialSelected = hasStructural
-          ? new Set(layerInfos.filter((l) => l.likelyStructural).map((l) => l.name))
-          : new Set(layerInfos.map((l) => l.name))
-        setSelected(initialSelected)
+      setLayers(layerInfos)
 
-        setLoading(false)
-        setProgress('')
+      // 초기 선택: 구조 레이어가 있으면 구조만, 없으면 전체
+      const hasStructural = layerInfos.some((l) => l.likelyStructural)
+      const initialSelected = hasStructural
+        ? new Set(layerInfos.filter((l) => l.likelyStructural).map((l) => l.name))
+        : new Set(layerInfos.map((l) => l.name))
+      setSelected(initialSelected)
 
-        // 로딩 완료 후 한번 더 렌더 (React state 변경으로 로딩 오버레이 제거된 뒤)
-        requestAnimationFrame(() => {
-          if (v.renderer && v.scene && v.camera) {
-            v.renderer.render(v.scene, v.camera)
-          }
-        })
-      } catch (err) {
-        if (destroyed) return
-        console.error('[CadPreview] Load 에러:', err)
-        setError(`도면 로드 실패: ${err instanceof Error ? err.message : String(err)}`)
-        setLoading(false)
-      }
-    }
-
-    init()
-
-    return () => {
-      destroyed = true
-      viewerRef.current?.Destroy()
-      viewerRef.current = null
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current)
-        blobUrlRef.current = null
-      }
+      console.log(`[CadPreview] ${layerInfos.length}개 레이어, ${entities.length}개 엔티티 (${(performance.now() - t0).toFixed(0)}ms)`)
+    } catch (err) {
+      console.error('[CadPreview] 파싱 에러:', err)
+    } finally {
+      setParsing(false)
     }
   }, [dxfText])
 
   // 레이어 토글
   const toggleLayer = useCallback((name: string) => {
-    const viewer = viewerRef.current
     setSelected((prev) => {
       const next = new Set(prev)
-      const nowSelected = !next.has(name)
-      if (nowSelected) next.add(name)
-      else next.delete(name)
-
-      // WebGL 프리뷰 실시간 반영
-      if (viewer) {
-        try { viewer.ShowLayer(name, nowSelected) } catch { /* layer might not exist */ }
-      }
-
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
       return next
     })
   }, [])
 
   const selectAll = useCallback(() => {
-    const viewer = viewerRef.current
-    const all = new Set(layers.map((l) => l.name))
-    setSelected(all)
-    if (viewer) layers.forEach((l) => { try { viewer.ShowLayer(l.name, true) } catch {} })
+    setSelected(new Set(layers.map((l) => l.name)))
   }, [layers])
 
   const selectNone = useCallback(() => {
-    const viewer = viewerRef.current
     setSelected(new Set())
-    if (viewer) layers.forEach((l) => { try { viewer.ShowLayer(l.name, false) } catch {} })
-  }, [layers])
+  }, [])
 
   const selectStructural = useCallback(() => {
-    const viewer = viewerRef.current
-    const structural = new Set(layers.filter((l) => l.likelyStructural).map((l) => l.name))
-    setSelected(structural)
-    if (viewer) {
-      layers.forEach((l) => {
-        try { viewer.ShowLayer(l.name, structural.has(l.name)) } catch {}
-      })
-    }
+    setSelected(new Set(layers.filter((l) => l.likelyStructural).map((l) => l.name)))
   }, [layers])
 
   const hasStructural = useMemo(() => layers.some((l) => l.likelyStructural), [layers])
+
+  const totalSelected = useMemo(() => {
+    let total = 0
+    for (const l of layers) {
+      if (selected.has(l.name)) total += l.segCount
+    }
+    return total
+  }, [layers, selected])
 
   // 가져오기
   const handleImport = useCallback(() => {
@@ -236,169 +144,88 @@ export default function CadPreview({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  // 파일 크기 포맷
   const sizeMB = (fileSize / 1e6).toFixed(1)
   const fmt = isDwg ? 'DWG' : 'DXF'
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 9999,
-      background: '#1e2228', display: 'flex', flexDirection: 'column',
-    }}>
-      {/* 상단바 */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '8px 16px', background: '#2a2e35', borderBottom: '1px solid #3a3f47',
-        zIndex: 10000,
-      }}>
-        <span style={{ color: '#ddd', fontSize: 14, flex: 1 }}>
-          {fileName} <span style={{ color: '#888', fontSize: 12 }}>({fmt}, {sizeMB}MB)</span>
-        </span>
-        <button
-          onClick={onClose}
-          style={{
-            background: '#444', color: '#fff', border: 'none', borderRadius: 6,
-            padding: '4px 12px', cursor: 'pointer', fontSize: 13,
-          }}
-        >
-          닫기
-        </button>
-      </div>
-
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* 레이어 사이드바 */}
-        <div style={{
-          width: 240, background: '#262a31', borderRight: '1px solid #3a3f47',
-          display: 'flex', flexDirection: 'column', overflow: 'hidden',
-        }}>
-          {/* 빠른 선택 */}
-          <div style={{
-            padding: '8px 10px', borderBottom: '1px solid #3a3f47',
-            display: 'flex', gap: 4, flexWrap: 'wrap',
-          }}>
-            <button onClick={selectAll} style={quickBtnStyle}>전체</button>
-            <button onClick={selectNone} style={quickBtnStyle}>해제</button>
-            {hasStructural && (
-              <button onClick={selectStructural} style={{ ...quickBtnStyle, background: '#3b6fd4', color: '#fff' }}>
-                구조
-              </button>
-            )}
-          </div>
-
-          {/* 레이어 목록 */}
-          <div style={{ flex: 1, overflow: 'auto', padding: '4px 0' }}>
-            {layers.map((layer) => (
-              <label
-                key={layer.name}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '4px 10px', cursor: 'pointer', fontSize: 12,
-                  background: selected.has(layer.name) ? 'rgba(59,111,212,0.15)' : 'transparent',
-                  color: '#ccc',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(layer.name)}
-                  onChange={() => toggleLayer(layer.name)}
-                  style={{ accentColor: '#3b6fd4' }}
-                />
-                <span style={{
-                  width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
-                  background: `#${(layer.color & 0xFFFFFF).toString(16).padStart(6, '0')}`,
-                }} />
-                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {layer.name}
-                  {layer.likelyStructural && (
-                    <span style={{
-                      marginLeft: 4, fontSize: 10, padding: '1px 4px',
-                      background: '#3b6fd4', borderRadius: 3, color: '#fff',
-                    }}>
-                      구조
-                    </span>
-                  )}
-                </span>
-              </label>
-            ))}
-            {layers.length === 0 && !loading && (
-              <div style={{ padding: 16, color: '#888', fontSize: 12 }}>레이어 없음</div>
-            )}
-          </div>
-
-          {/* 선택 요약 + 가져오기 버튼 */}
-          <div style={{
-            padding: '10px', borderTop: '1px solid #3a3f47',
-            display: 'flex', flexDirection: 'column', gap: 6,
-          }}>
-            <span style={{ fontSize: 11, color: '#888' }}>
-              {selected.size} / {layers.length} 레이어 선택
-            </span>
-            <button
-              onClick={handleImport}
-              disabled={selected.size === 0}
-              style={{
-                padding: '8px 0', border: 'none', borderRadius: 6,
-                background: selected.size > 0 ? '#3b6fd4' : '#444',
-                color: '#fff', fontSize: 13, cursor: selected.size > 0 ? 'pointer' : 'default',
-                opacity: selected.size > 0 ? 1 : 0.5,
-              }}
-            >
-              {selected.size > 0 ? `${selected.size}개 레이어 가져오기` : '레이어를 선택하세요'}
-            </button>
-          </div>
+    <div className="cad-layer-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="cad-layer-dialog">
+        {/* 헤더 */}
+        <div className="cad-layer-header">
+          <strong>{fileName}</strong>{' '}
+          <span style={{ fontSize: 12, color: '#888' }}>({fmt}, {sizeMB}MB)</span>
         </div>
 
-        {/* WebGL 캔버스 영역 */}
-        <div
-          ref={containerRef}
-          style={{
-            flex: 1,
-            position: 'relative',
-            background: '#000',
-            // canvas가 제대로 차지하도록 min dimensions 보장
-            minWidth: 0,
-            minHeight: 0,
-          }}
-        >
-          {/* 로딩 오버레이 */}
-          {loading && (
-            <div style={{
-              position: 'absolute', inset: 0, display: 'flex',
-              flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(30,34,40,0.85)', zIndex: 10,
-            }}>
-              <div style={{ color: '#fff', fontSize: 16, marginBottom: 8 }}>
-                도면 로딩 중...
-              </div>
-              <div style={{ color: '#aaa', fontSize: 13 }}>{progress}</div>
+        {/* 빠른 선택 */}
+        <div className="cad-layer-actions">
+          <button className="cad-layer-action-btn" onClick={selectAll}>전체</button>
+          <button className="cad-layer-action-btn" onClick={selectNone}>해제</button>
+          {hasStructural && (
+            <button className="cad-layer-action-btn cad-layer-action-primary" onClick={selectStructural}>
+              구조 레이어
+            </button>
+          )}
+          <span className="cad-layer-seg-count">
+            {selected.size}개 레이어 / {totalSelected.toLocaleString()}개 요소
+          </span>
+        </div>
+
+        {/* 레이어 목록 */}
+        <div className="cad-layer-list">
+          {parsing && (
+            <div style={{ padding: 24, textAlign: 'center', color: '#888' }}>
+              도면 파싱 중...
             </div>
           )}
-          {/* 에러 */}
-          {error && (
-            <div style={{
-              position: 'absolute', inset: 0, display: 'flex',
-              alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(30,34,40,0.95)', zIndex: 10,
-            }}>
-              <div style={{ color: '#f66', fontSize: 14, textAlign: 'center', padding: 24 }}>
-                {error}
-                <br />
-                <button
-                  onClick={onClose}
-                  style={{ marginTop: 12, padding: '6px 16px', border: '1px solid #666', borderRadius: 6, background: 'transparent', color: '#ccc', cursor: 'pointer' }}
-                >
-                  닫기
-                </button>
-              </div>
+          {!parsing && layers.map((layer) => (
+            <label
+              key={layer.name}
+              className={`cad-layer-row${selected.has(layer.name) ? ' selected' : ''}`}
+              onClick={() => toggleLayer(layer.name)}
+            >
+              <input
+                type="checkbox"
+                checked={selected.has(layer.name)}
+                onChange={() => {}}
+                onClick={(e) => e.stopPropagation()}
+              />
+              <span className="cad-layer-dot" style={{ background: layer.color }} />
+              <span className="cad-layer-name">
+                {layer.name}
+                {layer.likelyStructural && <span className="cad-layer-tag">구조</span>}
+              </span>
+              <span className="cad-layer-seg">{layer.segCount.toLocaleString()}</span>
+            </label>
+          ))}
+          {!parsing && layers.length === 0 && (
+            <div style={{ padding: 24, textAlign: 'center', color: '#888' }}>
+              레이어를 찾을 수 없습니다.
             </div>
           )}
+        </div>
+
+        {/* 하단 버튼 */}
+        <div className="cad-layer-footer">
+          <button className="cad-layer-cancel" onClick={onClose}>취소</button>
+          <button
+            className="cad-layer-confirm"
+            disabled={selected.size === 0}
+            onClick={handleImport}
+          >
+            {selected.size > 0 ? `${selected.size}개 레이어 가져오기` : '레이어를 선택하세요'}
+          </button>
         </div>
       </div>
     </div>
   )
 }
 
-const quickBtnStyle: React.CSSProperties = {
-  padding: '3px 8px', fontSize: 11, border: '1px solid #555',
-  borderRadius: 4, background: '#333', color: '#ccc', cursor: 'pointer',
+/** AutoCAD Color Index → hex 색상 (기본 7색 + fallback) */
+function aciToHex(aci: number): string {
+  const map: Record<number, string> = {
+    0: '#000000', 1: '#ff0000', 2: '#ffff00', 3: '#00ff00',
+    4: '#00ffff', 5: '#0000ff', 6: '#ff00ff', 7: '#ffffff',
+    8: '#808080', 9: '#c0c0c0',
+  }
+  return map[aci] ?? `hsl(${(aci * 37) % 360}, 70%, 50%)`
 }
