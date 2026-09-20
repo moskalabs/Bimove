@@ -5,7 +5,9 @@
  */
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { DxfViewer } from 'dxf-viewer'
-import * as THREE from 'three'
+
+// NOTE: THREE는 import하지 않는다. dxf-viewer가 자체 three@0.161을 번들하므로
+// 앱의 three@0.184와 섞으면 instanceof 충돌 발생.
 
 const STRUCTURAL_KEYWORDS = /wall|window|win(?!ter)|door|stair|column|beam|slab|elev|건축|벽|창문|문/i
 
@@ -63,14 +65,18 @@ export default function CadPreview({
         const blobUrl = URL.createObjectURL(blob)
         blobUrlRef.current = blobUrl
 
-        // DxfViewer 생성
+        // 컨테이너 크기 보장 (flex 레이아웃이 아직 안 잡혔을 수 있음)
+        await new Promise(r => requestAnimationFrame(r))
+
+        console.log('[CadPreview] container size:', container.clientWidth, 'x', container.clientHeight)
+
+        // DxfViewer 생성 — clearColor 생략 시 기본 검정 배경 사용
+        // NOTE: clearColor는 dxf-viewer 내부 three.Color 인스턴스 필요 (앱의 three와 다른 버전)
         const viewer = new DxfViewer(container, {
-          clearColor: new THREE.Color('#f8f9fa'),
           autoResize: true,
           colorCorrection: true,
           blackWhiteInversion: true,
           antialias: true,
-          retainParsedDxf: false,
         })
         viewerRef.current = viewer
 
@@ -100,14 +106,34 @@ export default function CadPreview({
           })
         } catch (workerErr) {
           console.warn('[CadPreview] Worker 로드 실패, 메인스레드 fallback:', workerErr)
-          // Worker 없이 재시도 (메인 스레드 파싱)
           await viewer.Load({ url: blobUrl, progressCbk })
         }
 
         if (destroyed) return
 
+        // canvas 확인 및 강제 리사이즈
+        const canvas = container.querySelector('canvas')
+        console.log('[CadPreview] Load 완료, canvas:', canvas?.width, 'x', canvas?.height,
+          'container:', container.clientWidth, 'x', container.clientHeight)
+
+        // DxfViewer의 renderer를 강제 리사이즈 + 재렌더
+        const v = viewer as unknown as {
+          renderer?: { setSize: (w: number, h: number) => void; render: (s: unknown, c: unknown) => void }
+          scene?: unknown
+          camera?: unknown
+          Render?: () => void
+        }
+        if (v.renderer && container.clientWidth > 0) {
+          v.renderer.setSize(container.clientWidth, container.clientHeight)
+          if (v.scene && v.camera) {
+            v.renderer.render(v.scene, v.camera)
+          }
+        }
+
         // 레이어 추출
         const rawLayers = [...(viewer.GetLayers() as Iterable<{ name: string; color: number }>)]
+        console.log('[CadPreview] 레이어:', rawLayers.length, '개')
+
         const layerInfos: LayerInfo[] = rawLayers.map((l) => ({
           name: l.name,
           color: l.color,
@@ -125,6 +151,13 @@ export default function CadPreview({
 
         setLoading(false)
         setProgress('')
+
+        // 로딩 완료 후 한번 더 렌더 (React state 변경으로 로딩 오버레이 제거된 뒤)
+        requestAnimationFrame(() => {
+          if (v.renderer && v.scene && v.camera) {
+            v.renderer.render(v.scene, v.camera)
+          }
+        })
       } catch (err) {
         if (destroyed) return
         console.error('[CadPreview] Load 에러:', err)
@@ -318,14 +351,21 @@ export default function CadPreview({
         {/* WebGL 캔버스 영역 */}
         <div
           ref={containerRef}
-          style={{ flex: 1, position: 'relative', background: '#f8f9fa' }}
+          style={{
+            flex: 1,
+            position: 'relative',
+            background: '#000',
+            // canvas가 제대로 차지하도록 min dimensions 보장
+            minWidth: 0,
+            minHeight: 0,
+          }}
         >
           {/* 로딩 오버레이 */}
           {loading && (
             <div style={{
               position: 'absolute', inset: 0, display: 'flex',
               flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(30,34,40,0.85)', zIndex: 1,
+              background: 'rgba(30,34,40,0.85)', zIndex: 10,
             }}>
               <div style={{ color: '#fff', fontSize: 16, marginBottom: 8 }}>
                 도면 로딩 중...
@@ -338,7 +378,7 @@ export default function CadPreview({
             <div style={{
               position: 'absolute', inset: 0, display: 'flex',
               alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(30,34,40,0.95)', zIndex: 1,
+              background: 'rgba(30,34,40,0.95)', zIndex: 10,
             }}>
               <div style={{ color: '#f66', fontSize: 14, textAlign: 'center', padding: 24 }}>
                 {error}
