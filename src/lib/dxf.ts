@@ -1809,6 +1809,7 @@ export function commitCadImport(
   if (!rawSegs.length && saneSegs.length > 0) {
     // 스케일이 너무 작아서 모든 세그먼트가 1px 미만 → 0.1px 기준으로 재시도
     rawSegs = saneSegs.filter((s) => Math.hypot(s.dx, s.dy) >= 0.1)
+    if (!rawSegs.length) rawSegs = saneSegs.filter((s) => Math.hypot(s.dx, s.dy) > 1e-6)  // 0-length 제외
     if (!rawSegs.length) rawSegs = saneSegs // 그래도 없으면 전부 사용
     console.warn(`[CAD Commit] Scale too small: all ${saneSegs.length} segs < 1px, relaxed filter → ${rawSegs.length} segs`)
   }
@@ -2378,7 +2379,8 @@ export async function commitCadImportV2(
   let rawSegs = saneSegs.filter((s) => Math.hypot(s.dx, s.dy) >= 1)
   if (!rawSegs.length && saneSegs.length > 0) {
     rawSegs = saneSegs.filter((s) => Math.hypot(s.dx, s.dy) >= 0.1)
-    if (!rawSegs.length) rawSegs = saneSegs
+    if (!rawSegs.length) rawSegs = saneSegs.filter((s) => Math.hypot(s.dx, s.dy) > 1e-6)  // 0-length 제외
+    if (!rawSegs.length) rawSegs = saneSegs  // 최후 수단
   }
   console.log(`[CAD V2] 필터 후: ${rawSegs.length}개 (sanity: ${saneSegs.length}, 1px: ${rawSegs.length})`)
 

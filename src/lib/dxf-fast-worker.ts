@@ -357,6 +357,7 @@ function entityToPolyline(
       const cx = parseFloat(codes.get(10)?.[0] ?? '0')
       const cy = parseFloat(codes.get(20)?.[0] ?? '0')
       const r  = parseFloat(codes.get(40)?.[0] ?? '0')
+      if (r <= 0.01) break  // 극소 반지름 → 점 방지
       const sa = parseFloat(codes.get(50)?.[0] ?? '0') * Math.PI / 180
       const ea = parseFloat(codes.get(51)?.[0] ?? '360') * Math.PI / 180
       poly = interpEllipse(cx, cy, r, r, sa, ea)
@@ -368,6 +369,7 @@ function entityToPolyline(
       const cx = parseFloat(codes.get(10)?.[0] ?? '0')
       const cy = parseFloat(codes.get(20)?.[0] ?? '0')
       const r  = parseFloat(codes.get(40)?.[0] ?? '0')
+      if (r <= 0.01) break  // 극소 반지름 → 점 방지
       poly = interpEllipse(cx, cy, r, r, 0, Math.PI * 2)
       if (ez === -1) for (const p of poly) p[0] = -p[0]
       break
@@ -422,6 +424,10 @@ function entityToPolyline(
       const y2 = parseFloat(codes.get(22)?.[0] ?? '0')
       const x3 = parseFloat(codes.get(13)?.[0] ?? `${x2}`)
       const y3 = parseFloat(codes.get(23)?.[0] ?? `${y2}`)
+      // 축퇴된 SOLID/3DFACE 건너뛰기 (모든 꼭짓점이 같은 위치 → 점처럼 보임)
+      const dx01 = Math.abs(x0 - x1) + Math.abs(y0 - y1)
+      const dx02 = Math.abs(x0 - x2) + Math.abs(y0 - y2)
+      if (dx01 < 1e-6 && dx02 < 1e-6) break  // 모두 같은 점
       if (type === 'SOLID') {
         // SOLID vertex order is swapped: 0→1→3→2→close
         poly = [[x0, y0], [x1, y1], [x3, y3], [x2, y2], [x0, y0]]
@@ -749,15 +755,19 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
         const x2i = idxIn(dxfText, GC11, eStart, eEnd)
         const y2i = idxIn(dxfText, GC21, eStart, eEnd)
         if (x1i >= 0 && y1i >= 0 && x2i >= 0 && y2i >= 0) {
-          const c62 = idxIn(dxfText, GC62, eStart, eEnd)
-          output.push({
-            vertices: [
-              [floatAt(dxfText, x1i + GC10.length, eEnd), floatAt(dxfText, y1i + GC20.length, eEnd)],
-              [floatAt(dxfText, x2i + GC11.length, eEnd), floatAt(dxfText, y2i + GC21.length, eEnd)],
-            ],
-            layer: entityLayer,
-            colorNumber: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
-          })
+          const lx1 = floatAt(dxfText, x1i + GC10.length, eEnd)
+          const ly1 = floatAt(dxfText, y1i + GC20.length, eEnd)
+          const lx2 = floatAt(dxfText, x2i + GC11.length, eEnd)
+          const ly2 = floatAt(dxfText, y2i + GC21.length, eEnd)
+          // 길이 0인 LINE 건너뛰기 (점처럼 보임)
+          if (Math.abs(lx1 - lx2) > 1e-6 || Math.abs(ly1 - ly2) > 1e-6) {
+            const c62 = idxIn(dxfText, GC62, eStart, eEnd)
+            output.push({
+              vertices: [[lx1, ly1], [lx2, ly2]],
+              layer: entityLayer,
+              colorNumber: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
+            })
+          }
         }
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
@@ -771,20 +781,22 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
           const cx = floatAt(dxfText, cxi + GC10.length, eEnd)
           const cy = floatAt(dxfText, cyi + GC20.length, eEnd)
           const r  = floatAt(dxfText, ri + GC40.length, eEnd)
-          const sai = idxIn(dxfText, GC50, eStart, eEnd)
-          const eai = idxIn(dxfText, GC51, eStart, eEnd)
-          const sa = (sai >= 0 ? floatAt(dxfText, sai + GC50.length, eEnd) : 0) * Math.PI / 180
-          const ea = (eai >= 0 ? floatAt(dxfText, eai + GC51.length, eEnd) : 360) * Math.PI / 180
-          const poly = interpEllipse(cx, cy, r, r, sa, ea)
-          const ezi = idxIn(dxfText, GC230, eStart, eEnd)
-          if (ezi >= 0 && floatAt(dxfText, ezi + GC230.length, eEnd) === -1) {
-            for (const p of poly) p[0] = -p[0]
+          if (r > 0.01) {  // 극소 반지름 ARC 건너뛰기 (점처럼 보임)
+            const sai = idxIn(dxfText, GC50, eStart, eEnd)
+            const eai = idxIn(dxfText, GC51, eStart, eEnd)
+            const sa = (sai >= 0 ? floatAt(dxfText, sai + GC50.length, eEnd) : 0) * Math.PI / 180
+            const ea = (eai >= 0 ? floatAt(dxfText, eai + GC51.length, eEnd) : 360) * Math.PI / 180
+            const poly = interpEllipse(cx, cy, r, r, sa, ea)
+            const ezi = idxIn(dxfText, GC230, eStart, eEnd)
+            if (ezi >= 0 && floatAt(dxfText, ezi + GC230.length, eEnd) === -1) {
+              for (const p of poly) p[0] = -p[0]
+            }
+            const c62 = idxIn(dxfText, GC62, eStart, eEnd)
+            output.push({
+              vertices: poly, layer: entityLayer,
+              colorNumber: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
+            })
           }
-          const c62 = idxIn(dxfText, GC62, eStart, eEnd)
-          output.push({
-            vertices: poly, layer: entityLayer,
-            colorNumber: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
-          })
         }
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
@@ -798,16 +810,18 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
           const cx = floatAt(dxfText, cxi + GC10.length, eEnd)
           const cy = floatAt(dxfText, cyi + GC20.length, eEnd)
           const r  = floatAt(dxfText, ri + GC40.length, eEnd)
-          const poly = interpEllipse(cx, cy, r, r, 0, Math.PI * 2)
-          const ezi = idxIn(dxfText, GC230, eStart, eEnd)
-          if (ezi >= 0 && floatAt(dxfText, ezi + GC230.length, eEnd) === -1) {
-            for (const p of poly) p[0] = -p[0]
+          if (r > 0.01) {  // 극소 반지름 CIRCLE 건너뛰기 (점처럼 보임)
+            const poly = interpEllipse(cx, cy, r, r, 0, Math.PI * 2)
+            const ezi = idxIn(dxfText, GC230, eStart, eEnd)
+            if (ezi >= 0 && floatAt(dxfText, ezi + GC230.length, eEnd) === -1) {
+              for (const p of poly) p[0] = -p[0]
+            }
+            const c62 = idxIn(dxfText, GC62, eStart, eEnd)
+            output.push({
+              vertices: poly, layer: entityLayer,
+              colorNumber: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
+            })
           }
-          const c62 = idxIn(dxfText, GC62, eStart, eEnd)
-          output.push({
-            vertices: poly, layer: entityLayer,
-            colorNumber: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
-          })
         }
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
