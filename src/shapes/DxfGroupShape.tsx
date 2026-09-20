@@ -436,9 +436,6 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
   } catch { /* ignore */ }
 
   // HATCH SVG 패턴 defs + fill 준비
-  if (hatches.length > 0) {
-    console.log('[HATCH PATTERNS]', hatches.map((h, i) => `#${i}: pattern="${h.p}" scale=${h.s} angle=${h.a} color=${h.c}`).join(' | '))
-  }
   const hatchDefs: Array<{ id: string; def: React.ReactElement | null; isSolid: boolean; color: string }> = hatches.map((h, i) => {
     const hColor = grayscale
       ? (darkMode ? '#aaa' : '#666')

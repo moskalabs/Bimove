@@ -794,16 +794,24 @@ function collectSegmentsWithBlocks(
   if (depth > 8 || maxSegments <= 0) return []
 
   const allSegs: DxfSeg[] = []
+  const insertEntities: Array<Record<string, unknown>> = []
 
-  // 1. INSERT가 아닌 엔티티는 직접 파싱
-  const directEntities = entities.filter(e => e.type !== 'INSERT')
+  // 1회 순회: INSERT/DIMENSION은 따로 모으고, 나머지는 바로 파싱
+  const directEntities: Array<Record<string, unknown>> = []
+  for (const e of entities) {
+    if (e.type === 'INSERT' || e.type === 'DIMENSION') {
+      insertEntities.push(e)
+    } else {
+      directEntities.push(e)
+    }
+  }
   if (directEntities.length > 0) {
     const directSegs = parseDxfSegments(directEntities, layerDefs, maxSegments)
     allSegs.push(...directSegs)
   }
 
-  // 2. INSERT / DIMENSION 엔티티 → 블록 내용을 재귀 확장
-  for (const e of entities) {
+  // INSERT / DIMENSION 엔티티 → 블록 내용을 재귀 확장
+  for (const e of insertEntities) {
     if (allSegs.length >= maxSegments) break
 
     let blockName: string | undefined
@@ -818,12 +826,10 @@ function collectSegmentsWithBlocks(
       xs = (e.xScale as number) ?? 1
       ys = (e.yScale as number) ?? 1
       insertLayer = (e.layer as string) || undefined
-    } else if (e.type === 'DIMENSION') {
+    } else {
       // DIMENSION은 *D0, *D1 등 익명 블록에 시각 정보가 들어있음
       blockName = (e.block as string) || (e.blockName as string)
       insertLayer = (e.layer as string) || undefined
-    } else {
-      continue
     }
 
     if (!blockName || SKIP_BLOCK_NAMES.has(blockName)) continue
