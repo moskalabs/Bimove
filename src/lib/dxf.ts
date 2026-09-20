@@ -361,6 +361,39 @@ export type DxfHatch = {
   cx: number; cy: number // 중심점 (클러스터 할당용)
 }
 
+/** De Boor 알고리즘: B-spline 곡선 위의 점 평가 */
+function evalBSpline(
+  t: number, degree: number,
+  ctrlPts: Array<{ x: number; y: number }>,
+  knots: number[],
+): { x: number; y: number } {
+  const n = ctrlPts.length
+  // knot span 찾기
+  let k = degree
+  while (k < n - 1 && knots[k + 1] !== undefined && knots[k + 1] <= t) k++
+
+  // De Boor 재귀
+  const d: Array<{ x: number; y: number }> = []
+  for (let j = 0; j <= degree; j++) {
+    const idx = Math.max(0, Math.min(k - degree + j, n - 1))
+    d.push({ x: ctrlPts[idx].x, y: ctrlPts[idx].y })
+  }
+  for (let r = 1; r <= degree; r++) {
+    for (let j = degree; j >= r; j--) {
+      const ki = k - degree + j
+      const left = knots[ki] ?? 0
+      const right = knots[ki + degree - r + 1] ?? 1
+      const denom = right - left
+      const alpha = denom > 1e-10 ? (t - left) / denom : 0
+      d[j] = {
+        x: (1 - alpha) * d[j - 1].x + alpha * d[j].x,
+        y: (1 - alpha) * d[j - 1].y + alpha * d[j].y,
+      }
+    }
+  }
+  return d[degree]
+}
+
 export function parseDxfSegments(
   entities: Array<Record<string, unknown>>,
   layerDefs: Record<string, { lineweight?: number; colorIndex?: number; color?: number }>,
@@ -468,6 +501,37 @@ export function parseDxfSegments(
             layer, lineweight, color,
           })
         }
+      }
+    } else if (e.type === 'SPLINE') {
+      // SPLINE: fitPoints(곡선 위 점) 또는 controlPoints+knots(B-spline) → 선분 근사
+      const fitPts = e.fitPoints as Array<{ x: number; y: number }> | undefined
+      const ctrlPts = e.controlPoints as Array<{ x: number; y: number }> | undefined
+      const knots = e.knots as number[] | undefined
+      const degree = (e.degreeOfSplineCurve as number) ?? 3
+
+      let pts: Array<{ x: number; y: number }> = []
+
+      if (fitPts && fitPts.length >= 2) {
+        // fit points는 곡선 위에 있으므로 직접 사용
+        pts = fitPts
+      } else if (ctrlPts && ctrlPts.length >= 2 && knots && knots.length >= ctrlPts.length + degree + 1) {
+        // B-spline: De Boor 알고리즘으로 평가
+        const N = Math.max(ctrlPts.length * 4, 20)
+        const tMin = knots[degree]
+        const tMax = knots[ctrlPts.length]
+        if (tMax > tMin) {
+          for (let si = 0; si <= N; si++) {
+            const t = tMin + (tMax - tMin) * si / N
+            pts.push(evalBSpline(t, degree, ctrlPts, knots))
+          }
+        }
+      } else if (ctrlPts && ctrlPts.length >= 2) {
+        // knot 없으면 control point 직접 연결
+        pts = ctrlPts
+      }
+
+      for (let pi = 0; pi < pts.length - 1 && segs.length < maxSegments; pi++) {
+        segs.push({ x1: pts[pi].x, y1: pts[pi].y, x2: pts[pi + 1].x, y2: pts[pi + 1].y, layer, lineweight, color })
       }
     } else if (e.type === 'SOLID' || e.type === '3DFACE') {
       // SOLID/3DFACE: 3-4 corner polygon outline
@@ -738,26 +802,38 @@ function collectSegmentsWithBlocks(
     allSegs.push(...directSegs)
   }
 
-  // 2. INSERT 엔티티 → 블록 내용을 재귀 확장
+  // 2. INSERT / DIMENSION 엔티티 → 블록 내용을 재귀 확장
   for (const e of entities) {
     if (allSegs.length >= maxSegments) break
-    if (e.type !== 'INSERT') continue
 
-    const blockName = e.name as string
+    let blockName: string | undefined
+    let pos: { x: number; y: number } | undefined
+    let rot = 0, xs = 1, ys = 1
+    let insertLayer: string | undefined
+
+    if (e.type === 'INSERT') {
+      blockName = e.name as string
+      pos = e.position as { x: number; y: number } | undefined
+      rot = ((e.rotation as number) ?? 0) * Math.PI / 180
+      xs = (e.xScale as number) ?? 1
+      ys = (e.yScale as number) ?? 1
+      insertLayer = (e.layer as string) || undefined
+    } else if (e.type === 'DIMENSION') {
+      // DIMENSION은 *D0, *D1 등 익명 블록에 시각 정보가 들어있음
+      blockName = (e.block as string) || (e.blockName as string)
+      insertLayer = (e.layer as string) || undefined
+    } else {
+      continue
+    }
+
     if (!blockName || SKIP_BLOCK_NAMES.has(blockName)) continue
     const block = blocks[blockName]
     if (!block?.entities?.length) continue
 
-    // INSERT 변환 파라미터
-    const pos = e.position as { x: number; y: number } | undefined
     const bpos = block.position
-    const rot = ((e.rotation as number) ?? 0) * Math.PI / 180
-    const xs = (e.xScale as number) ?? 1
-    const ys = (e.yScale as number) ?? 1
     const cos = Math.cos(rot), sin = Math.sin(rot)
     const tx = pos?.x ?? 0, ty = pos?.y ?? 0
     const bx = bpos?.x ?? 0, by = bpos?.y ?? 0
-    const insertLayer = (e.layer as string) || undefined
 
     // 블록 내 세그먼트 재귀 수집 (블록 로컬 좌표)
     const blockSegs = collectSegmentsWithBlocks(
@@ -767,7 +843,6 @@ function collectSegmentsWithBlocks(
 
     // 블록 로컬 → 부모 좌표계 변환
     for (const s of blockSegs) {
-      // 블록 기준점 빼고, 스케일, 회전, 이동
       const px1 = (s.x1 - bx) * xs, py1 = (s.y1 - by) * ys
       const px2 = (s.x2 - bx) * xs, py2 = (s.y2 - by) * ys
       s.x1 = px1 * cos - py1 * sin + tx
@@ -775,7 +850,6 @@ function collectSegmentsWithBlocks(
       s.x2 = px2 * cos - py2 * sin + tx
       s.y2 = px2 * sin + py2 * cos + ty
 
-      // 레이어 "0"이면 INSERT의 레이어 상속
       if ((!s.layer || s.layer === '0') && insertLayer) s.layer = insertLayer
     }
 
@@ -846,15 +920,18 @@ function collectTextsWithBlocks(
         rotation: (e.rotation as number) || undefined,
         layer, color: resolveColor(),
       })
-    } else if (e.type === 'INSERT') {
-      const blockName = e.name as string
+    } else if (e.type === 'INSERT' || e.type === 'DIMENSION') {
+      // INSERT: 블록 참조, DIMENSION: 치수선 (익명 블록 *D0, *D1 등에 시각 정보)
+      const blockName = e.type === 'INSERT'
+        ? (e.name as string)
+        : ((e.block as string) || (e.blockName as string))
       if (!blockName || SKIP_BLOCK_NAMES.has(blockName)) continue
       const block = blocks[blockName]
       if (!block?.entities?.length) continue
 
-      const pos = e.position as { x: number; y: number } | undefined
+      const pos = e.type === 'INSERT' ? (e.position as { x: number; y: number } | undefined) : undefined
       const bpos = block.position
-      const rot = ((e.rotation as number) ?? 0) * Math.PI / 180
+      const rot = e.type === 'INSERT' ? (((e.rotation as number) ?? 0) * Math.PI / 180) : 0
       const xs = (e.xScale as number) ?? 1
       const ys = (e.yScale as number) ?? 1
       const cos = Math.cos(rot), sin = Math.sin(rot)
@@ -876,6 +953,27 @@ function collectTextsWithBlocks(
         if ((!t.layer || t.layer === '0') && insertLayer) t.layer = insertLayer
       }
       allTexts.push(...blockTexts)
+
+      // INSERT의 ATTRIB (블록 속성 텍스트) 수집
+      if (e.type === 'INSERT') {
+        const attribs = e.attributes as Array<Record<string, unknown>> | undefined
+        if (attribs) {
+          for (const attr of attribs) {
+            const attrPos = (attr.startPoint ?? attr.position ?? attr.textPosition) as { x: number; y: number } | undefined
+            const attrText = decodeDxfSpecialChars(((attr.text ?? attr.textString) as string)?.trim() ?? '')
+            if (!attrPos || !attrText) continue
+            allTexts.push({
+              x: attrPos.x, y: attrPos.y, text: attrText,
+              height: (attr.textHeight as number) ?? 2.5,
+              rotation: (attr.rotation as number) || undefined,
+              layer: (attr.layer as string) || insertLayer,
+              color: typeof attr.colorIndex === 'number' && attr.colorIndex > 0
+                ? aciToHex(attr.colorIndex)
+                : undefined,
+            })
+          }
+        }
+      }
     }
   }
   return allTexts
@@ -1209,8 +1307,60 @@ function parseRawHatches(
               if (s === 0) started = true
             }
             sumX += cx; sumY += cy; ptCount++
+          } else if (edgeType === 4) {
+            // Spline edge: degree(94), rational(73), periodic(74), numKnots(95), numCtrl(96)
+            let spDegree = 3, numKnots = 0, numCtrl = 0
+            while (i < pairs.length && pairs[i].code !== 72 && pairs[i].code !== 92 && pairs[i].code !== 0) {
+              const c = pairs[i].code
+              if (c === 94) spDegree = parseInt(pairs[i].value) || 3
+              else if (c === 95) numKnots = parseInt(pairs[i].value) || 0
+              else if (c === 96) { numCtrl = parseInt(pairs[i].value) || 0; i++; break }
+              else if (c === 97) break
+              i++
+            }
+            // knots (group code 40)
+            const spKnots: number[] = []
+            for (let kk = 0; kk < numKnots && i < pairs.length; kk++) {
+              if (pairs[i].code === 40) { spKnots.push(parseFloat(pairs[i].value) || 0); i++ }
+            }
+            // control points (group codes 10/20)
+            const spCtrl: Array<{ x: number; y: number }> = []
+            for (let cp = 0; cp < numCtrl && i < pairs.length; ) {
+              if (pairs[i].code === 10) {
+                const cx2 = parseFloat(pairs[i].value) || 0; i++
+                const cy2 = (i < pairs.length && pairs[i].code === 20) ? (parseFloat(pairs[i++].value) || 0) : 0
+                spCtrl.push({ x: cx2, y: cy2 }); cp++
+              } else if (pairs[i].code === 72 || pairs[i].code === 92 || pairs[i].code === 0 || pairs[i].code === 97) {
+                break
+              } else { i++ }
+            }
+            // fit points (42 group codes) - skip
+            while (i < pairs.length && pairs[i].code === 42) i++
+            while (i < pairs.length && (pairs[i].code === 11 || pairs[i].code === 21)) i++
+
+            // B-spline 평가 → SVG path
+            if (spCtrl.length >= 2 && spKnots.length >= spCtrl.length + spDegree + 1) {
+              const N = Math.max(spCtrl.length * 4, 16)
+              const tMin = spKnots[spDegree], tMax = spKnots[spCtrl.length]
+              if (tMax > tMin) {
+                for (let s = 0; s <= N; s++) {
+                  const t = tMin + (tMax - tMin) * s / N
+                  const pt = evalBSpline(t, spDegree, spCtrl, spKnots)
+                  edgeParts.push(s === 0 && !started ? `M${pt.x},${pt.y}` : `L${pt.x},${pt.y}`)
+                  if (s === 0) started = true
+                  sumX += pt.x; sumY += pt.y; ptCount++
+                }
+              }
+            } else if (spCtrl.length >= 2) {
+              // knot 부족 → control point 직접 연결
+              for (let s = 0; s < spCtrl.length; s++) {
+                edgeParts.push(s === 0 && !started ? `M${spCtrl[s].x},${spCtrl[s].y}` : `L${spCtrl[s].x},${spCtrl[s].y}`)
+                if (s === 0) started = true
+                sumX += spCtrl[s].x; sumY += spCtrl[s].y; ptCount++
+              }
+            }
           } else {
-            // Spline(4) or unknown - skip until next edge/boundary
+            // Unknown edge type - skip until next edge/boundary
             while (i < pairs.length && pairs[i].code !== 72 && pairs[i].code !== 92 && pairs[i].code !== 0) {
               if (pairs[i].code === 97) break
               i++
