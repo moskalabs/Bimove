@@ -49,8 +49,13 @@ type DxfHatchEntry = { d: string; p: string; s: number; a: number; c?: string }
 /** DXF 패턴명 → SVG pattern 생성 */
 function dxfHatchPatternDef(
   id: string, patternName: string, scale: number, angle: number, color: string,
+  shapeMaxDim?: number,
 ): React.ReactElement | null {
-  const sz = Math.max(4, 8 * scale) // 패턴 셀 크기
+  // shape 크기에 비례해서 패턴 셀 크기 결정 (약 40~60회 반복 목표)
+  const dim = shapeMaxDim ?? 400
+  const baseSz = Math.max(8, dim / 50)
+  const sz = baseSz * Math.max(0.5, scale) // 패턴 셀 크기
+  const sw = Math.max(0.5, sz * 0.06) // 선 두께도 비례
   const upper = patternName.toUpperCase()
 
   // SOLID: 패턴 없이 단색 fill
@@ -64,7 +69,7 @@ function dxfHatchPatternDef(
     return (
       <pattern id={id} width={gap} height={gap} patternUnits="userSpaceOnUse"
         patternTransform={rotate ?? 'rotate(45)'}>
-        <line x1={0} y1={0} x2={gap} y2={0} stroke={color} strokeWidth={0.6} opacity={0.7} />
+        <line x1={0} y1={0} x2={gap} y2={0} stroke={color} strokeWidth={sw} opacity={0.7} />
       </pattern>
     )
   }
@@ -74,7 +79,7 @@ function dxfHatchPatternDef(
     return (
       <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
         patternTransform={rotate ?? 'rotate(-45)'}>
-        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={0.6} opacity={0.7} />
+        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw} opacity={0.7} />
       </pattern>
     )
   }
@@ -82,26 +87,27 @@ function dxfHatchPatternDef(
   if (upper.startsWith('AR-CONC') || upper === 'CONCRETE') {
     // 콘크리트 점 패턴
     const d = sz * 1.5
+    const r1 = Math.max(0.5, sz * 0.1)
     return (
       <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <circle cx={d * 0.2} cy={d * 0.2} r={1} fill={color} opacity={0.55} />
-        <circle cx={d * 0.7} cy={d * 0.6} r={0.7} fill={color} opacity={0.45} />
-        <circle cx={d * 0.4} cy={d * 0.9} r={0.5} fill={color} opacity={0.4} />
+        <circle cx={d * 0.2} cy={d * 0.2} r={r1} fill={color} opacity={0.55} />
+        <circle cx={d * 0.7} cy={d * 0.6} r={r1 * 0.7} fill={color} opacity={0.45} />
+        <circle cx={d * 0.4} cy={d * 0.9} r={r1 * 0.5} fill={color} opacity={0.4} />
       </pattern>
     )
   }
 
   if (upper.startsWith('AR-BRST') || upper === 'BRICK') {
     // 벽돌 패턴
-    const w = sz * 1.75, h2 = sz
+    const bw = sz * 1.75, bh = sz
     return (
-      <pattern id={id} width={w} height={h2} patternUnits="userSpaceOnUse"
+      <pattern id={id} width={bw} height={bh} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={0} x2={w} y2={0} stroke={color} strokeWidth={0.6} opacity={0.6} />
-        <line x1={0} y1={h2 / 2} x2={w} y2={h2 / 2} stroke={color} strokeWidth={0.6} opacity={0.6} />
-        <line x1={w / 2} y1={0} x2={w / 2} y2={h2 / 2} stroke={color} strokeWidth={0.6} opacity={0.6} />
-        <line x1={0} y1={h2 / 2} x2={0} y2={h2} stroke={color} strokeWidth={0.6} opacity={0.6} />
+        <line x1={0} y1={0} x2={bw} y2={0} stroke={color} strokeWidth={sw} opacity={0.6} />
+        <line x1={0} y1={bh / 2} x2={bw} y2={bh / 2} stroke={color} strokeWidth={sw} opacity={0.6} />
+        <line x1={bw / 2} y1={0} x2={bw / 2} y2={bh / 2} stroke={color} strokeWidth={sw} opacity={0.6} />
+        <line x1={0} y1={bh / 2} x2={0} y2={bh} stroke={color} strokeWidth={sw} opacity={0.6} />
       </pattern>
     )
   }
@@ -111,7 +117,7 @@ function dxfHatchPatternDef(
     return (
       <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={0.5} opacity={0.6} />
+        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw} opacity={0.6} />
       </pattern>
     )
   }
@@ -121,8 +127,8 @@ function dxfHatchPatternDef(
     return (
       <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={0.5} opacity={0.6} />
-        <line x1={0} y1={0} x2={0} y2={sz} stroke={color} strokeWidth={0.5} opacity={0.6} />
+        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw} opacity={0.6} />
+        <line x1={0} y1={0} x2={0} y2={sz} stroke={color} strokeWidth={sw} opacity={0.6} />
       </pattern>
     )
   }
@@ -130,12 +136,13 @@ function dxfHatchPatternDef(
   if (upper === 'DOTS' || upper === 'DOT') {
     // 점 패턴 (불규칙 점)
     const d = sz * 1.2
+    const r1 = Math.max(0.5, sz * 0.08)
     return (
       <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <circle cx={d * 0.2} cy={d * 0.2} r={0.8} fill={color} opacity={0.6} />
-        <circle cx={d * 0.7} cy={d * 0.6} r={0.6} fill={color} opacity={0.5} />
-        <circle cx={d * 0.4} cy={d * 0.85} r={0.7} fill={color} opacity={0.55} />
+        <circle cx={d * 0.2} cy={d * 0.2} r={r1} fill={color} opacity={0.6} />
+        <circle cx={d * 0.7} cy={d * 0.6} r={r1 * 0.75} fill={color} opacity={0.5} />
+        <circle cx={d * 0.4} cy={d * 0.85} r={r1 * 0.85} fill={color} opacity={0.55} />
       </pattern>
     )
   }
@@ -143,17 +150,18 @@ function dxfHatchPatternDef(
   if (upper.startsWith('AR-SAND') || upper === 'SAND') {
     // 모래/샌드 패턴 (밀집 점)
     const d = sz * 0.9
+    const r1 = Math.max(0.3, sz * 0.05)
     return (
       <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <circle cx={d * 0.15} cy={d * 0.15} r={0.5} fill={color} opacity={0.5} />
-        <circle cx={d * 0.55} cy={d * 0.1} r={0.4} fill={color} opacity={0.4} />
-        <circle cx={d * 0.85} cy={d * 0.35} r={0.5} fill={color} opacity={0.45} />
-        <circle cx={d * 0.3} cy={d * 0.5} r={0.4} fill={color} opacity={0.4} />
-        <circle cx={d * 0.7} cy={d * 0.65} r={0.5} fill={color} opacity={0.5} />
-        <circle cx={d * 0.1} cy={d * 0.8} r={0.4} fill={color} opacity={0.35} />
-        <circle cx={d * 0.5} cy={d * 0.9} r={0.45} fill={color} opacity={0.45} />
-        <circle cx={d * 0.9} cy={d * 0.85} r={0.4} fill={color} opacity={0.4} />
+        <circle cx={d * 0.15} cy={d * 0.15} r={r1} fill={color} opacity={0.5} />
+        <circle cx={d * 0.55} cy={d * 0.1} r={r1 * 0.8} fill={color} opacity={0.4} />
+        <circle cx={d * 0.85} cy={d * 0.35} r={r1} fill={color} opacity={0.45} />
+        <circle cx={d * 0.3} cy={d * 0.5} r={r1 * 0.8} fill={color} opacity={0.4} />
+        <circle cx={d * 0.7} cy={d * 0.65} r={r1} fill={color} opacity={0.5} />
+        <circle cx={d * 0.1} cy={d * 0.8} r={r1 * 0.8} fill={color} opacity={0.35} />
+        <circle cx={d * 0.5} cy={d * 0.9} r={r1 * 0.9} fill={color} opacity={0.45} />
+        <circle cx={d * 0.9} cy={d * 0.85} r={r1 * 0.8} fill={color} opacity={0.4} />
       </pattern>
     )
   }
@@ -164,11 +172,11 @@ function dxfHatchPatternDef(
     return (
       <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={d * 0.2} x2={d * 0.45} y2={d * 0.2} stroke={color} strokeWidth={0.5} opacity={0.6} />
-        <line x1={d * 0.55} y1={d * 0.2} x2={d} y2={d * 0.2} stroke={color} strokeWidth={0.4} opacity={0.5} />
-        <line x1={d * 0.2} y1={d * 0.5} x2={d * 0.8} y2={d * 0.5} stroke={color} strokeWidth={0.5} opacity={0.55} />
-        <line x1={0} y1={d * 0.8} x2={d * 0.35} y2={d * 0.8} stroke={color} strokeWidth={0.4} opacity={0.5} />
-        <line x1={d * 0.5} y1={d * 0.8} x2={d} y2={d * 0.8} stroke={color} strokeWidth={0.5} opacity={0.6} />
+        <line x1={0} y1={d * 0.2} x2={d * 0.45} y2={d * 0.2} stroke={color} strokeWidth={sw} opacity={0.6} />
+        <line x1={d * 0.55} y1={d * 0.2} x2={d} y2={d * 0.2} stroke={color} strokeWidth={sw * 0.8} opacity={0.5} />
+        <line x1={d * 0.2} y1={d * 0.5} x2={d * 0.8} y2={d * 0.5} stroke={color} strokeWidth={sw} opacity={0.55} />
+        <line x1={0} y1={d * 0.8} x2={d * 0.35} y2={d * 0.8} stroke={color} strokeWidth={sw * 0.8} opacity={0.5} />
+        <line x1={d * 0.5} y1={d * 0.8} x2={d} y2={d * 0.8} stroke={color} strokeWidth={sw} opacity={0.6} />
       </pattern>
     )
   }
@@ -178,9 +186,9 @@ function dxfHatchPatternDef(
     return (
       <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={0.4} opacity={0.5} />
-        <line x1={0} y1={0} x2={sz * 0.5} y2={sz} stroke={color} strokeWidth={0.4} opacity={0.5} />
-        <line x1={sz} y1={0} x2={sz * 0.5} y2={sz} stroke={color} strokeWidth={0.4} opacity={0.5} />
+        <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw * 0.8} opacity={0.5} />
+        <line x1={0} y1={0} x2={sz * 0.5} y2={sz} stroke={color} strokeWidth={sw * 0.8} opacity={0.5} />
+        <line x1={sz} y1={0} x2={sz * 0.5} y2={sz} stroke={color} strokeWidth={sw * 0.8} opacity={0.5} />
       </pattern>
     )
   }
@@ -191,8 +199,8 @@ function dxfHatchPatternDef(
     return (
       <pattern id={id} width={g} height={g} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
-        <line x1={0} y1={0} x2={g} y2={0} stroke={color} strokeWidth={0.6} opacity={0.6} />
-        <line x1={0} y1={0} x2={0} y2={g} stroke={color} strokeWidth={0.6} opacity={0.6} />
+        <line x1={0} y1={0} x2={g} y2={0} stroke={color} strokeWidth={sw} opacity={0.6} />
+        <line x1={0} y1={0} x2={0} y2={g} stroke={color} strokeWidth={sw} opacity={0.6} />
       </pattern>
     )
   }
@@ -204,13 +212,13 @@ function dxfHatchPatternDef(
       <pattern id={id} width={d} height={d} patternUnits="userSpaceOnUse"
         patternTransform={rotate}>
         <path d={`M0,${d * 0.15} Q${d * 0.25},${d * 0.1} ${d * 0.5},${d * 0.18} T${d},${d * 0.15}`}
-          stroke={color} fill="none" strokeWidth={0.5} opacity={0.55} />
+          stroke={color} fill="none" strokeWidth={sw} opacity={0.55} />
         <path d={`M0,${d * 0.4} Q${d * 0.3},${d * 0.35} ${d * 0.6},${d * 0.42} T${d},${d * 0.38}`}
-          stroke={color} fill="none" strokeWidth={0.4} opacity={0.45} />
+          stroke={color} fill="none" strokeWidth={sw * 0.8} opacity={0.45} />
         <path d={`M0,${d * 0.62} Q${d * 0.2},${d * 0.58} ${d * 0.45},${d * 0.65} T${d},${d * 0.6}`}
-          stroke={color} fill="none" strokeWidth={0.5} opacity={0.5} />
+          stroke={color} fill="none" strokeWidth={sw} opacity={0.5} />
         <path d={`M0,${d * 0.85} Q${d * 0.35},${d * 0.82} ${d * 0.55},${d * 0.88} T${d},${d * 0.84}`}
-          stroke={color} fill="none" strokeWidth={0.4} opacity={0.45} />
+          stroke={color} fill="none" strokeWidth={sw * 0.8} opacity={0.45} />
       </pattern>
     )
   }
@@ -219,7 +227,7 @@ function dxfHatchPatternDef(
   return (
     <pattern id={id} width={sz} height={sz} patternUnits="userSpaceOnUse"
       patternTransform={rotate ?? 'rotate(45)'}>
-      <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={0.5} opacity={0.5} />
+      <line x1={0} y1={0} x2={sz} y2={0} stroke={color} strokeWidth={sw} opacity={0.5} />
     </pattern>
   )
 }
@@ -308,7 +316,7 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
     const isSolid = h.p.toUpperCase() === 'SOLID'
     return {
       id: patId,
-      def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor),
+      def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor, Math.max(shape.props.w, shape.props.h)),
       isSolid,
       color: hColor,
     }
@@ -469,7 +477,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
       const hColor = h.c && !isNearWhite(h.c) ? h.c : '#666'
       const patId = `hatch-svg-${shape.id}-${i}`
       const isSolid = h.p.toUpperCase() === 'SOLID'
-      return { id: patId, def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor), isSolid, color: hColor }
+      return { id: patId, def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor, Math.max(shape.props.w, shape.props.h)), isSolid, color: hColor }
     })
 
     return (

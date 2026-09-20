@@ -1374,17 +1374,6 @@ export async function parseCadFile(
   )
   // dxf-parser는 HATCH를 파싱하지 않으므로 raw text에서 직접 추출
   const hatches = parseRawHatches(text, layerDefs)
-  // DEBUG: HATCH 파싱 결과 확인
-  if (hatches.length > 0) {
-    const patternCounts: Record<string, number> = {}
-    for (const h of hatches) {
-      patternCounts[h.patternName] = (patternCounts[h.patternName] || 0) + 1
-    }
-    console.log('[HATCH DEBUG] Total:', hatches.length, 'Patterns:', patternCounts)
-    console.log('[HATCH DEBUG] Sample:', hatches.slice(0, 5).map(h => ({ p: h.patternName, s: h.patternScale, a: h.patternAngle, c: h.color, layer: h.layer })))
-  } else {
-    console.log('[HATCH DEBUG] No hatches found in DXF text. Text length:', text.length)
-  }
   if (!segs.length && !texts.length) {
     notify?.onError?.('DXF에서 도형 데이터를 찾지 못했습니다.')
     return null
@@ -1655,7 +1644,6 @@ export function commitCadImport(
   const pxHatches: PxHatch[] = (result._hatches ?? [])
     .filter(h => selectedLayers.has(h.layer || '0'))
     .map(h => {
-      console.log('[HATCH ASSIGN]', h.patternName, 'layer:', h.layer, 'color:', h.color, 'scale:', h.patternScale)
       // SVG path 좌표 변환: scale + Y flip
       const transformedPath = h.pathData.replace(
         /([ML])([\d.e+-]+),([\d.e+-]+)/g,
@@ -1787,14 +1775,6 @@ export function commitCadImport(
           },
         })
       }
-    }
-
-    // DEBUG: 미배정 HATCH 확인
-    const orphanHatchCount = pxHatches.filter((_, idx) => !assignedHatchIdx.has(idx)).length
-    console.log('[HATCH CLUSTER]', `Assigned: ${assignedHatchIdx.size}/${pxHatches.length}, Orphans: ${orphanHatchCount}`)
-    if (orphanHatchCount > 0) {
-      const orphans = pxHatches.filter((_, idx) => !assignedHatchIdx.has(idx))
-      console.log('[HATCH ORPHANS]', orphans.map(h => ({ p: h.patternName, layer: h.layer, cx: h.cx.toFixed(0), cy: h.cy.toFixed(0) })))
     }
 
     // 미배정 텍스트 → 레이어별 텍스트 전용 shape 생성
