@@ -211,24 +211,37 @@ function extractLayersLightweight(dxfText: string): LayerInfo[] {
   }
 
   // --- 2. ENTITIES 섹션에서 레이어별 엔티티 수 ---
-  // DXF 그룹코드 패턴: "줄바꿈 + 그룹코드(정수) + 줄바꿈 + 값"
-  // 엔티티 시작은 항상 "0\n엔티티타입". 그 뒤에 "8\n레이어명"이 나옴.
-  // 엔티티 단위로 끊어서 첫 번째 그룹코드 8만 레이어로 인식.
+  // indexOf 기반 스캐닝: split 없이 직접 \n0\n 경계를 따라가며 \n8\n 탐색
+  // 600K 엔티티 기준 메모리 ~500MB 절약 (substring + split 배열 제거)
   const layerCounts = new Map<string, number>()
-  const entStart = dxfText.indexOf('\n0\nSECTION\n2\nENTITIES\n')
+  const entHdr = '\n0\nSECTION\n2\nENTITIES\n'
+  const entStart = dxfText.indexOf(entHdr)
   const entEnd = dxfText.indexOf('\n0\nENDSEC', entStart > 0 ? entStart + 20 : 0)
   if (entStart > 0 && entEnd > entStart) {
-    const entText = dxfText.substring(entStart, entEnd)
-    // 엔티티 경계: "\n0\n" 으로 split
-    const entities = entText.split('\n0\n')
-    for (let i = 1; i < entities.length; i++) {
-      const ent = entities[i]
-      // 각 엔티티에서 첫 번째 그룹코드 8 찾기
-      const layerMatch = ent.match(/\n8\n([^\n]+)/)
-      if (layerMatch) {
-        const name = layerMatch[1].trim()
+    const sep = '\n0\n'
+    const bodyStart = entStart + entHdr.length  // after ENTITIES header
+    // First \n0\n boundary is at bodyStart-1
+    let sepPos = bodyStart - 1
+
+    while (true) {
+      const si = dxfText.indexOf(sep, sepPos)
+      if (si < 0 || si >= entEnd) break
+
+      const eStart = si + 3  // entity content start
+      const nextSi = dxfText.indexOf(sep, eStart)
+      const eEnd = (nextSi >= 0 && nextSi < entEnd) ? nextSi : entEnd
+
+      // Find \n8\n (layer group code) within this entity — no regex
+      const l8 = dxfText.indexOf('\n8\n', eStart)
+      if (l8 >= 0 && l8 < eEnd) {
+        const nameStart = l8 + 3
+        const nameNl = dxfText.indexOf('\n', nameStart)
+        const name = dxfText.substring(nameStart, (nameNl >= 0 && nameNl <= eEnd) ? nameNl : eEnd).trim()
         layerCounts.set(name, (layerCounts.get(name) || 0) + 1)
       }
+
+      if (nextSi < 0 || nextSi >= entEnd) break
+      sepPos = nextSi
     }
   }
 

@@ -186,6 +186,26 @@ function applyTransform(poly: number[][], t: Transform): void {
   }
 }
 
+// ===== indexOf-based helpers (zero-alloc scanning) =====
+
+/** Find needle in text within [start, end). Returns -1 if not found. */
+function idxIn(text: string, needle: string, start: number, end: number): number {
+  const i = text.indexOf(needle, start)
+  return (i >= 0 && i < end) ? i : -1
+}
+
+/** Extract value string: from `start` to next newline (or `end`). Trims. */
+function valAt(text: string, start: number, end: number): string {
+  const nl = text.indexOf('\n', start)
+  return text.substring(start, (nl >= 0 && nl <= end) ? nl : end).trim()
+}
+
+/** Parse float from text starting at `start` to next newline. */
+function floatAt(text: string, start: number, end: number): number {
+  const nl = text.indexOf('\n', start)
+  return parseFloat(text.substring(start, (nl >= 0 && nl <= end) ? nl : end))
+}
+
 // ===== DXF Parsing =====
 
 /** Extract a named section's inner text */
@@ -475,12 +495,15 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   const entEnd = dxfText.indexOf('\n0\nENDSEC', entStart)
   if (entEnd <= entStart) return { polylines: [], insUnits }
 
-  const entText = dxfText.substring(entStart, entEnd)
-  const chunks = entText.split('\n0\n')
-  const totalChunks = chunks.length
-  console.log(`[fast-worker] ${totalChunks}개 엔티티 청크 (${(performance.now() - t0).toFixed(0)}ms)`)
+  // 4. indexOf-based entity scanning — no substring/split of entire ENTITIES section
+  //    Peak memory: O(selected entities) instead of O(all entities)
+  const SEP = '\n0\n'
 
-  // 4. Process entities — only selected layers
+  // Quick pre-count for progress reporting
+  let totalEntities = 0
+  { let p = entStart - 1; while (true) { p = dxfText.indexOf(SEP, p); if (p < 0 || p >= entEnd) break; totalEntities++; p += 3 } }
+  console.log(`[fast-worker] ${totalEntities}개 엔티티 (indexOf scan, ${(performance.now() - t0).toFixed(0)}ms)`)
+
   progress('도면 요소 변환', 30)
   const output: PolylineData[] = []
 
@@ -488,29 +511,42 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   let polylineState: { layer: string; colorNum: number; vertices: Vertex[]; closed: boolean } | null = null
 
   let errCount = 0
-  for (let i = 0; i < totalChunks; i++) {
-    // Progress every 5000 chunks
-    if (i > 0 && i % 5000 === 0) {
-      progress('도면 요소 변환', 30 + Math.round((i / totalChunks) * 60))
+  let entityIdx = 0
+
+  // First \n0\n is at entStart-1 (the \n from ENTITIES header + 0 + \n)
+  let sepPos = entStart - 1
+
+  while (true) {
+    const si = dxfText.indexOf(SEP, sepPos)
+    if (si < 0 || si >= entEnd) break
+
+    const eStart = si + 3                        // entity content start (TYPE\n...)
+    const nextSi = dxfText.indexOf(SEP, eStart)
+    const eEnd = (nextSi >= 0 && nextSi < entEnd) ? nextSi : entEnd  // entity content end
+
+    entityIdx++
+    if (entityIdx % 5000 === 0) {
+      progress('도면 요소 변환', 30 + Math.round((entityIdx / totalEntities) * 60))
     }
 
     try {
-      const chunk = chunks[i]
-      const nlIdx = chunk.indexOf('\n')
-      const type = (nlIdx > 0 ? chunk.substring(0, nlIdx) : chunk).trim()
+      // Extract type (first line only — tiny substring)
+      const typeNl = dxfText.indexOf('\n', eStart)
+      const type = dxfText.substring(eStart, (typeNl > 0 && typeNl < eEnd) ? typeNl : eEnd).trim()
 
-      // POLYLINE state machine
+      // --- POLYLINE state machine ---
       if (type === 'VERTEX' && polylineState) {
-        const xm = chunk.match(/\n10\n([^\n]+)/)
-        const ym = chunk.match(/\n20\n([^\n]+)/)
-        const bm = chunk.match(/\n42\n([^\n]+)/)
-        if (xm && ym) {
+        const x10 = idxIn(dxfText, '\n10\n', eStart, eEnd)
+        const y20 = idxIn(dxfText, '\n20\n', eStart, eEnd)
+        if (x10 >= 0 && y20 >= 0) {
+          const b42 = idxIn(dxfText, '\n42\n', eStart, eEnd)
           polylineState.vertices.push({
-            x: parseFloat(xm[1]), y: parseFloat(ym[1]),
-            bulge: bm ? parseFloat(bm[1]) : 0,
+            x: floatAt(dxfText, x10 + 4, eEnd),
+            y: floatAt(dxfText, y20 + 4, eEnd),
+            bulge: b42 >= 0 ? floatAt(dxfText, b42 + 4, eEnd) : 0,
           })
         }
-        continue
+        sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
       if (type === 'SEQEND' && polylineState) {
@@ -529,41 +565,44 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
           }
         }
         polylineState = null
-        continue
+        sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
       // Finalize any orphaned POLYLINE
-      if (polylineState && type !== 'VERTEX') {
-        polylineState = null
+      if (polylineState && type !== 'VERTEX') polylineState = null
+
+      // --- Quick layer check via indexOf (no regex, no chunk substring) ---
+      const l8 = idxIn(dxfText, '\n8\n', eStart, eEnd)
+      const entityLayer = l8 >= 0 ? valAt(dxfText, l8 + 3, eEnd) : '0'
+
+      if (!layerSet.has(entityLayer)) {  // ← THE KEY OPTIMIZATION
+        sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
-
-      // Quick layer check (fast reject)
-      const layerMatch = chunk.match(/\n8\n([^\n]+)/)
-      const entityLayer = layerMatch ? layerMatch[1].trim() : '0'
-
-      if (!layerSet.has(entityLayer)) continue  // ← THE KEY OPTIMIZATION
 
       // Start POLYLINE state
       if (type === 'POLYLINE') {
-        const flag = parseInt(chunk.match(/\n70\n([^\n]+)/)?.[1] ?? '0')
-        const colorMatch = chunk.match(/\n62\n([^\n]+)/)
+        const f70 = idxIn(dxfText, '\n70\n', eStart, eEnd)
+        const c62 = idxIn(dxfText, '\n62\n', eStart, eEnd)
         polylineState = {
           layer: entityLayer,
-          colorNum: colorMatch ? parseInt(colorMatch[1]) : -1,
+          colorNum: c62 >= 0 ? parseInt(valAt(dxfText, c62 + 4, eEnd)) : -1,
           vertices: [],
-          closed: (flag & 1) !== 0,
+          closed: f70 >= 0 ? (parseInt(valAt(dxfText, f70 + 4, eEnd)) & 1) !== 0 : false,
         }
-        continue
+        sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
-      // Parse full entity and convert to polylines
+      // --- Selected layer: extract chunk substring + full parse ---
+      const chunk = dxfText.substring(eStart, eEnd)
       const { codes } = parseGroupCodes(chunk)
       entityToPolyline(type, codes, blocks, '', [], 0, layerSet, output)
 
     } catch (err) {
       errCount++
-      if (errCount <= 5) console.warn(`[fast-worker] 엔티티 #${i} 파싱 에러:`, err)
+      if (errCount <= 5) console.warn(`[fast-worker] 엔티티 #${entityIdx} 파싱 에러:`, err)
     }
+
+    sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd
   }
 
   progress('완료', 95)
