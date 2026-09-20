@@ -13,6 +13,7 @@ interface LayerInfo {
   color: string
   segCount: number
   likelyStructural: boolean
+  approx?: boolean  // 대용량 파일 샘플링 시 true
 }
 
 export interface CadPreviewProps {
@@ -158,7 +159,7 @@ export default function CadPreview({
                 {layer.name}
                 {layer.likelyStructural && <span className="cad-layer-tag">구조</span>}
               </span>
-              <span className="cad-layer-seg">{layer.segCount.toLocaleString()}</span>
+              <span className="cad-layer-seg">{layer.approx ? '~' : ''}{layer.segCount.toLocaleString()}</span>
             </label>
           ))}
           {!parsing && layers.length === 0 && (
@@ -251,22 +252,30 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
   }
   // (debug removed)
 
-  // --- 2. ENTITIES → 레이어별 엔티티 수 (indexOf 스캐닝, 문자열 복사 없음) ---
+  // --- 2. ENTITIES → 레이어별 엔티티 수 (indexOf 스캐닝) ---
+  // 대용량 파일(>20MB)은 앞부분만 샘플링 후 비율 추정 — 3.7초→<1초
   const layerCounts = new Map<string, number>()
   const entIdx = dxfText.indexOf(SEC_ENTITIES)
+  let extrapolated = false
   if (entIdx >= 0) {
     const bodyStart = entIdx + SEC_ENTITIES.length
     const entEnd = dxfText.indexOf(ENDSEC, bodyStart)
     if (entEnd > bodyStart) {
-      let sepPos = bodyStart - 1  // \n before first gc(0)
+      const sectionLen = entEnd - bodyStart
+      const SAMPLE_LIMIT = 20_000_000  // 20MB까지만 스캔
+      const scanEnd = sectionLen > SAMPLE_LIMIT ? bodyStart + SAMPLE_LIMIT : entEnd
+      extrapolated = sectionLen > SAMPLE_LIMIT
+      const ratio = sectionLen > SAMPLE_LIMIT ? sectionLen / SAMPLE_LIMIT : 1
+
+      let sepPos = bodyStart - 1
 
       while (true) {
         const si = dxfText.indexOf(SEP, sepPos)
-        if (si < 0 || si >= entEnd) break
+        if (si < 0 || si >= scanEnd) break
 
         const eStart = si + SEP.length
         const nextSi = dxfText.indexOf(SEP, eStart)
-        const eEnd = (nextSi >= 0 && nextSi < entEnd) ? nextSi : entEnd
+        const eEnd = (nextSi >= 0 && nextSi < scanEnd) ? nextSi : scanEnd
 
         const l8 = dxfText.indexOf(GC8, eStart)
         if (l8 >= 0 && l8 < eEnd) {
@@ -276,12 +285,18 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
           layerCounts.set(name, (layerCounts.get(name) || 0) + 1)
         }
 
-        if (nextSi < 0 || nextSi >= entEnd) break
+        if (nextSi < 0 || nextSi >= scanEnd) break
         sepPos = nextSi
+      }
+
+      // 샘플링 비율에 따라 엔티티 수 추정
+      if (extrapolated) {
+        for (const [k, v] of layerCounts) {
+          layerCounts.set(k, Math.round(v * ratio))
+        }
       }
     }
   }
-  // (debug removed)
 
   // --- 3. 합치기 ---
   const allNames = new Set([...layerDefs.keys(), ...layerCounts.keys()])
@@ -297,6 +312,7 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
       color: aciToHex(aci),
       segCount: count,
       likelyStructural: STRUCTURAL_KEYWORDS.test(name),
+      approx: extrapolated,
     })
   }
 

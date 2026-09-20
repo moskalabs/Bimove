@@ -614,26 +614,33 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   }
   if (entIdx < 0) {
     console.warn('[fast-worker] ENTITIES 섹션 없음')
-    return { polylines: [], insUnits }
+    return { polylines: [], insUnits, texts: [] }
   }
   const entStart = entIdx + entHdr.length
   const entEnd = dxfText.indexOf(ENDSEC_PAT, entStart)
-  if (entEnd <= entStart) return { polylines: [], insUnits }
+  if (entEnd <= entStart) return { polylines: [], insUnits, texts: [] }
 
   // 4. indexOf-based entity scanning (padding-aware SEP_PAT / GC8_PAT)
   //    Peak memory: O(selected entities) instead of O(all entities)
 
   // Additional padded group code patterns for entity parsing
+  const GC1  = `\n${gc(1)}\n`
   const GC10 = `\n${gc(10)}\n`
+  const GC11 = `\n${gc(11)}\n`
   const GC20 = `\n${gc(20)}\n`
+  const GC21 = `\n${gc(21)}\n`
+  const GC40 = `\n${gc(40)}\n`
   const GC42 = `\n${gc(42)}\n`
+  const GC50 = `\n${gc(50)}\n`
+  const GC51 = `\n${gc(51)}\n`
   const GC62 = `\n${gc(62)}\n`
   const GC70 = `\n${gc(70)}\n`
+  const GC230 = `\n${gc(230)}\n`
 
-  // Quick pre-count for progress reporting
-  let totalEntities = 0
-  { let p = entStart - 1; while (true) { p = dxfText.indexOf(SEP_PAT, p); if (p < 0 || p >= entEnd) break; totalEntities++; p += SEP_PAT.length } }
-  console.log(`[fast-worker] ${totalEntities}개 엔티티 (indexOf scan, ${(performance.now() - t0).toFixed(0)}ms)`)
+  // Estimate total entities from section size (skip expensive pre-count scan)
+  const entSectionLen = entEnd - entStart
+  const estEntities = Math.max(1, Math.round(entSectionLen / 300))  // ~300 bytes per entity avg
+  console.log(`[fast-worker] ENTITIES 섹션: ${(entSectionLen / 1048576).toFixed(1)}MB, 추정 ${estEntities}개 (${(performance.now() - t0).toFixed(0)}ms)`)
 
   progress('도면 요소 변환', 30)
   const output: PolylineData[] = []
@@ -658,7 +665,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
 
     entityIdx++
     if (entityIdx % 5000 === 0) {
-      progress('도면 요소 변환', 30 + Math.round((entityIdx / totalEntities) * 60))
+      progress('도면 요소 변환', 30 + Math.round(((si - entStart) / entSectionLen) * 60))
     }
 
     try {
@@ -724,12 +731,107 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
-      // --- Selected layer: extract chunk substring + full parse ---
+      // ── Fast-path: LINE (가장 흔한 엔티티, parseGroupCodes 건너뛰기) ──
+      if (type === 'LINE') {
+        const x1i = idxIn(dxfText, GC10, eStart, eEnd)
+        const y1i = idxIn(dxfText, GC20, eStart, eEnd)
+        const x2i = idxIn(dxfText, GC11, eStart, eEnd)
+        const y2i = idxIn(dxfText, GC21, eStart, eEnd)
+        if (x1i >= 0 && y1i >= 0 && x2i >= 0 && y2i >= 0) {
+          const c62 = idxIn(dxfText, GC62, eStart, eEnd)
+          output.push({
+            vertices: [
+              [floatAt(dxfText, x1i + GC10.length, eEnd), floatAt(dxfText, y1i + GC20.length, eEnd)],
+              [floatAt(dxfText, x2i + GC11.length, eEnd), floatAt(dxfText, y2i + GC21.length, eEnd)],
+            ],
+            layer: entityLayer,
+            colorNumber: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
+          })
+        }
+        sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
+      }
+
+      // ── Fast-path: ARC ──
+      if (type === 'ARC') {
+        const cxi = idxIn(dxfText, GC10, eStart, eEnd)
+        const cyi = idxIn(dxfText, GC20, eStart, eEnd)
+        const ri  = idxIn(dxfText, GC40, eStart, eEnd)
+        if (cxi >= 0 && cyi >= 0 && ri >= 0) {
+          const cx = floatAt(dxfText, cxi + GC10.length, eEnd)
+          const cy = floatAt(dxfText, cyi + GC20.length, eEnd)
+          const r  = floatAt(dxfText, ri + GC40.length, eEnd)
+          const sai = idxIn(dxfText, GC50, eStart, eEnd)
+          const eai = idxIn(dxfText, GC51, eStart, eEnd)
+          const sa = (sai >= 0 ? floatAt(dxfText, sai + GC50.length, eEnd) : 0) * Math.PI / 180
+          const ea = (eai >= 0 ? floatAt(dxfText, eai + GC51.length, eEnd) : 360) * Math.PI / 180
+          const poly = interpEllipse(cx, cy, r, r, sa, ea)
+          const ezi = idxIn(dxfText, GC230, eStart, eEnd)
+          if (ezi >= 0 && floatAt(dxfText, ezi + GC230.length, eEnd) === -1) {
+            for (const p of poly) p[0] = -p[0]
+          }
+          const c62 = idxIn(dxfText, GC62, eStart, eEnd)
+          output.push({
+            vertices: poly, layer: entityLayer,
+            colorNumber: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
+          })
+        }
+        sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
+      }
+
+      // ── Fast-path: CIRCLE ──
+      if (type === 'CIRCLE') {
+        const cxi = idxIn(dxfText, GC10, eStart, eEnd)
+        const cyi = idxIn(dxfText, GC20, eStart, eEnd)
+        const ri  = idxIn(dxfText, GC40, eStart, eEnd)
+        if (cxi >= 0 && cyi >= 0 && ri >= 0) {
+          const cx = floatAt(dxfText, cxi + GC10.length, eEnd)
+          const cy = floatAt(dxfText, cyi + GC20.length, eEnd)
+          const r  = floatAt(dxfText, ri + GC40.length, eEnd)
+          const poly = interpEllipse(cx, cy, r, r, 0, Math.PI * 2)
+          const ezi = idxIn(dxfText, GC230, eStart, eEnd)
+          if (ezi >= 0 && floatAt(dxfText, ezi + GC230.length, eEnd) === -1) {
+            for (const p of poly) p[0] = -p[0]
+          }
+          const c62 = idxIn(dxfText, GC62, eStart, eEnd)
+          output.push({
+            vertices: poly, layer: entityLayer,
+            colorNumber: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
+          })
+        }
+        sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
+      }
+
+      // ── Fast-path: TEXT ──
+      if (type === 'TEXT') {
+        const xi = idxIn(dxfText, GC10, eStart, eEnd)
+        const yi = idxIn(dxfText, GC20, eStart, eEnd)
+        const ti = idxIn(dxfText, GC1, eStart, eEnd)
+        if (xi >= 0 && yi >= 0 && ti >= 0) {
+          const text = decodeDxfSpecialChars(valAt(dxfText, ti + GC1.length, eEnd))
+          if (text) {
+            const hi = idxIn(dxfText, GC40, eStart, eEnd)
+            const ri = idxIn(dxfText, GC50, eStart, eEnd)
+            const c62i = idxIn(dxfText, GC62, eStart, eEnd)
+            texts.push({
+              x: floatAt(dxfText, xi + GC10.length, eEnd),
+              y: floatAt(dxfText, yi + GC20.length, eEnd),
+              text,
+              height: hi >= 0 ? floatAt(dxfText, hi + GC40.length, eEnd) : 2.5,
+              rotation: ri >= 0 ? (floatAt(dxfText, ri + GC50.length, eEnd) || undefined) : undefined,
+              layer: entityLayer,
+              colorNumber: c62i >= 0 ? parseInt(valAt(dxfText, c62i + GC62.length, eEnd)) : -1,
+            })
+          }
+        }
+        sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
+      }
+
+      // ── Generic path: substring + parseGroupCodes (LWPOLYLINE, SPLINE, ELLIPSE, INSERT, DIMENSION, etc.) ──
       const chunk = dxfText.substring(eStart, eEnd)
       const { codes } = parseGroupCodes(chunk)
 
-      // TEXT/MTEXT → texts array (not polylines)
-      if (type === 'TEXT' || type === 'MTEXT') {
+      // MTEXT → texts array
+      if (type === 'MTEXT') {
         const colorNum = codes.get(62)?.[0] ? parseInt(codes.get(62)![0]) : -1
         const td = extractTextEntity(type, codes, entityLayer, colorNum, [])
         if (td) texts.push(td)
