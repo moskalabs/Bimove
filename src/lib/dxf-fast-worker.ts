@@ -59,6 +59,8 @@ interface Transform {
 
 const MAX_DEPTH = 8
 const ARC_STEP  = 5       // degrees
+const MAX_POLYLINES = 200_000  // 폴리라인 수 제한 (성능 보호)
+const MAX_TEXTS = 5_000        // 텍스트 수 제한
 
 // ===== Geometry helpers =====
 
@@ -429,25 +431,27 @@ function entityToPolyline(
       break
     }
 
-    case 'INSERT':
     case 'DIMENSION': {
+      // DIMENSION: 익명 블록(*D0, *D1) 확장은 엔티티 폭발 + 좌표 이상 유발 → 건너뜀
+      // 치수선은 시각적 보조 요소로, 구조 도면에 필수가 아님
+      break
+    }
+
+    case 'INSERT': {
       if (depth >= MAX_DEPTH) break
       const blockName = codes.get(2)?.[0]?.trim() ?? ''
       const block = blocks.get(blockName)
       if (!block) break
 
-      // DIMENSION uses anonymous blocks (*D0, *D1, etc.) — no position/scale/rotation
-      // INSERT has full transform parameters
-      const isInsert = type === 'INSERT'
-      const ix = isInsert ? parseFloat(codes.get(10)?.[0] ?? '0') : 0
-      const iy = isInsert ? parseFloat(codes.get(20)?.[0] ?? '0') : 0
-      const sx = isInsert ? parseFloat(codes.get(41)?.[0] ?? '1') : 1
-      const sy = isInsert ? parseFloat(codes.get(42)?.[0] ?? '1') : 1
-      const rot = isInsert ? parseFloat(codes.get(50)?.[0] ?? '0') : 0
-      const rowN = isInsert ? (parseInt(codes.get(71)?.[0] ?? '1') || 1) : 1
-      const colN = isInsert ? (parseInt(codes.get(70)?.[0] ?? '1') || 1) : 1
-      const rowSp = isInsert ? parseFloat(codes.get(44)?.[0] ?? '0') : 0
-      const colSp = isInsert ? parseFloat(codes.get(45)?.[0] ?? '0') : 0
+      const ix = parseFloat(codes.get(10)?.[0] ?? '0')
+      const iy = parseFloat(codes.get(20)?.[0] ?? '0')
+      const sx = parseFloat(codes.get(41)?.[0] ?? '1')
+      const sy = parseFloat(codes.get(42)?.[0] ?? '1')
+      const rot = parseFloat(codes.get(50)?.[0] ?? '0')
+      const rowN = parseInt(codes.get(71)?.[0] ?? '1') || 1
+      const colN = parseInt(codes.get(70)?.[0] ?? '1') || 1
+      const rowSp = parseFloat(codes.get(44)?.[0] ?? '0')
+      const colSp = parseFloat(codes.get(45)?.[0] ?? '0')
       const iez = codes.get(230)?.[0] ? parseFloat(codes.get(230)![0]) : 1
 
       const rotRad = rot * Math.PI / 180
@@ -463,9 +467,11 @@ function entityToPolyline(
 
           // Process block entities (inheriting layer per DXF convention)
           for (const chunk of block.entityChunks) {
+            if (output.length >= MAX_POLYLINES) break  // 성능 보호: 폴리라인
+            if (textsOutput && textsOutput.length >= MAX_TEXTS) break  // 성능 보호: 텍스트
             const { type: eType, codes: eCodes } = parseGroupCodes(chunk)
-            if (eType === 'INSERT' || eType === 'DIMENSION') {
-              // Nested INSERT/DIMENSION
+            if (eType === 'INSERT') {
+              // Nested INSERT
               entityToPolyline(eType, eCodes, blocks, layer, nextTransforms, depth + 1, selectedLayers, output, textsOutput)
             } else if ((eType === 'TEXT' || eType === 'MTEXT') && textsOutput) {
               // TEXT/MTEXT inside block — extract with base point + transforms
@@ -656,6 +662,11 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   let sepPos = entStart - 1
 
   while (true) {
+    if (output.length >= MAX_POLYLINES && texts.length >= MAX_TEXTS) {
+      console.warn(`[fast-worker] 폴리라인 ${MAX_POLYLINES}개 + 텍스트 ${MAX_TEXTS}개 제한 도달, 나머지 건너뜀`)
+      break
+    }
+
     const si = dxfText.indexOf(SEP_PAT, sepPos)
     if (si < 0 || si >= entEnd) break
 
@@ -803,24 +814,26 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
 
       // ── Fast-path: TEXT ──
       if (type === 'TEXT') {
-        const xi = idxIn(dxfText, GC10, eStart, eEnd)
-        const yi = idxIn(dxfText, GC20, eStart, eEnd)
-        const ti = idxIn(dxfText, GC1, eStart, eEnd)
-        if (xi >= 0 && yi >= 0 && ti >= 0) {
-          const text = decodeDxfSpecialChars(valAt(dxfText, ti + GC1.length, eEnd))
-          if (text) {
-            const hi = idxIn(dxfText, GC40, eStart, eEnd)
-            const ri = idxIn(dxfText, GC50, eStart, eEnd)
-            const c62i = idxIn(dxfText, GC62, eStart, eEnd)
-            texts.push({
-              x: floatAt(dxfText, xi + GC10.length, eEnd),
-              y: floatAt(dxfText, yi + GC20.length, eEnd),
-              text,
-              height: hi >= 0 ? floatAt(dxfText, hi + GC40.length, eEnd) : 2.5,
-              rotation: ri >= 0 ? (floatAt(dxfText, ri + GC50.length, eEnd) || undefined) : undefined,
-              layer: entityLayer,
-              colorNumber: c62i >= 0 ? parseInt(valAt(dxfText, c62i + GC62.length, eEnd)) : -1,
-            })
+        if (texts.length < MAX_TEXTS) {
+          const xi = idxIn(dxfText, GC10, eStart, eEnd)
+          const yi = idxIn(dxfText, GC20, eStart, eEnd)
+          const ti = idxIn(dxfText, GC1, eStart, eEnd)
+          if (xi >= 0 && yi >= 0 && ti >= 0) {
+            const text = decodeDxfSpecialChars(valAt(dxfText, ti + GC1.length, eEnd))
+            if (text) {
+              const hi = idxIn(dxfText, GC40, eStart, eEnd)
+              const ri = idxIn(dxfText, GC50, eStart, eEnd)
+              const c62i = idxIn(dxfText, GC62, eStart, eEnd)
+              texts.push({
+                x: floatAt(dxfText, xi + GC10.length, eEnd),
+                y: floatAt(dxfText, yi + GC20.length, eEnd),
+                text,
+                height: hi >= 0 ? floatAt(dxfText, hi + GC40.length, eEnd) : 2.5,
+                rotation: ri >= 0 ? (floatAt(dxfText, ri + GC50.length, eEnd) || undefined) : undefined,
+                layer: entityLayer,
+                colorNumber: c62i >= 0 ? parseInt(valAt(dxfText, c62i + GC62.length, eEnd)) : -1,
+              })
+            }
           }
         }
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
@@ -832,9 +845,11 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
 
       // MTEXT → texts array
       if (type === 'MTEXT') {
-        const colorNum = codes.get(62)?.[0] ? parseInt(codes.get(62)![0]) : -1
-        const td = extractTextEntity(type, codes, entityLayer, colorNum, [])
-        if (td) texts.push(td)
+        if (texts.length < MAX_TEXTS) {
+          const colorNum = codes.get(62)?.[0] ? parseInt(codes.get(62)![0]) : -1
+          const td = extractTextEntity(type, codes, entityLayer, colorNum, [])
+          if (td) texts.push(td)
+        }
       } else {
         entityToPolyline(type, codes, blocks, '', [], 0, layerSet, output, texts)
       }
