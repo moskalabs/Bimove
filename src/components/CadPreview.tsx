@@ -212,7 +212,7 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
   const SEC_ENTITIES = `\n${gc(0)}\nSECTION\n${gc(2)}\nENTITIES\n`
   const LAYER_HDR = `\n${gc(0)}\nLAYER\n`
 
-  console.log(`[CadPreview] 길이: ${dxfText.length}, CR: ${hadCR}, 패딩: ${padded}, SEP=${JSON.stringify(SEP)}, 첫 100자: ${JSON.stringify(dxfText.substring(0, 100))}`)
+  console.log(`[CadPreview] 길이: ${dxfText.length}, 패딩: ${padded}`)
 
   // --- 1. TABLES → LAYER 정의 (이름 + 색상) ---
   const layerDefs = new Map<string, number>()
@@ -249,7 +249,7 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
       }
     }
   }
-  console.log(`[CadPreview] TABLES: ${layerDefs.size}개 레이어 정의`)
+  // (debug removed)
 
   // --- 2. ENTITIES → 레이어별 엔티티 수 (indexOf 스캐닝, 문자열 복사 없음) ---
   const layerCounts = new Map<string, number>()
@@ -281,7 +281,7 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
       }
     }
   }
-  console.log(`[CadPreview] ENTITIES: ${layerCounts.size}개 레이어, ${[...layerCounts.values()].reduce((a, b) => a + b, 0)}개 엔티티`)
+  // (debug removed)
 
   // --- 3. 합치기 ---
   const allNames = new Set([...layerDefs.keys(), ...layerCounts.keys()])

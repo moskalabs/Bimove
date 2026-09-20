@@ -2202,13 +2202,13 @@ export function commitCadImport(
  * - UI 스레드 블로킹 없음 (Worker)
  * - 진행률 콜백 지원
  */
-import type { PolylineData, WorkerOut } from './dxf-fast-worker'
+import type { PolylineData, TextData, WorkerOut } from './dxf-fast-worker'
 
 function runFastWorker(
   dxfText: string,
   selectedLayers: string[],
   onProgress?: (msg: string) => void,
-): Promise<{ polylines: PolylineData[]; insUnits: number }> {
+): Promise<{ polylines: PolylineData[]; insUnits: number; texts: TextData[] }> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(
       new URL('./dxf-fast-worker.ts', import.meta.url),
@@ -2230,7 +2230,7 @@ function runFastWorker(
       } else if (msg.type === 'result') {
         clearTimeout(timeout)
         worker.terminate()
-        resolve({ polylines: msg.polylines, insUnits: msg.insUnits })
+        resolve({ polylines: msg.polylines, insUnits: msg.insUnits, texts: msg.texts || [] })
       } else if (msg.type === 'error') {
         clearTimeout(timeout)
         worker.terminate()
@@ -2264,10 +2264,12 @@ export async function commitCadImportV2(
   onProgress?.('도면 파싱 중...')
   let polylines: PolylineData[]
   let insUnits: number
+  let workerTexts: TextData[] = []
   try {
     const result = await runFastWorker(dxfText, layerArr, onProgress)
     polylines = result.polylines
     insUnits = result.insUnits
+    workerTexts = result.texts || []
   } catch (workerErr) {
     console.warn(`[CAD V2] Worker 실패, 동기 fallback 사용:`, workerErr)
     onProgress?.('동기 파싱으로 전환 중... (대형 도면은 수십 초 소요)')
@@ -2428,6 +2430,22 @@ export async function commitCadImportV2(
   const entityCount = polylines.length
   const fingerprint = dxfFingerprint(fileName, fileSize, entityCount)
 
+  // 10-1. Worker 텍스트 → px 좌표 변환 (Y flip + scale + autoScale)
+  const textScale = scale * autoScale
+  type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string }
+  const pxTexts: PxText[] = workerTexts
+    .filter(t => Math.abs(t.x) < COORD_LIMIT && Math.abs(t.y) < COORD_LIMIT && isFinite(t.x) && isFinite(t.y))
+    .map(t => ({
+      x: t.x * textScale,
+      y: -t.y * textScale,
+      text: t.text,
+      height: Math.max(t.height * textScale, 4),
+      rotation: t.rotation,
+      color: t.colorNumber >= 0 ? aciToHex(t.colorNumber) : undefined,
+      layer: t.layer,
+    }))
+  console.log(`[CAD V2] ${pxTexts.length}개 텍스트 변환`)
+
   // ── 100+ segs: DxfGroup 모드 ──
   if (finalSegs.length >= 100) {
     // 레이어별 그루핑
@@ -2439,6 +2457,7 @@ export async function commitCadImportV2(
       g.push(s)
     }
 
+    const assignedTextIdx = new Set<number>()
     const groupShapes: unknown[] = []
     for (const [layer, segs] of layerGroups) {
       // 대형 레이어는 클러스터링 생략
@@ -2452,6 +2471,26 @@ export async function commitCadImportV2(
           gMaxX = Math.max(gMaxX, s.x1, s.x1 + s.dx)
           gMaxY = Math.max(gMaxY, s.y1, s.y1 + s.dy)
         }
+
+        // 이 클러스터 바운딩박스 내의 텍스트 수집 (여유 margin 포함)
+        const margin = 20
+        const localTexts: Array<{ x: number; y: number; t: string; h: number; r?: number; c?: string }> = []
+        pxTexts.forEach((t, idx) => {
+          if (assignedTextIdx.has(idx)) return
+          if ((t.layer || '0') !== layer) return
+          if (t.x >= gMinX - margin && t.x <= gMaxX + margin &&
+              t.y >= gMinY - margin && t.y <= gMaxY + margin) {
+            localTexts.push({
+              x: +(t.x - gMinX).toFixed(1),
+              y: +(t.y - gMinY).toFixed(1),
+              t: t.text,
+              h: +t.height.toFixed(1),
+              r: t.rotation,
+              c: t.color,
+            })
+            assignedTextIdx.add(idx)
+          }
+        })
 
         const gx = gMinX - offsetX
         const gy = gMinY - offsetY
@@ -2473,7 +2512,8 @@ export async function commitCadImportV2(
           x: gx, y: gy,
           props: {
             w, h, pathData, thickness: thickness * autoScale * 0.3, segCount: cluster.length,
-            textsJson: '', hatchesJson: '',
+            textsJson: localTexts.length > 0 ? JSON.stringify(localTexts) : '',
+            hatchesJson: '',
           },
           meta: {
             dxfFingerprint: fingerprint,
@@ -2484,7 +2524,7 @@ export async function commitCadImportV2(
       }
     }
 
-    console.log(`[CAD V2] ${groupShapes.length}개 DxfGroup 생성`)
+    console.log(`[CAD V2] ${groupShapes.length}개 DxfGroup 생성 (텍스트 ${assignedTextIdx.size}/${pxTexts.length}개 할당)`)
 
     // 배치 생성
     const BATCH = 1000

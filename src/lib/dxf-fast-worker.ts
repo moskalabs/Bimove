@@ -24,9 +24,19 @@ export interface PolylineData {
   colorNumber: number
 }
 
+export interface TextData {
+  x: number
+  y: number
+  text: string
+  height: number
+  rotation?: number
+  layer: string
+  colorNumber: number
+}
+
 export type WorkerOut =
   | { type: 'progress'; phase: string; percent: number }
-  | { type: 'result'; polylines: PolylineData[]; insUnits: number }
+  | { type: 'result'; polylines: PolylineData[]; insUnits: number; texts: TextData[] }
   | { type: 'error'; message: string }
 
 // ===== Internal types =====
@@ -289,9 +299,17 @@ function entityToPolyline(
   depth: number,
   selectedLayers: Set<string>,
   output: PolylineData[],
+  textsOutput?: TextData[],
 ): void {
   const layer = layerOverride || (codes.get(8)?.[0]?.trim() ?? '0')
   const colorNum = codes.get(62)?.[0] ? parseInt(codes.get(62)![0]) : -1
+
+  // TEXT/MTEXT → texts output (if provided)
+  if ((type === 'TEXT' || type === 'MTEXT') && textsOutput) {
+    const td = extractTextEntity(type, codes, layer, colorNum, transforms)
+    if (td) textsOutput.push(td)
+    return
+  }
   const ez = codes.get(230)?.[0] ? parseFloat(codes.get(230)![0]) : 1
 
   let poly: number[][] | null = null
@@ -392,21 +410,44 @@ function entityToPolyline(
       break
     }
 
-    case 'INSERT': {
+    case 'SOLID':
+    case '3DFACE': {
+      const x0 = parseFloat(codes.get(10)?.[0] ?? '0')
+      const y0 = parseFloat(codes.get(20)?.[0] ?? '0')
+      const x1 = parseFloat(codes.get(11)?.[0] ?? '0')
+      const y1 = parseFloat(codes.get(21)?.[0] ?? '0')
+      const x2 = parseFloat(codes.get(12)?.[0] ?? '0')
+      const y2 = parseFloat(codes.get(22)?.[0] ?? '0')
+      const x3 = parseFloat(codes.get(13)?.[0] ?? `${x2}`)
+      const y3 = parseFloat(codes.get(23)?.[0] ?? `${y2}`)
+      if (type === 'SOLID') {
+        // SOLID vertex order is swapped: 0→1→3→2→close
+        poly = [[x0, y0], [x1, y1], [x3, y3], [x2, y2], [x0, y0]]
+      } else {
+        poly = [[x0, y0], [x1, y1], [x2, y2], [x3, y3], [x0, y0]]
+      }
+      break
+    }
+
+    case 'INSERT':
+    case 'DIMENSION': {
       if (depth >= MAX_DEPTH) break
       const blockName = codes.get(2)?.[0]?.trim() ?? ''
       const block = blocks.get(blockName)
       if (!block) break
 
-      const ix = parseFloat(codes.get(10)?.[0] ?? '0')
-      const iy = parseFloat(codes.get(20)?.[0] ?? '0')
-      const sx = parseFloat(codes.get(41)?.[0] ?? '1')
-      const sy = parseFloat(codes.get(42)?.[0] ?? '1')
-      const rot = parseFloat(codes.get(50)?.[0] ?? '0')
-      const rowN = parseInt(codes.get(71)?.[0] ?? '1') || 1
-      const colN = parseInt(codes.get(70)?.[0] ?? '1') || 1
-      const rowSp = parseFloat(codes.get(44)?.[0] ?? '0')
-      const colSp = parseFloat(codes.get(45)?.[0] ?? '0')
+      // DIMENSION uses anonymous blocks (*D0, *D1, etc.) — no position/scale/rotation
+      // INSERT has full transform parameters
+      const isInsert = type === 'INSERT'
+      const ix = isInsert ? parseFloat(codes.get(10)?.[0] ?? '0') : 0
+      const iy = isInsert ? parseFloat(codes.get(20)?.[0] ?? '0') : 0
+      const sx = isInsert ? parseFloat(codes.get(41)?.[0] ?? '1') : 1
+      const sy = isInsert ? parseFloat(codes.get(42)?.[0] ?? '1') : 1
+      const rot = isInsert ? parseFloat(codes.get(50)?.[0] ?? '0') : 0
+      const rowN = isInsert ? (parseInt(codes.get(71)?.[0] ?? '1') || 1) : 1
+      const colN = isInsert ? (parseInt(codes.get(70)?.[0] ?? '1') || 1) : 1
+      const rowSp = isInsert ? parseFloat(codes.get(44)?.[0] ?? '0') : 0
+      const colSp = isInsert ? parseFloat(codes.get(45)?.[0] ?? '0') : 0
       const iez = codes.get(230)?.[0] ? parseFloat(codes.get(230)![0]) : 1
 
       const rotRad = rot * Math.PI / 180
@@ -420,16 +461,35 @@ function entityToPolyline(
           const t: Transform = { x: ox, y: oy, sx, sy, rot, ez: iez }
           const nextTransforms = [...transforms, t]
 
-          // Process block entities (inheriting INSERT's layer per DXF convention)
+          // Process block entities (inheriting layer per DXF convention)
           for (const chunk of block.entityChunks) {
             const { type: eType, codes: eCodes } = parseGroupCodes(chunk)
-            if (eType === 'INSERT') {
-              // Nested INSERT
-              entityToPolyline(eType, eCodes, blocks, layer, nextTransforms, depth + 1, selectedLayers, output)
+            if (eType === 'INSERT' || eType === 'DIMENSION') {
+              // Nested INSERT/DIMENSION
+              entityToPolyline(eType, eCodes, blocks, layer, nextTransforms, depth + 1, selectedLayers, output, textsOutput)
+            } else if ((eType === 'TEXT' || eType === 'MTEXT') && textsOutput) {
+              // TEXT/MTEXT inside block — extract with base point + transforms
+              const blockColor = eCodes.get(62)?.[0] ? parseInt(eCodes.get(62)![0]) : -1
+              const td = extractTextEntity(eType, eCodes, layer, blockColor, nextTransforms)
+              if (td) {
+                // Apply base point offset
+                td.x -= block.baseX
+                td.y -= block.baseY
+                // Re-apply transforms (extractTextEntity already applied nextTransforms,
+                // but we need to adjust for base point first — so we reconstruct)
+                // Actually, simpler: adjust the raw coords before transform
+                // Let's re-extract with adjusted coords:
+                const rawX = parseFloat(eCodes.get(10)?.[0] ?? '0') - block.baseX
+                const rawY = parseFloat(eCodes.get(20)?.[0] ?? '0') - block.baseY
+                const pt = [[rawX, rawY]]
+                for (const tr of nextTransforms) applyTransform(pt, tr)
+                td.x = pt[0][0]; td.y = pt[0][1]
+                textsOutput.push(td)
+              }
             } else {
               // Geometry entity — subtract block base point, convert to polyline
               const subOutput: PolylineData[] = []
-              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput)
+              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput)
 
               // Apply base point offset + all accumulated transforms
               for (const pl of subOutput) {
@@ -443,7 +503,7 @@ function entityToPolyline(
           }
         }
       }
-      return  // INSERT handled, don't add poly
+      return  // INSERT/DIMENSION handled, don't add poly
     }
   }
 
@@ -462,7 +522,63 @@ function entityToPolyline(
 
 // ===== Main parsing orchestrator =====
 
-function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number } {
+/** DXF 특수문자 코드(%%X) → 유니코드 변환 */
+function decodeDxfSpecialChars(text: string): string {
+  return text
+    .replace(/%%[Pp]/g, '±')
+    .replace(/%%[Dd]/g, '°')
+    .replace(/%%[Cc]/g, '∅')
+    .replace(/%%[Uu]/g, '')
+    .replace(/%%[Oo]/g, '')
+    .replace(/%%%/g, '%')
+    .replace(/%%(\d{3})/g, (_, code) => String.fromCharCode(parseInt(code)))
+}
+
+/** MTEXT 서식 코드 제거 */
+function cleanMtextFormatting(text: string): string {
+  return text
+    .replace(/\\P/g, ' ')
+    .replace(/\{[^}]*\}/g, '')
+    .replace(/\\[a-zA-Z][^;]*;/g, '')
+    .trim()
+}
+
+/** Extract TEXT/MTEXT data from parsed group codes */
+function extractTextEntity(
+  type: string,
+  codes: Map<number, string[]>,
+  layer: string,
+  colorNum: number,
+  transforms: Transform[],
+): TextData | null {
+  if (type !== 'TEXT' && type !== 'MTEXT') return null
+
+  let x = parseFloat(codes.get(10)?.[0] ?? '0')
+  let y = parseFloat(codes.get(20)?.[0] ?? '0')
+  const height = parseFloat(codes.get(40)?.[0] ?? '2.5')
+  const rotation = parseFloat(codes.get(50)?.[0] ?? '0') || undefined
+
+  let text: string
+  if (type === 'TEXT') {
+    text = decodeDxfSpecialChars((codes.get(1)?.[0] ?? '').trim())
+  } else {
+    // MTEXT: group code 1 + additional content in group code 3
+    const parts = [codes.get(1)?.[0] ?? '', ...(codes.get(3) || [])]
+    text = cleanMtextFormatting(decodeDxfSpecialChars(parts.join('').trim()))
+  }
+  if (!text) return null
+
+  // Apply transforms (from parent INSERTs)
+  if (transforms.length) {
+    const pt = [[x, y]]
+    for (const tr of transforms) applyTransform(pt, tr)
+    x = pt[0][0]; y = pt[0][1]
+  }
+
+  return { x, y, text, height, rotation, layer, colorNumber: colorNum }
+}
+
+function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number; texts: TextData[] } {
   const t0 = performance.now()
   const layerSet = new Set(selectedLayers)
 
@@ -521,6 +637,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
 
   progress('도면 요소 변환', 30)
   const output: PolylineData[] = []
+  const texts: TextData[] = []
 
   // Handle POLYLINE (old-style): accumulate VERTEX entities
   let polylineState: { layer: string; colorNum: number; vertices: Vertex[]; closed: boolean } | null = null
@@ -610,7 +727,15 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
       // --- Selected layer: extract chunk substring + full parse ---
       const chunk = dxfText.substring(eStart, eEnd)
       const { codes } = parseGroupCodes(chunk)
-      entityToPolyline(type, codes, blocks, '', [], 0, layerSet, output)
+
+      // TEXT/MTEXT → texts array (not polylines)
+      if (type === 'TEXT' || type === 'MTEXT') {
+        const colorNum = codes.get(62)?.[0] ? parseInt(codes.get(62)![0]) : -1
+        const td = extractTextEntity(type, codes, entityLayer, colorNum, [])
+        if (td) texts.push(td)
+      } else {
+        entityToPolyline(type, codes, blocks, '', [], 0, layerSet, output, texts)
+      }
 
     } catch (err) {
       errCount++
@@ -622,9 +747,9 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
 
   progress('완료', 95)
   const elapsed = (performance.now() - t0).toFixed(0)
-  console.log(`[fast-worker] 파싱 완료: ${output.length}개 폴리라인, ${errCount}개 에러 (${elapsed}ms)`)
+  console.log(`[fast-worker] 파싱 완료: ${output.length}개 폴리라인, ${texts.length}개 텍스트, ${errCount}개 에러 (${elapsed}ms)`)
 
-  return { polylines: output, insUnits }
+  return { polylines: output, insUnits, texts }
 }
 
 // ===== Worker message handler =====
@@ -637,7 +762,7 @@ self.onmessage = (e: MessageEvent<ParseRequest>) => {
 
   try {
     const result = parseDxfFast(e.data.dxfText, e.data.selectedLayers, progress)
-    post({ type: 'result', polylines: result.polylines, insUnits: result.insUnits })
+    post({ type: 'result', polylines: result.polylines, insUnits: result.insUnits, texts: result.texts })
   } catch (err) {
     post({ type: 'error', message: err instanceof Error ? err.message : String(err) })
   }
