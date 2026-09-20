@@ -1456,11 +1456,12 @@ export function pickCadFile(): Promise<File | null> {
       resolve(input.files?.[0] ?? null)
     }
     // 파일 다이얼로그 취소 시 focus 이벤트로 감지
+    // 큰 파일(10MB+)은 onchange가 늦을 수 있으므로 충분한 대기시간 필요
     const onFocus = () => {
       setTimeout(() => {
         if (!resolved) resolve(null)
         window.removeEventListener('focus', onFocus)
-      }, 300)
+      }, 2000)
     }
     window.addEventListener('focus', onFocus)
     input.click()
