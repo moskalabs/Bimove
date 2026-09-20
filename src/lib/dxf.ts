@@ -1780,9 +1780,11 @@ export function commitCadImport(
   result: CadParseResult,
   selectedLayers: Set<string>,
 ): number {
-  console.log(`[CAD Commit] 시작: segs=${result._segs.length}, texts=${result._texts.length}, hatches=${result._hatches.length}, layers=${[...selectedLayers].join(',')}`)
+  const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  console.log(`[CAD Commit] 시작: segs=${result._segs.length}, texts=${result._texts.length}, hatches=${result._hatches.length}, unitToMm=${result.unitToMm}, selectedLayers=${[...selectedLayers].join(',')}`)
   const scale = getScaleConfig(editor).pxPerMm * result.unitToMm
   const thickness = getDefaultWallThicknessMm() * getScaleConfig(editor).pxPerMm
+  console.log(`[CAD Commit] scale=${scale} (pxPerMm=${getScaleConfig(editor).pxPerMm}, unitToMm=${result.unitToMm})`)
 
   // 1단계: 스케일 적용 + 좌표 변환
   const rawSegsAll = result._segs
@@ -1822,7 +1824,9 @@ export function commitCadImport(
   if (!rawSegs.length) { console.warn('[CAD Commit] 세그먼트 0개 → return 0'); return 0 }
 
   // 2단계: 동일선상 세그먼트 병합 (shape 수 30-60% 감소)
+  const tMerge = typeof performance !== 'undefined' ? performance.now() : Date.now()
   const merged = mergeDxfSegments(rawSegs)
+  console.log(`[CAD Commit] mergeDxfSegments: ${rawSegs.length} → ${merged.length} (${((typeof performance !== 'undefined' ? performance.now() : Date.now()) - tMerge).toFixed(0)}ms)`)
 
   // merged가 비어있으면 rawSegs를 직접 사용 (병합 실패 방어)
   const finalSegs = merged.length > 0 ? merged : rawSegs
@@ -1954,6 +1958,12 @@ export function commitCadImport(
 
   // ── 100+ segments: 레이어별 DxfGroup shape로 묶기 (React 컴포넌트 수 대폭 감소) ──
   if (finalSegs.length >= 100) {
+    console.log(`[CAD Commit] DxfGroup 모드: ${finalSegs.length}개 세그먼트, autoScale=${autoScale.toFixed(6)}, offset=(${offsetX.toFixed(1)}, ${offsetY.toFixed(1)})`)
+    // 좌표 샘플 출력 (첫 3개)
+    for (let si = 0; si < Math.min(3, finalSegs.length); si++) {
+      const s = finalSegs[si]
+      console.log(`[CAD Commit] seg[${si}]: (${s.x1.toFixed(1)},${s.y1.toFixed(1)}) → (${(s.x1+s.dx).toFixed(1)},${(s.y1+s.dy).toFixed(1)}) layer=${s.layer}`)
+    }
     // 레이어별 그루핑
     const layerGroups = new Map<string, RawSeg[]>()
     for (const s of finalSegs) {
@@ -1962,15 +1972,22 @@ export function commitCadImport(
       if (!g) { g = []; layerGroups.set(key, g) }
       g.push(s)
     }
+    console.log(`[CAD Commit] 레이어 그룹: ${layerGroups.size}개 레이어`)
 
     // 배정 추적용 Set
     const assignedTextIdx = new Set<number>()
     const assignedHatchIdx = new Set<number>()
 
     const groupShapes: unknown[] = []
+    let totalClusters = 0
+    const MAX_SHAPES = 500 // tldraw 렌더 성능 보호
+    const tCluster = typeof performance !== 'undefined' ? performance.now() : Date.now()
     for (const [layer, segs] of layerGroups) {
-      // 연결된 선분끼리 분리 (Union-Find)
-      const clusters = clusterConnectedSegs(segs)
+      // 세그먼트가 너무 많으면 클러스터링 생략 (전체를 하나의 shape로)
+      const clusters = segs.length > 3000
+        ? [segs] // 레이어 전체를 하나의 클러스터로
+        : clusterConnectedSegs(segs)
+      totalClusters += clusters.length
 
       for (const cluster of clusters) {
         // 그룹 바운딩박스 계산
@@ -2103,7 +2120,37 @@ export function commitCadImport(
       }
     }
 
-    editor.createShapes(groupShapes as never)
+    const clusterMs = ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - tCluster).toFixed(0)
+    console.log(`[CAD Commit] 클러스터링 완료: ${totalClusters}개 클러스터 → ${groupShapes.length}개 DxfGroup (${clusterMs}ms)`)
+    // 좌표 범위 검증
+    let invalidShapes = 0
+    for (const s of groupShapes) {
+      const sh = s as { x: number; y: number; props?: { w?: number; h?: number; pathData?: string } }
+      if (!isFinite(sh.x) || !isFinite(sh.y)) invalidShapes++
+    }
+    if (invalidShapes > 0) console.error(`[CAD Commit] ⚠️ ${invalidShapes}개 shapes에 NaN/Infinity 좌표!`)
+    // 첫 3개 shape 샘플
+    for (let si = 0; si < Math.min(3, groupShapes.length); si++) {
+      const sh = groupShapes[si] as { x: number; y: number; props?: { w?: number; h?: number; pathData?: string; segCount?: number } }
+      const pathLen = sh.props?.pathData?.length ?? 0
+      console.log(`[CAD Commit] shape[${si}]: x=${sh.x?.toFixed(1)}, y=${sh.y?.toFixed(1)}, w=${sh.props?.w?.toFixed(1)}, h=${sh.props?.h?.toFixed(1)}, pathLen=${pathLen}, segs=${sh.props?.segCount}`)
+    }
+
+    const tCreate = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    try {
+      // 한 번에 1000개씩 분할 생성 (tldraw 렌더 부하 방지)
+      const BATCH = 1000
+      for (let i = 0; i < groupShapes.length; i += BATCH) {
+        const batch = groupShapes.slice(i, i + BATCH)
+        editor.createShapes(batch as never)
+      }
+      const createMs = ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - tCreate).toFixed(0)
+      const pageShapes = editor.getCurrentPageShapes().length
+      console.log(`[CAD Commit] ✅ createShapes 완료: ${groupShapes.length}개 shape (${createMs}ms), page에 ${pageShapes}개 shape 존재`)
+    } catch (err) {
+      console.error('[CAD Commit] ❌ createShapes 에러:', err)
+      throw err
+    }
 
     // shapes 생성 직후 zoomToFit (tldraw 렌더 완료 대기)
     setTimeout(() => {
@@ -2111,9 +2158,12 @@ export function commitCadImport(
         editor.selectAll()
         editor.zoomToFit({ animation: { duration: 0 } })
         editor.selectNone()
-      } catch { /* ignore */ }
+        console.log('[CAD Commit] zoomToFit 완료')
+      } catch (e) { console.warn('[CAD Commit] zoomToFit 에러:', e) }
     }, 300)
 
+    const totalMs = ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0).toFixed(0)
+    console.log(`[CAD Commit] ✅ 전체 완료: ${finalSegs.length}개 seg → ${groupShapes.length}개 shape (${totalMs}ms)`)
     return finalSegs.length
   }
 

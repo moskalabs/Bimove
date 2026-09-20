@@ -94,9 +94,23 @@ export function ImportPanel() {
       .reduce((sum, l) => sum + l.segCount, 0)
     setLoading(`${segCount.toLocaleString()}개 세그먼트 변환 중...`)
     await new Promise((r) => setTimeout(r, 50))
-    const count = safeCommit(cadResult, selectedLayers, pageId)
+    let count = 0
+    try {
+      count = safeCommit(cadResult, selectedLayers, pageId)
+    } catch (err) {
+      console.error('[Import] commitCadImport 에러:', err)
+      toast('도면 렌더링 중 오류가 발생했습니다.', 'error')
+      setCadResult(null)
+      setImportPageId(null)
+      setLoading(null)
+      return
+    }
     const fmt = cadResult.isDwg ? 'DWG' : 'DXF'
-    toast(`"${cadResult.fileName}" ${fmt}를 가져왔습니다. (${count}개 벽, ${selectedLayers.size}개 레이어)`, 'success')
+    if (count === 0) {
+      toast('선택한 레이어에 표시할 도형이 없습니다.', 'info')
+    } else {
+      toast(`"${cadResult.fileName}" ${fmt}를 가져왔습니다. (${count}개 벽, ${selectedLayers.size}개 레이어)`, 'success')
+    }
     setCadResult(null)
     setImportPageId(null)
     setLoading(null)
