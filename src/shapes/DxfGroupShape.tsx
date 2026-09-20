@@ -24,10 +24,6 @@ function luminance(hex: string): number {
 }
 
 /** #ffffff 등 배경과 구분 안 되는 밝은 색 감지 */
-function isNearWhite(hex: string): boolean {
-  return luminance(hex) > 0.85
-}
-
 /** #000000 등 어두운 배경에서 안 보이는 색 감지 */
 function isNearBlack(hex: string): boolean {
   return luminance(hex) < 0.15
