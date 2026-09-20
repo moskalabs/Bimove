@@ -1797,15 +1797,27 @@ export function commitCadImport(
 
   console.log(`[CAD Commit] rawSegsAll (레이어 필터 후): ${rawSegsAll.length}, scale=${scale}`)
 
-  // 1px 이상 필터 (너무 작은 세그먼트 제거) — 단, 전부 제거되면 원본 사용
-  let rawSegs = rawSegsAll.filter((s) => Math.hypot(s.dx, s.dy) >= 1)
-  if (!rawSegs.length && rawSegsAll.length > 0) {
-    // 스케일이 너무 작아서 모든 세그먼트가 1px 미만 → 0.1px 기준으로 재시도
-    rawSegs = rawSegsAll.filter((s) => Math.hypot(s.dx, s.dy) >= 0.1)
-    if (!rawSegs.length) rawSegs = rawSegsAll // 그래도 없으면 전부 사용
-    console.warn(`[CAD Commit] Scale too small: all ${rawSegsAll.length} segs < 1px, relaxed filter → ${rawSegs.length} segs`)
+  // 좌표 sanity 필터: 블록 변환에서 오버플로우된 극단 좌표(|coord| > 1e8) 제거
+  const COORD_LIMIT = 1e8 // 100km in mm — 건축 도면에서 절대 초과 불가
+  const saneSegs = rawSegsAll.filter((s) => {
+    const x2 = s.x1 + s.dx, y2 = s.y1 + s.dy
+    return Math.abs(s.x1) < COORD_LIMIT && Math.abs(s.y1) < COORD_LIMIT &&
+           Math.abs(x2) < COORD_LIMIT && Math.abs(y2) < COORD_LIMIT &&
+           isFinite(s.x1) && isFinite(s.y1) && isFinite(s.dx) && isFinite(s.dy)
+  })
+  if (saneSegs.length < rawSegsAll.length) {
+    console.warn(`[CAD Commit] 좌표 sanity 필터: ${rawSegsAll.length} → ${saneSegs.length} (${rawSegsAll.length - saneSegs.length}개 극단좌표 제거)`)
   }
-  console.log(`[CAD Commit] rawSegs (1px 필터 후): ${rawSegs.length}`)
+
+  // 1px 이상 필터 (너무 작은 세그먼트 제거) — 단, 전부 제거되면 원본 사용
+  let rawSegs = saneSegs.filter((s) => Math.hypot(s.dx, s.dy) >= 1)
+  if (!rawSegs.length && saneSegs.length > 0) {
+    // 스케일이 너무 작아서 모든 세그먼트가 1px 미만 → 0.1px 기준으로 재시도
+    rawSegs = saneSegs.filter((s) => Math.hypot(s.dx, s.dy) >= 0.1)
+    if (!rawSegs.length) rawSegs = saneSegs // 그래도 없으면 전부 사용
+    console.warn(`[CAD Commit] Scale too small: all ${saneSegs.length} segs < 1px, relaxed filter → ${rawSegs.length} segs`)
+  }
+  console.log(`[CAD Commit] rawSegs (sanity+1px 필터 후): ${rawSegs.length}`)
 
   if (!rawSegs.length) { console.warn('[CAD Commit] 세그먼트 0개 → return 0'); return 0 }
 
@@ -1886,7 +1898,9 @@ export function commitCadImport(
   const textScale = scale * autoScale
   type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string }
   const pxTexts: PxText[] = result._texts
-    .filter(t => selectedLayers.has(t.layer || '0'))
+    .filter(t => selectedLayers.has(t.layer || '0') &&
+      Math.abs(t.x) < COORD_LIMIT && Math.abs(t.y) < COORD_LIMIT &&
+      isFinite(t.x) && isFinite(t.y))
     .map(t => ({
       x: t.x * textScale,
       y: -t.y * textScale,
@@ -1913,15 +1927,17 @@ export function commitCadImport(
   // ── HATCH 좌표 변환 (DXF → px, Y flip, SVG path 좌표 변환) ──
   type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; color?: string; layer?: string; cx: number; cy: number }
   const pxHatches: PxHatch[] = (result._hatches ?? [])
-    .filter(h => selectedLayers.has(h.layer || '0'))
+    .filter(h => selectedLayers.has(h.layer || '0') &&
+      Math.abs(h.cx) < COORD_LIMIT && Math.abs(h.cy) < COORD_LIMIT &&
+      isFinite(h.cx) && isFinite(h.cy))
     .map(h => {
-      // SVG path 좌표 변환: scale + Y flip + autoScale
+      // SVG path 좌표 변환: scale + Y flip + autoScale (toFixed로 scientific notation 방지)
       const transformedPath = h.pathData.replace(
         /([ML])([\d.e+-]+),([\d.e+-]+)/g,
         (_, cmd, xStr, yStr) => {
           const nx = parseFloat(xStr) * textScale
           const ny = -parseFloat(yStr) * textScale
-          return `${cmd}${nx},${ny}`
+          return `${cmd}${nx.toFixed(1)},${ny.toFixed(1)}`
         }
       )
       return {
