@@ -1,6 +1,5 @@
 import DxfParser from 'dxf-parser'
-// @ts-ignore -- no types available for dxf package
-import { parseString as dxfParseString, toPolylines as dxfToPolylines } from 'dxf'
+// dxf npm package no longer used — replaced by custom dxf-fast-worker
 import { convertDwgToDxf, CDN_WASM_BASE } from 'dwgdxf'
 import { createShapeId, type Editor } from 'tldraw'
 import { getScaleConfig } from './scaleConfig'
@@ -2192,18 +2191,56 @@ export function commitCadImport(
 }
 
 // ════════════════════════════════════════════════════════════════════
-// V2: dxf 패키지 기반 임포트 (블록 확장/bulge/좌표 변환 자동 처리)
+// V2: Web Worker 기반 고속 DXF 임포트
 // ════════════════════════════════════════════════════════════════════
 
 /**
- * dxf 패키지의 toPolylines()를 사용하는 새 임포트 함수.
- * - 블록 확장(INSERT), bulge 호 변환, 좌표 변환이 라이브러리에서 자동 처리
- * - 좌표 오버플로우(10^58) 문제 없음
- * - 기존 DxfGroupShape 생성 파이프라인 재사용
+ * 커스텀 DXF 파서를 Web Worker에서 실행.
+ * npm dxf 패키지 대비 개선사항:
+ * - 선택된 레이어만 파싱 (80–90% 건너뜀)
+ * - lodash.cloneDeep 없이 INSERT 블록 확장
+ * - UI 스레드 블로킹 없음 (Worker)
+ * - 진행률 콜백 지원
  */
-/** 메인스레드에 잠시 양보 (브라우저 "응답 없음" 방지) */
-function yieldToMain(): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, 0))
+import type { PolylineData, WorkerOut } from './dxf-fast-worker'
+
+function runFastWorker(
+  dxfText: string,
+  selectedLayers: string[],
+  onProgress?: (msg: string) => void,
+): Promise<{ polylines: PolylineData[]; insUnits: number }> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(
+      new URL('./dxf-fast-worker.ts', import.meta.url),
+      { type: 'module' },
+    )
+    const timeout = setTimeout(() => {
+      worker.terminate()
+      reject(new Error('DXF 파싱 타임아웃 (60초)'))
+    }, 60_000)
+
+    worker.onmessage = (e: MessageEvent<WorkerOut>) => {
+      const msg = e.data
+      if (msg.type === 'progress') {
+        onProgress?.(`${msg.phase} (${msg.percent}%)`)
+      } else if (msg.type === 'result') {
+        clearTimeout(timeout)
+        worker.terminate()
+        resolve({ polylines: msg.polylines, insUnits: msg.insUnits })
+      } else if (msg.type === 'error') {
+        clearTimeout(timeout)
+        worker.terminate()
+        reject(new Error(msg.message))
+      }
+    }
+    worker.onerror = (err) => {
+      clearTimeout(timeout)
+      worker.terminate()
+      reject(new Error(`Worker 에러: ${err.message}`))
+    }
+
+    worker.postMessage({ type: 'parse', dxfText, selectedLayers })
+  })
 }
 
 export async function commitCadImportV2(
@@ -2213,49 +2250,34 @@ export async function commitCadImportV2(
   fileName: string,
   fileSize: number,
   _isDwg: boolean,
+  onProgress?: (msg: string) => void,
 ): Promise<number> {
-  const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  const t0 = performance.now()
+  const layerArr = [...selectedLayers]
+  console.log(`[CAD V2] 시작: selectedLayers=${layerArr.join(',')}`)
 
-  console.log(`[CAD V2] 시작: selectedLayers=${[...selectedLayers].join(',')}`)
-
-  // 1. 파싱 (대형 파일 10초+) → 단계별 yield
-  const tParse = typeof performance !== 'undefined' ? performance.now() : Date.now()
-  const parsed = dxfParseString(dxfText)
-  await yieldToMain()
-  console.log(`[CAD V2] parseString 완료 (${((performance?.now?.() ?? Date.now()) - tParse).toFixed(0)}ms)`)
-
-  const tPoly = typeof performance !== 'undefined' ? performance.now() : Date.now()
-  const { polylines } = dxfToPolylines(parsed) as {
-    bbox: { min: { x: number; y: number }; max: { x: number; y: number } }
-    polylines: Array<{
-      vertices: number[][]
-      rgb: number[]
-      layer: { name: string; colorNumber?: number } | null
-    }>
-  }
-  const polyMs = ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - tPoly).toFixed(0)
-  console.log(`[CAD V2] toPolylines 완료: ${polylines.length}개 폴리라인 (${polyMs}ms)`)
-  await yieldToMain()
+  // 1. Worker에서 DXF 파싱 (메인스레드 블로킹 없음)
+  onProgress?.('도면 파싱 중...')
+  const { polylines, insUnits } = await runFastWorker(dxfText, layerArr, onProgress)
+  const parseMs = (performance.now() - t0).toFixed(0)
+  console.log(`[CAD V2] Worker 파싱 완료: ${polylines.length}개 폴리라인 (${parseMs}ms)`)
 
   // 2. 유닛 스케일
-  const header = parsed.header as Record<string, unknown> | undefined
-  const unit = (header?.['$INSUNITS'] as number | undefined) ?? 4
+  const unit = insUnits
   const unitToMm = unit === 1 ? 25.4 : unit === 2 ? 304.8 : unit === 5 ? 10 : unit === 6 ? 1000 : 1
   const scale = getScaleConfig(editor).pxPerMm * unitToMm
   const thickness = getDefaultWallThicknessMm() * getScaleConfig(editor).pxPerMm
   console.log(`[CAD V2] scale=${scale}, unitToMm=${unitToMm}`)
 
-  // 3. 폴리라인 → RawSeg 변환 (레이어 필터 + Y flip + 스케일)
+  // 3. 폴리라인 → RawSeg 변환 (Y flip + 스케일, 레이어 필터는 Worker에서 이미 적용됨)
+  onProgress?.('좌표 변환 중...')
   const rawSegsAll: RawSeg[] = []
   for (const pl of polylines) {
-    const layerName = pl.layer?.name || '0'
-    if (!selectedLayers.has(layerName)) continue
-
     const verts = pl.vertices
     if (!verts || verts.length < 2) continue
 
-    // RGB → hex color
-    const color = pl.rgb ? `#${pl.rgb.map(c => c.toString(16).padStart(2, '0')).join('')}` : undefined
+    // ACI colorNumber → hex
+    const color = pl.colorNumber >= 0 ? aciToHex(pl.colorNumber) : undefined
 
     for (let i = 0; i < verts.length - 1; i++) {
       const x1 = verts[i][0] * scale
@@ -2266,20 +2288,19 @@ export async function commitCadImportV2(
         x1, y1,
         dx: x2 - x1,
         dy: y2 - y1,
-        layer: layerName,
+        layer: pl.layer,
         color,
       })
     }
   }
   console.log(`[CAD V2] rawSegsAll: ${rawSegsAll.length}개 세그먼트`)
-  await yieldToMain()
 
   if (rawSegsAll.length === 0) {
     console.warn('[CAD V2] 세그먼트 0개 → 종료')
     return 0
   }
 
-  // 4. 좌표 sanity 필터 (dxf 패키지 결과는 보통 안전하지만 방어용)
+  // 4. 좌표 sanity 필터
   const COORD_LIMIT = 1e8
   const saneSegs = rawSegsAll.filter((s) => {
     const x2 = s.x1 + s.dx, y2 = s.y1 + s.dy
@@ -2297,10 +2318,10 @@ export async function commitCadImportV2(
   console.log(`[CAD V2] 필터 후: ${rawSegs.length}개 (sanity: ${saneSegs.length}, 1px: ${rawSegs.length})`)
 
   // 6. 동일선상 병합
+  onProgress?.('세그먼트 병합 중...')
   const merged = mergeDxfSegments(rawSegs)
   const finalSegs = merged.length > 0 ? merged : rawSegs
   console.log(`[CAD V2] 병합: ${rawSegs.length} → ${finalSegs.length}`)
-  await yieldToMain()
 
   // 7. 퍼센타일 bbox (P2~P98)
   const allXCoords: number[] = []

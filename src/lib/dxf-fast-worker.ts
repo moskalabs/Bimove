@@ -1,0 +1,571 @@
+/**
+ * dxf-fast-worker.ts — Custom DXF parser in a Web Worker
+ *
+ * Replaces npm `dxf` package (parseString + denormalise + toPolylines).
+ * Key advantages:
+ * - Only parses selected layers (skips 80–90% of entities)
+ * - No lodash.cloneDeep for block expansion
+ * - No intermediate JSON object model
+ * - Progress reporting to main thread
+ * - Zero npm dependencies
+ */
+
+// ===== Public message types (also used by main thread) =====
+
+export interface ParseRequest {
+  type: 'parse'
+  dxfText: string
+  selectedLayers: string[]
+}
+
+export interface PolylineData {
+  vertices: number[][]   // [x,y][]
+  layer: string
+  colorNumber: number
+}
+
+export type WorkerOut =
+  | { type: 'progress'; phase: string; percent: number }
+  | { type: 'result'; polylines: PolylineData[]; insUnits: number }
+  | { type: 'error'; message: string }
+
+// ===== Internal types =====
+
+interface Vertex { x: number; y: number; bulge: number }
+
+interface BlockDef {
+  name: string
+  baseX: number
+  baseY: number
+  entityChunks: string[]   // raw text chunks for lazy parsing
+}
+
+interface Transform {
+  x: number; y: number
+  sx: number; sy: number
+  rot: number             // degrees
+  ez: number              // extrusionZ
+}
+
+const MAX_DEPTH = 8
+const ARC_STEP  = 5       // degrees
+
+// ===== Geometry helpers =====
+
+/** LWPOLYLINE bulge → arc interpolation points (from/to excluded) */
+function bulgeArc(fx: number, fy: number, tx: number, ty: number, bulge: number): number[][] {
+  const theta = Math.atan(Math.abs(bulge)) * 4
+  let ax: number, ay: number, bx: number, by: number
+  if (bulge < 0) { ax = fx; ay = fy; bx = tx; by = ty }
+  else           { ax = tx; ay = ty; bx = fx; by = fy }
+
+  const abx = bx - ax, aby = by - ay
+  const lenAB = Math.sqrt(abx * abx + aby * aby)
+  if (lenAB < 1e-10) return []
+
+  const mx = ax + abx * 0.5, my = ay + aby * 0.5
+  const nxAB = abx / lenAB, nyAB = aby / lenAB
+  const perpX = -nyAB, perpY = nxAB
+  const h = Math.abs(lenAB / 2 / Math.tan(theta / 2))
+
+  let cx: number, cy: number
+  if (theta < Math.PI) { cx = mx - perpX * h; cy = my - perpY * h }
+  else                 { cx = mx + perpX * h; cy = my + perpY * h }
+
+  const sa = Math.atan2(by - cy, bx - cx) * 180 / Math.PI
+  let ea = Math.atan2(ay - cy, ax - cx) * 180 / Math.PI
+  if (ea < sa) ea += 360
+  const r = Math.sqrt((bx - cx) ** 2 + (by - cy) ** 2)
+
+  const pts: number[][] = []
+  const s0 = Math.floor(sa / ARC_STEP) * ARC_STEP + ARC_STEP
+  const s1 = Math.ceil(ea / ARC_STEP) * ARC_STEP - ARC_STEP
+  for (let d = s0; d <= s1; d += ARC_STEP) {
+    const rad = d * Math.PI / 180
+    pts.push([cx + Math.cos(rad) * r, cy + Math.sin(rad) * r])
+  }
+  if (bulge < 0) pts.reverse()
+  return pts
+}
+
+/** Interpolate ellipse/arc/circle → polyline */
+function interpEllipse(
+  cx: number, cy: number, rx: number, ry: number,
+  start: number, end: number, rotAngle = 0,
+): number[][] {
+  if (end < start) end += Math.PI * 2
+  const step = Math.PI * 2 / 72
+  const pts: number[][] = []
+  for (let t = start; t < end - 1e-6; t += step) {
+    pts.push([Math.cos(t) * rx, Math.sin(t) * ry])
+  }
+  pts.push([Math.cos(end) * rx, Math.sin(end) * ry])
+
+  if (rotAngle) {
+    const c = Math.cos(rotAngle), s = Math.sin(rotAngle)
+    for (const p of pts) { const x = p[0], y = p[1]; p[0] = x * c - y * s; p[1] = y * c + x * s }
+  }
+  for (const p of pts) { p[0] += cx; p[1] += cy }
+  return pts
+}
+
+/** De Boor B-spline evaluation at parameter t */
+function deBoor(degree: number, pts: number[][], knots: number[], t: number, weights?: number[]): number[] {
+  const n = pts.length
+  let k = degree
+  while (k < n && knots[k + 1] !== undefined && knots[k + 1] <= t) k++
+  if (k >= n) k = n - 1
+
+  const d: number[][] = []
+  for (let j = 0; j <= degree; j++) {
+    const idx = k - degree + j
+    if (idx >= 0 && idx < n) {
+      const w = weights ? (weights[idx] || 1) : 1
+      d.push([pts[idx][0] * w, pts[idx][1] * w, w])
+    } else {
+      d.push([0, 0, 1])
+    }
+  }
+  for (let r = 1; r <= degree; r++) {
+    for (let j = degree; j >= r; j--) {
+      const i = k - degree + j
+      const den = knots[i + degree - r + 1] - knots[i]
+      if (Math.abs(den) < 1e-10) continue
+      const a = (t - knots[i]) / den
+      d[j][0] = (1 - a) * d[j - 1][0] + a * d[j][0]
+      d[j][1] = (1 - a) * d[j - 1][1] + a * d[j][1]
+      d[j][2] = (1 - a) * d[j - 1][2] + a * d[j][2]
+    }
+  }
+  const w = d[degree][2]
+  return w ? [d[degree][0] / w, d[degree][1] / w] : [d[degree][0], d[degree][1]]
+}
+
+/** Interpolate B-spline to polyline */
+function interpBSpline(
+  cps: Array<{ x: number; y: number }>, degree: number,
+  knots: number[], weights?: number[],
+): number[][] {
+  if (!cps.length || !knots.length) return []
+  const pts2d = cps.map(p => [p.x, p.y])
+  const lo = knots[degree], hi = knots[knots.length - 1 - degree]
+  if (lo >= hi) return pts2d  // degenerate, return control points as fallback
+
+  // Collect unique knot spans
+  const spans = [lo]
+  for (let k = degree + 1; k < knots.length - degree; k++) {
+    if (spans[spans.length - 1] !== knots[k]) spans.push(knots[k])
+  }
+
+  const result: number[][] = []
+  const N = 25  // interpolations per span
+  for (let s = 1; s < spans.length; s++) {
+    const u0 = spans[s - 1], u1 = spans[s]
+    for (let k = 0; k <= N; k++) {
+      const u = u0 + (k / N) * (u1 - u0)
+      result.push(deBoor(degree, pts2d, knots, u, weights))
+    }
+  }
+  return result
+}
+
+/** Apply INSERT transform to polyline points (mutates) */
+function applyTransform(poly: number[][], t: Transform): void {
+  const rad = t.rot * Math.PI / 180
+  const cosR = Math.cos(rad), sinR = Math.sin(rad)
+  for (const p of poly) {
+    // Scale
+    let x = p[0] * t.sx, y = p[1] * t.sy
+    // Rotate
+    if (t.rot) { const nx = x * cosR - y * sinR; y = y * cosR + x * sinR; x = nx }
+    // Translate
+    x += t.x; y += t.y
+    // Extrusion Z flip
+    if (t.ez === -1) x = -x
+    p[0] = x; p[1] = y
+  }
+}
+
+// ===== DXF Parsing =====
+
+/** Extract a named section's inner text */
+function extractSection(dxf: string, name: string): string | null {
+  const hdr = `\n0\nSECTION\n2\n${name}\n`
+  const idx = dxf.indexOf(hdr)
+  if (idx < 0) return null
+  const start = idx + hdr.length
+  const end = dxf.indexOf('\n0\nENDSEC', start)
+  return end > start ? dxf.substring(start, end) : null
+}
+
+/** Parse $INSUNITS from HEADER section */
+function parseInsUnits(dxf: string): number {
+  const hdr = extractSection(dxf, 'HEADER')
+  if (!hdr) return 4  // default mm
+  const m = hdr.match(/\$INSUNITS\n\s*70\n\s*(\d+)/)
+  return m ? parseInt(m[1]) : 4
+}
+
+/** Parse BLOCKS section → Map<name, BlockDef> */
+function parseBlocks(dxf: string): Map<string, BlockDef> {
+  const blocks = new Map<string, BlockDef>()
+  const sec = extractSection(dxf, 'BLOCKS')
+  if (!sec) return blocks
+
+  const chunks = sec.split('\n0\n')
+  let cur: BlockDef | null = null
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i]
+    const type = chunk.split('\n', 1)[0].trim()
+
+    if (type === 'BLOCK') {
+      const nameMatch = chunk.match(/\n2\n([^\n]+)/)
+      const bxMatch = chunk.match(/\n10\n([^\n]+)/)
+      const byMatch = chunk.match(/\n20\n([^\n]+)/)
+      cur = {
+        name: nameMatch ? nameMatch[1].trim() : `_anon_${i}`,
+        baseX: bxMatch ? parseFloat(bxMatch[1]) : 0,
+        baseY: byMatch ? parseFloat(byMatch[1]) : 0,
+        entityChunks: [],
+      }
+    } else if (type === 'ENDBLK') {
+      if (cur) { blocks.set(cur.name, cur); cur = null }
+    } else if (cur && type) {
+      // Entity inside a block
+      cur.entityChunks.push(chunk)
+    }
+  }
+  return blocks
+}
+
+/** Parse group codes from entity text chunk */
+function parseGroupCodes(text: string): { type: string; codes: Map<number, string[]> } {
+  const lines = text.split('\n')
+  const type = lines[0]?.trim() || ''
+  const codes = new Map<number, string[]>()
+
+  for (let i = 1; i < lines.length - 1; i += 2) {
+    const code = parseInt(lines[i].trim())
+    if (isNaN(code)) continue
+    const val = lines[i + 1]?.trim() ?? ''
+    let arr = codes.get(code)
+    if (!arr) { arr = []; codes.set(code, arr) }
+    arr.push(val)
+  }
+  return { type, codes }
+}
+
+/** Convert a parsed entity to polyline vertices. Returns null for unsupported types. */
+function entityToPolyline(
+  type: string,
+  codes: Map<number, string[]>,
+  blocks: Map<string, BlockDef>,
+  layerOverride: string,
+  transforms: Transform[],
+  depth: number,
+  selectedLayers: Set<string>,
+  output: PolylineData[],
+): void {
+  const layer = layerOverride || (codes.get(8)?.[0]?.trim() ?? '0')
+  const colorNum = codes.get(62)?.[0] ? parseInt(codes.get(62)![0]) : -1
+  const ez = codes.get(230)?.[0] ? parseFloat(codes.get(230)![0]) : 1
+
+  let poly: number[][] | null = null
+
+  switch (type) {
+    case 'LINE': {
+      const x1 = parseFloat(codes.get(10)?.[0] ?? '0')
+      const y1 = parseFloat(codes.get(20)?.[0] ?? '0')
+      const x2 = parseFloat(codes.get(11)?.[0] ?? '0')
+      const y2 = parseFloat(codes.get(21)?.[0] ?? '0')
+      poly = [[x1, y1], [x2, y2]]
+      break
+    }
+
+    case 'LWPOLYLINE': {
+      const xs = codes.get(10) || []
+      const ys = codes.get(20) || []
+      const bulges = codes.get(42) || []
+      const flag = parseInt(codes.get(70)?.[0] ?? '0')
+      const closed = (flag & 1) !== 0
+      const n = Math.min(xs.length, ys.length)
+      if (n < 2) break
+
+      const verts: Vertex[] = []
+      for (let i = 0; i < n; i++) {
+        verts.push({ x: parseFloat(xs[i]), y: parseFloat(ys[i]), bulge: parseFloat(bulges[i] || '0') })
+      }
+      if (closed) verts.push({ ...verts[0], bulge: 0 })
+
+      poly = []
+      for (let i = 0; i < verts.length - 1; i++) {
+        const f = verts[i], t = verts[i + 1]
+        poly.push([f.x, f.y])
+        if (f.bulge) {
+          poly.push(...bulgeArc(f.x, f.y, t.x, t.y, f.bulge))
+        }
+        if (i === verts.length - 2) poly.push([t.x, t.y])
+      }
+      break
+    }
+
+    case 'ARC': {
+      const cx = parseFloat(codes.get(10)?.[0] ?? '0')
+      const cy = parseFloat(codes.get(20)?.[0] ?? '0')
+      const r  = parseFloat(codes.get(40)?.[0] ?? '0')
+      const sa = parseFloat(codes.get(50)?.[0] ?? '0') * Math.PI / 180
+      const ea = parseFloat(codes.get(51)?.[0] ?? '360') * Math.PI / 180
+      poly = interpEllipse(cx, cy, r, r, sa, ea)
+      if (ez === -1) for (const p of poly) p[0] = -p[0]
+      break
+    }
+
+    case 'CIRCLE': {
+      const cx = parseFloat(codes.get(10)?.[0] ?? '0')
+      const cy = parseFloat(codes.get(20)?.[0] ?? '0')
+      const r  = parseFloat(codes.get(40)?.[0] ?? '0')
+      poly = interpEllipse(cx, cy, r, r, 0, Math.PI * 2)
+      if (ez === -1) for (const p of poly) p[0] = -p[0]
+      break
+    }
+
+    case 'ELLIPSE': {
+      const cx = parseFloat(codes.get(10)?.[0] ?? '0')
+      const cy = parseFloat(codes.get(20)?.[0] ?? '0')
+      const mjx = parseFloat(codes.get(11)?.[0] ?? '1')
+      const mjy = parseFloat(codes.get(21)?.[0] ?? '0')
+      const ratio = parseFloat(codes.get(40)?.[0] ?? '1')
+      const sp = parseFloat(codes.get(41)?.[0] ?? '0')
+      const ep = parseFloat(codes.get(42)?.[0] ?? `${Math.PI * 2}`)
+      const rx = Math.sqrt(mjx * mjx + mjy * mjy)
+      const ry = ratio * rx
+      const rot = -Math.atan2(-mjy, mjx)
+      poly = interpEllipse(cx, cy, rx, ry, sp, ep, rot)
+      if (ez === -1) for (const p of poly) p[0] = -p[0]
+      break
+    }
+
+    case 'SPLINE': {
+      const degree = parseInt(codes.get(71)?.[0] ?? '3')
+      const xs = codes.get(10) || []
+      const ys = codes.get(20) || []
+      const knotVals = codes.get(40) || []
+      const weightVals = codes.get(41) || []
+      const n = Math.min(xs.length, ys.length)
+      if (n < 2) break
+      const cps = []
+      for (let i = 0; i < n; i++) {
+        cps.push({ x: parseFloat(xs[i]), y: parseFloat(ys[i]) })
+      }
+      const knots = knotVals.map(v => parseFloat(v))
+      const weights = weightVals.length ? weightVals.map(v => parseFloat(v)) : undefined
+      if (knots.length >= n + degree + 1) {
+        poly = interpBSpline(cps, degree, knots, weights)
+      } else {
+        // Fallback: connect control points
+        poly = cps.map(p => [p.x, p.y])
+      }
+      break
+    }
+
+    case 'INSERT': {
+      if (depth >= MAX_DEPTH) break
+      const blockName = codes.get(2)?.[0]?.trim() ?? ''
+      const block = blocks.get(blockName)
+      if (!block) break
+
+      const ix = parseFloat(codes.get(10)?.[0] ?? '0')
+      const iy = parseFloat(codes.get(20)?.[0] ?? '0')
+      const sx = parseFloat(codes.get(41)?.[0] ?? '1')
+      const sy = parseFloat(codes.get(42)?.[0] ?? '1')
+      const rot = parseFloat(codes.get(50)?.[0] ?? '0')
+      const rowN = parseInt(codes.get(71)?.[0] ?? '1') || 1
+      const colN = parseInt(codes.get(70)?.[0] ?? '1') || 1
+      const rowSp = parseFloat(codes.get(44)?.[0] ?? '0')
+      const colSp = parseFloat(codes.get(45)?.[0] ?? '0')
+      const iez = codes.get(230)?.[0] ? parseFloat(codes.get(230)![0]) : 1
+
+      const rotRad = rot * Math.PI / 180
+      const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad)
+
+      for (let r = 0; r < rowN; r++) {
+        for (let c = 0; c < colN; c++) {
+          const ox = ix + (-sinR * rowSp * r) + (cosR * colSp * c)
+          const oy = iy + (cosR * rowSp * r) + (sinR * colSp * c)
+
+          const t: Transform = { x: ox, y: oy, sx, sy, rot, ez: iez }
+          const nextTransforms = [...transforms, t]
+
+          // Process block entities (inheriting INSERT's layer per DXF convention)
+          for (const chunk of block.entityChunks) {
+            const { type: eType, codes: eCodes } = parseGroupCodes(chunk)
+            if (eType === 'INSERT') {
+              // Nested INSERT
+              entityToPolyline(eType, eCodes, blocks, layer, nextTransforms, depth + 1, selectedLayers, output)
+            } else {
+              // Geometry entity — subtract block base point, convert to polyline
+              const subOutput: PolylineData[] = []
+              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput)
+
+              // Apply base point offset + all accumulated transforms
+              for (const pl of subOutput) {
+                // Subtract block base point
+                for (const p of pl.vertices) { p[0] -= block.baseX; p[1] -= block.baseY }
+                // Apply all transforms in order (innermost first)
+                for (const tr of nextTransforms) applyTransform(pl.vertices, tr)
+                output.push(pl)
+              }
+            }
+          }
+        }
+      }
+      return  // INSERT handled, don't add poly
+    }
+  }
+
+  if (poly && poly.length >= 2) {
+    // Apply extrusion Z flip if entity-level (non-INSERT)
+    // Already handled per entity type above
+
+    // Apply accumulated transforms (from parent INSERTs)
+    if (transforms.length) {
+      for (const tr of transforms) applyTransform(poly, tr)
+    }
+
+    output.push({ vertices: poly, layer, colorNumber: colorNum })
+  }
+}
+
+// ===== Main parsing orchestrator =====
+
+function parseDxfFast(dxfText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number } {
+  const t0 = performance.now()
+  const layerSet = new Set(selectedLayers)
+
+  // 1. Header → units
+  progress('헤더 분석', 5)
+  const insUnits = parseInsUnits(dxfText)
+
+  // 2. Blocks
+  progress('블록 정의 파싱', 10)
+  const blocks = parseBlocks(dxfText)
+  console.log(`[fast-worker] ${blocks.size}개 블록 정의 (${(performance.now() - t0).toFixed(0)}ms)`)
+
+  // 3. Entities section
+  progress('엔티티 섹션 추출', 20)
+  const entHdr = '\n0\nSECTION\n2\nENTITIES\n'
+  const entIdx = dxfText.indexOf(entHdr)
+  if (entIdx < 0) return { polylines: [], insUnits }
+  const entStart = entIdx + entHdr.length
+  const entEnd = dxfText.indexOf('\n0\nENDSEC', entStart)
+  if (entEnd <= entStart) return { polylines: [], insUnits }
+
+  const entText = dxfText.substring(entStart, entEnd)
+  const chunks = entText.split('\n0\n')
+  const totalChunks = chunks.length
+  console.log(`[fast-worker] ${totalChunks}개 엔티티 청크 (${(performance.now() - t0).toFixed(0)}ms)`)
+
+  // 4. Process entities — only selected layers
+  progress('도면 요소 변환', 30)
+  const output: PolylineData[] = []
+
+  // Handle POLYLINE (old-style): accumulate VERTEX entities
+  let polylineState: { layer: string; colorNum: number; vertices: Vertex[]; closed: boolean } | null = null
+
+  for (let i = 0; i < totalChunks; i++) {
+    // Progress every 5000 chunks
+    if (i > 0 && i % 5000 === 0) {
+      progress('도면 요소 변환', 30 + Math.round((i / totalChunks) * 60))
+    }
+
+    const chunk = chunks[i]
+    const nlIdx = chunk.indexOf('\n')
+    const type = (nlIdx > 0 ? chunk.substring(0, nlIdx) : chunk).trim()
+
+    // POLYLINE state machine
+    if (type === 'VERTEX' && polylineState) {
+      // Add vertex to current POLYLINE
+      const xm = chunk.match(/\n10\n([^\n]+)/)
+      const ym = chunk.match(/\n20\n([^\n]+)/)
+      const bm = chunk.match(/\n42\n([^\n]+)/)
+      if (xm && ym) {
+        polylineState.vertices.push({
+          x: parseFloat(xm[1]), y: parseFloat(ym[1]),
+          bulge: bm ? parseFloat(bm[1]) : 0,
+        })
+      }
+      continue
+    }
+
+    if (type === 'SEQEND' && polylineState) {
+      // Finalize POLYLINE
+      const verts = polylineState.vertices
+      if (polylineState.closed && verts.length > 0) verts.push({ ...verts[0], bulge: 0 })
+      if (verts.length >= 2) {
+        const poly: number[][] = []
+        for (let j = 0; j < verts.length - 1; j++) {
+          const f = verts[j], t = verts[j + 1]
+          poly.push([f.x, f.y])
+          if (f.bulge) poly.push(...bulgeArc(f.x, f.y, t.x, t.y, f.bulge))
+          if (j === verts.length - 2) poly.push([t.x, t.y])
+        }
+        if (poly.length >= 2) {
+          output.push({ vertices: poly, layer: polylineState.layer, colorNumber: polylineState.colorNum })
+        }
+      }
+      polylineState = null
+      continue
+    }
+
+    // Finalize any orphaned POLYLINE before processing new entity
+    if (polylineState && type !== 'VERTEX') {
+      polylineState = null
+    }
+
+    // Quick layer check (fast reject) — find group code 8 value
+    const layerMatch = chunk.match(/\n8\n([^\n]+)/)
+    const entityLayer = layerMatch ? layerMatch[1].trim() : '0'
+
+    if (!layerSet.has(entityLayer)) continue  // ← THE KEY OPTIMIZATION
+
+    // Start POLYLINE state
+    if (type === 'POLYLINE') {
+      const flag = parseInt(chunk.match(/\n70\n([^\n]+)/)?.[1] ?? '0')
+      const colorMatch = chunk.match(/\n62\n([^\n]+)/)
+      polylineState = {
+        layer: entityLayer,
+        colorNum: colorMatch ? parseInt(colorMatch[1]) : -1,
+        vertices: [],
+        closed: (flag & 1) !== 0,
+      }
+      continue
+    }
+
+    // Parse full entity and convert to polylines
+    const { codes } = parseGroupCodes(chunk)
+    entityToPolyline(type, codes, blocks, '', [], 0, layerSet, output)
+  }
+
+  progress('완료', 95)
+  const elapsed = (performance.now() - t0).toFixed(0)
+  console.log(`[fast-worker] 파싱 완료: ${output.length}개 폴리라인 (${elapsed}ms)`)
+
+  return { polylines: output, insUnits }
+}
+
+// ===== Worker message handler =====
+
+self.onmessage = (e: MessageEvent<ParseRequest>) => {
+  if (e.data.type !== 'parse') return
+
+  const post = (msg: WorkerOut) => (self as unknown as Worker).postMessage(msg)
+  const progress = (phase: string, percent: number) => post({ type: 'progress', phase, percent })
+
+  try {
+    const result = parseDxfFast(e.data.dxfText, e.data.selectedLayers, progress)
+    post({ type: 'result', polylines: result.polylines, insUnits: result.insUnits })
+  } catch (err) {
+    post({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+  }
+}

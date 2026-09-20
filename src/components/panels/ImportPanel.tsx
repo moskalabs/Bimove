@@ -80,7 +80,7 @@ export function ImportPanel() {
 
     const prev = previewData
     setPreviewData(null)
-    setLoading('도면 파싱 중... (대형 도면은 수 초 소요)')
+    setLoading('도면 파싱 준비 중...')
 
     // requestAnimationFrame으로 로딩 UI가 먼저 보이도록
     await new Promise(r => requestAnimationFrame(r))
@@ -93,6 +93,7 @@ export function ImportPanel() {
         prev.fileName,
         prev.fileSize,
         prev.isDwg,
+        (progress: string) => setLoading(progress),
       )
 
       const fmt = prev.isDwg ? 'DWG' : 'DXF'
