@@ -21,6 +21,7 @@ export function ImportPanel() {
 
   /** 임포트 전 원래 페이지로 복원 + shapes 생성 */
   const safeCommit = (result: CadParseResult, layers: Set<string>, pageId: string) => {
+    if (!editor) return 0
     // 현재 페이지가 임포트 시작 시점과 다르면 원래 페이지로 복원
     const currentPageId = editor.getCurrentPageId()
     if (currentPageId !== pageId) {
