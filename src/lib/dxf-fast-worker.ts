@@ -465,8 +465,16 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
 
   // 0. \r\n → \n 정규화 (Windows DXF 파일 호환)
   progress('줄바꿈 정규화', 2)
-  const dxfText = rawText.indexOf('\r') >= 0 ? rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n') : rawText
-  console.log(`[fast-worker] 텍스트 길이: ${dxfText.length} chars (정규화: ${rawText !== dxfText})`)
+  let dxfText = rawText.indexOf('\r') >= 0 ? rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n') : rawText
+
+  // 0-1. 패딩된 그룹 코드 정규화 (DXF 스펙: 우측 정렬 "  0" → "0")
+  const hasPadding = dxfText.indexOf('\n  0\n') >= 0 || dxfText.indexOf('\n 0\n') >= 0
+  if (hasPadding) {
+    progress('그룹 코드 정규화', 3)
+    dxfText = dxfText.replace(/\n {1,2}(\d{1,3})\n/g, '\n$1\n')
+    if (dxfText.charCodeAt(0) === 32) dxfText = dxfText.replace(/^ {1,2}(\d{1,3})\n/, '$1\n')
+  }
+  console.log(`[fast-worker] 텍스트 길이: ${dxfText.length} chars (CR정규화: ${rawText !== dxfText}, 패딩: ${hasPadding})`)
 
   // 1. Header → units
   progress('헤더 분석', 5)

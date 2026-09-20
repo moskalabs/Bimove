@@ -193,11 +193,22 @@ export default function CadPreview({
 function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
   // 0. \r\n → \n 정규화 (Windows DXF 호환)
   const hadCR = rawDxfText.indexOf('\r') >= 0
-  const dxfText = hadCR
+  let dxfText = hadCR
     ? rawDxfText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
     : rawDxfText
 
-  console.log(`[CadPreview] 텍스트 길이: ${dxfText.length}, \\r\\n 정규화: ${hadCR}, 첫 200자: ${JSON.stringify(dxfText.substring(0, 200))}`)
+  // 0-1. 패딩된 그룹 코드 정규화 (DXF 스펙: 그룹 코드 3자리 우측 정렬 허용)
+  //      "  0\nSECTION" → "0\nSECTION", " 10\n0.0" → "10\n0.0"
+  const hasPadding = dxfText.indexOf('\n  0\n') >= 0 || dxfText.indexOf('\n 0\n') >= 0
+  if (hasPadding) {
+    dxfText = dxfText.replace(/\n {1,2}(\d{1,3})\n/g, '\n$1\n')
+    // 첫 줄도 처리 (파일이 "  0\n"으로 시작하는 경우)
+    if (dxfText.charCodeAt(0) === 32) {
+      dxfText = dxfText.replace(/^ {1,2}(\d{1,3})\n/, '$1\n')
+    }
+  }
+
+  console.log(`[CadPreview] 텍스트 길이: ${dxfText.length}, \\r\\n: ${hadCR}, 패딩: ${hasPadding}, 첫 200자: ${JSON.stringify(dxfText.substring(0, 200))}`)
 
   // --- 1. LAYER 테이블에서 정의된 레이어 + 색상 ---
   const layerDefs = new Map<string, number>() // name → ACI color
