@@ -376,11 +376,11 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
               fileName={pendingCadPreview.fileName}
               fileSize={pendingCadPreview.fileSize}
               isDwg={pendingCadPreview.isDwg}
-              onImport={(selectedLayers, dxfText) => {
+              onImport={async (selectedLayers, dxfText) => {
                 const prev = pendingCadPreview
                 setPendingCadPreview(null)
                 try {
-                  const count = commitCadImportV2(editor, dxfText, selectedLayers, prev.fileName, prev.fileSize, prev.isDwg)
+                  const count = await commitCadImportV2(editor, dxfText, selectedLayers, prev.fileName, prev.fileSize, prev.isDwg)
                   const fmt = prev.isDwg ? 'DWG' : 'DXF'
                   if (count > 0) {
                     toast(`"${prev.fileName}" ${fmt} 가져옴 (${count.toLocaleString()}개)`, 'success')

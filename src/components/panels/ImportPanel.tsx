@@ -75,37 +75,38 @@ export function ImportPanel() {
     }
   }
 
-  const handlePreviewImport = (selectedLayers: Set<string>, dxfText: string) => {
+  const handlePreviewImport = async (selectedLayers: Set<string>, dxfText: string) => {
     if (!editor || !previewData) return
 
+    const prev = previewData
     setPreviewData(null)
-    setLoading('도면 shapes 생성 중...')
+    setLoading('도면 파싱 중... (대형 도면은 수 초 소요)')
 
-    // 약간의 딜레이로 UI 업데이트 후 처리
-    setTimeout(() => {
-      try {
-        const count = commitCadImportV2(
-          editor,
-          dxfText,
-          selectedLayers,
-          previewData.fileName,
-          previewData.fileSize,
-          previewData.isDwg,
-        )
+    // requestAnimationFrame으로 로딩 UI가 먼저 보이도록
+    await new Promise(r => requestAnimationFrame(r))
 
-        const fmt = previewData.isDwg ? 'DWG' : 'DXF'
-        if (count === 0) {
-          toast('선택한 레이어에 표시할 도형이 없습니다.', 'info')
-        } else {
-          toast(`"${previewData.fileName}" ${fmt} 가져옴 (${count.toLocaleString()}개 선분, ${selectedLayers.size}개 레이어)`, 'success')
-        }
-      } catch (err) {
-        console.error('[Import] commitCadImportV2 에러:', err)
-        toast('도면 렌더링 중 오류가 발생했습니다.', 'error')
-      } finally {
-        setLoading(null)
+    try {
+      const count = await commitCadImportV2(
+        editor,
+        dxfText,
+        selectedLayers,
+        prev.fileName,
+        prev.fileSize,
+        prev.isDwg,
+      )
+
+      const fmt = prev.isDwg ? 'DWG' : 'DXF'
+      if (count === 0) {
+        toast('선택한 레이어에 표시할 도형이 없습니다.', 'info')
+      } else {
+        toast(`"${prev.fileName}" ${fmt} 가져옴 (${count.toLocaleString()}개 선분, ${selectedLayers.size}개 레이어)`, 'success')
       }
-    }, 100)
+    } catch (err) {
+      console.error('[Import] commitCadImportV2 에러:', err)
+      toast('도면 렌더링 중 오류가 발생했습니다.', 'error')
+    } finally {
+      setLoading(null)
+    }
   }
 
   return (

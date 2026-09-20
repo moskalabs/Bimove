@@ -2201,21 +2201,30 @@ export function commitCadImport(
  * - 좌표 오버플로우(10^58) 문제 없음
  * - 기존 DxfGroupShape 생성 파이프라인 재사용
  */
-export function commitCadImportV2(
+/** 메인스레드에 잠시 양보 (브라우저 "응답 없음" 방지) */
+function yieldToMain(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 0))
+}
+
+export async function commitCadImportV2(
   editor: Editor,
   dxfText: string,
   selectedLayers: Set<string>,
   fileName: string,
   fileSize: number,
   _isDwg: boolean,
-): number {
+): Promise<number> {
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now()
 
   console.log(`[CAD V2] 시작: selectedLayers=${[...selectedLayers].join(',')}`)
 
-  // 1. 파싱 + 폴리라인 변환 (블록 확장 + bulge 호 자동)
+  // 1. 파싱 (대형 파일 10초+) → 단계별 yield
   const tParse = typeof performance !== 'undefined' ? performance.now() : Date.now()
   const parsed = dxfParseString(dxfText)
+  await yieldToMain()
+  console.log(`[CAD V2] parseString 완료 (${((performance?.now?.() ?? Date.now()) - tParse).toFixed(0)}ms)`)
+
+  const tPoly = typeof performance !== 'undefined' ? performance.now() : Date.now()
   const { polylines } = dxfToPolylines(parsed) as {
     bbox: { min: { x: number; y: number }; max: { x: number; y: number } }
     polylines: Array<{
@@ -2224,8 +2233,9 @@ export function commitCadImportV2(
       layer: { name: string; colorNumber?: number } | null
     }>
   }
-  const parseMs = ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - tParse).toFixed(0)
-  console.log(`[CAD V2] 파싱 완료: ${polylines.length}개 폴리라인 (${parseMs}ms)`)
+  const polyMs = ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - tPoly).toFixed(0)
+  console.log(`[CAD V2] toPolylines 완료: ${polylines.length}개 폴리라인 (${polyMs}ms)`)
+  await yieldToMain()
 
   // 2. 유닛 스케일
   const header = parsed.header as Record<string, unknown> | undefined
@@ -2262,6 +2272,7 @@ export function commitCadImportV2(
     }
   }
   console.log(`[CAD V2] rawSegsAll: ${rawSegsAll.length}개 세그먼트`)
+  await yieldToMain()
 
   if (rawSegsAll.length === 0) {
     console.warn('[CAD V2] 세그먼트 0개 → 종료')
@@ -2289,6 +2300,7 @@ export function commitCadImportV2(
   const merged = mergeDxfSegments(rawSegs)
   const finalSegs = merged.length > 0 ? merged : rawSegs
   console.log(`[CAD V2] 병합: ${rawSegs.length} → ${finalSegs.length}`)
+  await yieldToMain()
 
   // 7. 퍼센타일 bbox (P2~P98)
   const allXCoords: number[] = []
