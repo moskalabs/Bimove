@@ -4,7 +4,7 @@ import { createShapeId, type Editor } from 'tldraw'
 import { getScaleConfig } from './scaleConfig'
 import { getDefaultWallThicknessMm } from './settings'
 
-const MAX_SEGMENTS = 50_000
+const MAX_SEGMENTS = 100_000
 
 type Seg = { x1: number; y1: number; x2: number; y2: number }
 
@@ -1544,6 +1544,9 @@ export async function parseCadFile(
     notify?.onError?.('DXF에서 도형 데이터를 찾지 못했습니다.')
     return null
   }
+  if (segs.length >= MAX_SEGMENTS) {
+    notify?.onInfo?.(`세그먼트 ${MAX_SEGMENTS.toLocaleString()}개 제한으로 일부만 로드됩니다.`)
+  }
 
   // 레이어별 세그먼트 수 집계
   const layerMap = new Map<string, number>()
@@ -1746,7 +1749,7 @@ export function commitCadImport(
   const thickness = getDefaultWallThicknessMm() * getScaleConfig(editor).pxPerMm
 
   // 1단계: 스케일 적용 + 좌표 변환
-  const rawSegs = result._segs
+  const rawSegsAll = result._segs
     .filter((s) => selectedLayers.has(s.layer || '0'))
     .map((s) => {
       const x1 = s.x1 * scale
@@ -1755,25 +1758,41 @@ export function commitCadImport(
       const dy = -(s.y2 - s.y1) * scale
       return { x1, y1, dx, dy, layer: s.layer, lineweight: s.lineweight, color: s.color }
     })
-    .filter((s) => Math.hypot(s.dx, s.dy) >= 1)
+
+  // 1px 이상 필터 (너무 작은 세그먼트 제거) — 단, 전부 제거되면 원본 사용
+  let rawSegs = rawSegsAll.filter((s) => Math.hypot(s.dx, s.dy) >= 1)
+  if (!rawSegs.length && rawSegsAll.length > 0) {
+    // 스케일이 너무 작아서 모든 세그먼트가 1px 미만 → 0.1px 기준으로 재시도
+    rawSegs = rawSegsAll.filter((s) => Math.hypot(s.dx, s.dy) >= 0.1)
+    if (!rawSegs.length) rawSegs = rawSegsAll // 그래도 없으면 전부 사용
+    console.warn(`[DXF] Scale too small: all ${rawSegsAll.length} segs < 1px, relaxed filter → ${rawSegs.length} segs`)
+  }
 
   if (!rawSegs.length) return 0
 
   // 2단계: 동일선상 세그먼트 병합 (shape 수 30-60% 감소)
   const merged = mergeDxfSegments(rawSegs)
 
+  // merged가 비어있으면 rawSegs를 직접 사용 (병합 실패 방어)
+  const finalSegs = merged.length > 0 ? merged : rawSegs
+
   // 3단계: 바운딩박스 중심을 캔버스 원점(0,0)으로 정규화
   // DXF 좌표계가 원점에서 멀면 shapes가 캔버스 밖에 생성되는 문제 방지
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const s of merged) {
+  for (const s of finalSegs) {
     minX = Math.min(minX, s.x1, s.x1 + s.dx)
     minY = Math.min(minY, s.y1, s.y1 + s.dy)
     maxX = Math.max(maxX, s.x1, s.x1 + s.dx)
     maxY = Math.max(maxY, s.y1, s.y1 + s.dy)
   }
+
+  // NaN/Infinity 방어
+  if (!isFinite(minX) || !isFinite(maxX) || !isFinite(minY) || !isFinite(maxY)) {
+    console.error('[DXF] Invalid bounding box:', { minX, maxX, minY, maxY })
+    return 0
+  }
+
   // 현재 뷰포트 중심의 page 좌표를 구해서, shapes를 거기에 배치
-  // tldraw: screenX = (pageX + cam.x) * cam.z
-  //       → pageX = screenX / cam.z - cam.x
   const cam = editor.getCamera()
   const vp = editor.getViewportScreenBounds()
   const vpCenterX = (vp.width / 2) / cam.z - cam.x
@@ -1832,10 +1851,10 @@ export function commitCadImport(
     })
 
   // ── 100+ segments: 레이어별 DxfGroup shape로 묶기 (React 컴포넌트 수 대폭 감소) ──
-  if (merged.length >= 100) {
+  if (finalSegs.length >= 100) {
     // 레이어별 그루핑
     const layerGroups = new Map<string, RawSeg[]>()
-    for (const s of merged) {
+    for (const s of finalSegs) {
       const key = s.layer || '0'
       let g = layerGroups.get(key)
       if (!g) { g = []; layerGroups.set(key, g) }
@@ -1993,11 +2012,11 @@ export function commitCadImport(
       } catch { /* ignore */ }
     })
 
-    return merged.length
+    return finalSegs.length
   }
 
   // ── 100개 미만: 기존 방식 (개별 wall shape) ──
-  const shapes = merged.map((s) => ({
+  const shapes = finalSegs.map((s) => ({
     id: createShapeId(),
     type: 'wall' as const,
     x: s.x1 - offsetX,
