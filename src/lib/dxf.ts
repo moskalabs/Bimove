@@ -1849,6 +1849,29 @@ export function commitCadImport(
     return 0
   }
 
+  // 4단계: 도면이 캔버스에 보이도록 자동 스케일 적용
+  // tldraw 최소 줌(10%)에서 뷰포트에 맞으려면 shapes가 ~15000px 이내여야 함
+  const MAX_CANVAS_SPAN = 12000
+  const spanX = maxX - minX
+  const spanY = maxY - minY
+  const maxSpan = Math.max(spanX, spanY)
+  let autoScale = 1
+  if (maxSpan > MAX_CANVAS_SPAN) {
+    autoScale = MAX_CANVAS_SPAN / maxSpan
+    console.log(`[CAD Commit] 자동 축소: span=${maxSpan.toFixed(0)}px > ${MAX_CANVAS_SPAN} → autoScale=${autoScale.toFixed(4)}`)
+    // 모든 세그먼트 좌표에 autoScale 적용
+    for (const s of finalSegs) {
+      s.x1 *= autoScale
+      s.y1 *= autoScale
+      s.dx *= autoScale
+      s.dy *= autoScale
+    }
+    minX *= autoScale
+    maxX *= autoScale
+    minY *= autoScale
+    maxY *= autoScale
+  }
+
   // 현재 뷰포트 중심의 page 좌표를 구해서, shapes를 거기에 배치
   const cam = editor.getCamera()
   const vp = editor.getViewportScreenBounds()
@@ -1859,15 +1882,16 @@ export function commitCadImport(
   const offsetX = (minX + maxX) / 2 - vpCenterX
   const offsetY = (minY + maxY) / 2 - vpCenterY
 
-  // ── 텍스트 좌표 변환 (DXF → px, Y flip) ──
+  // ── 텍스트 좌표 변환 (DXF → px, Y flip) + 자동 스케일 ──
+  const textScale = scale * autoScale
   type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string }
   const pxTexts: PxText[] = result._texts
     .filter(t => selectedLayers.has(t.layer || '0'))
     .map(t => ({
-      x: t.x * scale,
-      y: -t.y * scale,
+      x: t.x * textScale,
+      y: -t.y * textScale,
       text: t.text,
-      height: Math.max(t.height * scale, 4),
+      height: Math.max(t.height * textScale, 4),
       rotation: t.rotation,
       color: t.color,
       layer: t.layer,
@@ -1891,12 +1915,12 @@ export function commitCadImport(
   const pxHatches: PxHatch[] = (result._hatches ?? [])
     .filter(h => selectedLayers.has(h.layer || '0'))
     .map(h => {
-      // SVG path 좌표 변환: scale + Y flip
+      // SVG path 좌표 변환: scale + Y flip + autoScale
       const transformedPath = h.pathData.replace(
         /([ML])([\d.e+-]+),([\d.e+-]+)/g,
         (_, cmd, xStr, yStr) => {
-          const nx = parseFloat(xStr) * scale
-          const ny = -parseFloat(yStr) * scale
+          const nx = parseFloat(xStr) * textScale
+          const ny = -parseFloat(yStr) * textScale
           return `${cmd}${nx},${ny}`
         }
       )
@@ -1907,8 +1931,8 @@ export function commitCadImport(
         patternAngle: h.patternAngle,
         color: h.color,
         layer: h.layer,
-        cx: h.cx * scale,
-        cy: -h.cy * scale,
+        cx: h.cx * textScale,
+        cy: -h.cy * textScale,
       }
     })
 
@@ -2010,7 +2034,7 @@ export function commitCadImport(
           x: gx,
           y: gy,
           props: {
-            w, h, pathData, thickness: thickness * 0.3, segCount: cluster.length,
+            w, h, pathData, thickness: thickness * autoScale * 0.3, segCount: cluster.length,
             textsJson: localTexts.length ? JSON.stringify(localTexts) : '',
             hatchesJson: localHatches.length ? JSON.stringify(localHatches) : '',
           },
@@ -2078,12 +2102,13 @@ export function commitCadImport(
   }
 
   // ── 100개 미만: 기존 방식 (개별 wall shape) ──
+  const scaledThickness = thickness * autoScale
   const shapes = finalSegs.map((s) => ({
     id: createShapeId(),
     type: 'wall' as const,
     x: s.x1 - offsetX,
     y: s.y1 - offsetY,
-    props: { x2: s.dx, y2: s.dy, thickness },
+    props: { x2: s.dx, y2: s.dy, thickness: scaledThickness },
     meta: {
       dxfFingerprint: result.fingerprint,
       ...(s.layer ? { dxfLayer: s.layer } : {}),
@@ -2095,13 +2120,13 @@ export function commitCadImport(
   if (shapes.length) {
     editor.createShapes(shapes as never)
 
-    requestAnimationFrame(() => {
+    setTimeout(() => {
       try {
         editor.selectAll()
         editor.zoomToFit({ animation: { duration: 0 } })
         editor.selectNone()
       } catch { /* ignore */ }
-    })
+    }, 300)
   }
   return shapes.length
 }
