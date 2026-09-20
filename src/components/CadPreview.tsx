@@ -191,80 +191,97 @@ export default function CadPreview({
  * 2단계: ENTITIES 섹션에서 그룹코드 8 (레이어명) 스캔하여 엔티티 수 집계
  */
 function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
-  // 0. \r\n → \n 정규화 (Windows DXF 호환)
+  // 0. \r\n → \n 정규화 (필수 — 패턴 매칭에 \n 통일 필요)
   const hadCR = rawDxfText.indexOf('\r') >= 0
-  let dxfText = hadCR
+  const dxfText = hadCR
     ? rawDxfText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
     : rawDxfText
 
-  // 0-1. 패딩된 그룹 코드 정규화 (DXF 스펙: 그룹 코드 3자리 우측 정렬 허용)
-  //      "  0\nSECTION" → "0\nSECTION", " 10\n0.0" → "10\n0.0"
-  const hasPadding = dxfText.indexOf('\n  0\n') >= 0 || dxfText.indexOf('\n 0\n') >= 0
-  if (hasPadding) {
-    dxfText = dxfText.replace(/\n {1,2}(\d{1,3})\n/g, '\n$1\n')
-    // 첫 줄도 처리 (파일이 "  0\n"으로 시작하는 경우)
-    if (dxfText.charCodeAt(0) === 32) {
-      dxfText = dxfText.replace(/^ {1,2}(\d{1,3})\n/, '$1\n')
-    }
-  }
+  // 0-1. 패딩 감지 → 패턴 동적 생성 (186MB에서 regex 정규화 대신 메모리 0 복사)
+  // DXF 스펙: 그룹 코드 3자리 우측 정렬 ("  0", "  2", " 10", " 62", "100" 등)
+  const padded = dxfText.charCodeAt(0) === 32  // 첫 줄이 "  0\n" 이면 패딩
+  const gc = padded ? (c: number) => String(c).padStart(3) : (c: number) => String(c)
 
-  console.log(`[CadPreview] 텍스트 길이: ${dxfText.length}, \\r\\n: ${hadCR}, 패딩: ${hasPadding}, 첫 200자: ${JSON.stringify(dxfText.substring(0, 200))}`)
+  // 핵심 패턴들 (패딩 유무에 따라 자동 변환)
+  const SEP = `\n${gc(0)}\n`                          // 엔티티/섹션 경계
+  const GC8 = `\n${gc(8)}\n`                          // 레이어 그룹 코드
+  const GC2 = `\n${gc(2)}\n`                          // 이름 그룹 코드
+  const GC62 = `\n${gc(62)}\n`                        // 색상 그룹 코드
+  const ENDSEC = `\n${gc(0)}\nENDSEC`
+  const SEC_TABLES = `\n${gc(0)}\nSECTION\n${gc(2)}\nTABLES\n`
+  const SEC_ENTITIES = `\n${gc(0)}\nSECTION\n${gc(2)}\nENTITIES\n`
+  const LAYER_HDR = `\n${gc(0)}\nLAYER\n`
 
-  // --- 1. LAYER 테이블에서 정의된 레이어 + 색상 ---
-  const layerDefs = new Map<string, number>() // name → ACI color
-  const tablesMatch = dxfText.match(/\n0\nSECTION\n2\nTABLES\n([\s\S]*?)\n0\nENDSEC/i)
-  console.log(`[CadPreview] TABLES 매칭: ${!!tablesMatch}`)
-  if (tablesMatch) {
-    const tablesText = tablesMatch[1]
-    // LAYER 엔티티 파싱: 그룹코드 2=이름, 62=색상
-    const layerBlocks = tablesText.split(/\n0\nLAYER\n/)
-    for (let i = 1; i < layerBlocks.length; i++) {
-      const block = layerBlocks[i]
-      const nameMatch = block.match(/\n2\n([^\n]+)/)
-      const colorMatch = block.match(/\n62\n(-?\d+)/)
-      if (nameMatch) {
-        const name = nameMatch[1].trim()
-        const color = colorMatch ? Math.abs(parseInt(colorMatch[1])) : 7
-        layerDefs.set(name, color)
+  console.log(`[CadPreview] 길이: ${dxfText.length}, CR: ${hadCR}, 패딩: ${padded}, SEP=${JSON.stringify(SEP)}, 첫 100자: ${JSON.stringify(dxfText.substring(0, 100))}`)
+
+  // --- 1. TABLES → LAYER 정의 (이름 + 색상) ---
+  const layerDefs = new Map<string, number>()
+  const tablesIdx = dxfText.indexOf(SEC_TABLES)
+  if (tablesIdx >= 0) {
+    const tablesBody = tablesIdx + SEC_TABLES.length
+    const tablesEnd = dxfText.indexOf(ENDSEC, tablesBody)
+    if (tablesEnd > tablesBody) {
+      let pos = tablesBody
+      while (true) {
+        pos = dxfText.indexOf(LAYER_HDR, pos)
+        if (pos < 0 || pos >= tablesEnd) break
+        const lStart = pos + LAYER_HDR.length
+        const nextBound = dxfText.indexOf(SEP, lStart)
+        const lEnd = (nextBound >= 0 && nextBound < tablesEnd) ? nextBound : tablesEnd
+
+        const ni = dxfText.indexOf(GC2, pos)
+        if (ni >= 0 && ni < lEnd) {
+          const nvs = ni + GC2.length
+          const nvn = dxfText.indexOf('\n', nvs)
+          const name = dxfText.substring(nvs, (nvn >= 0 && nvn <= lEnd) ? nvn : lEnd).trim()
+
+          const ci = dxfText.indexOf(GC62, pos)
+          let color = 7
+          if (ci >= 0 && ci < lEnd) {
+            const cvs = ci + GC62.length
+            const cvn = dxfText.indexOf('\n', cvs)
+            color = Math.abs(parseInt(dxfText.substring(cvs, (cvn >= 0 && cvn <= lEnd) ? cvn : lEnd)))
+            if (isNaN(color)) color = 7
+          }
+          layerDefs.set(name, color)
+        }
+        pos = lStart
       }
     }
   }
+  console.log(`[CadPreview] TABLES: ${layerDefs.size}개 레이어 정의`)
 
-  // --- 2. ENTITIES 섹션에서 레이어별 엔티티 수 ---
-  // indexOf 기반 스캐닝: split 없이 직접 \n0\n 경계를 따라가며 \n8\n 탐색
-  // 600K 엔티티 기준 메모리 ~500MB 절약 (substring + split 배열 제거)
+  // --- 2. ENTITIES → 레이어별 엔티티 수 (indexOf 스캐닝, 문자열 복사 없음) ---
   const layerCounts = new Map<string, number>()
-  const entHdr = '\n0\nSECTION\n2\nENTITIES\n'
-  const entStart = dxfText.indexOf(entHdr)
-  const entEnd = dxfText.indexOf('\n0\nENDSEC', entStart > 0 ? entStart + 20 : 0)
-  console.log(`[CadPreview] ENTITIES entStart=${entStart}, entEnd=${entEnd}, layerDefs=${layerDefs.size}개`)
-  if (entStart > 0 && entEnd > entStart) {
-    const sep = '\n0\n'
-    const bodyStart = entStart + entHdr.length  // after ENTITIES header
-    // First \n0\n boundary is at bodyStart-1
-    let sepPos = bodyStart - 1
+  const entIdx = dxfText.indexOf(SEC_ENTITIES)
+  if (entIdx >= 0) {
+    const bodyStart = entIdx + SEC_ENTITIES.length
+    const entEnd = dxfText.indexOf(ENDSEC, bodyStart)
+    if (entEnd > bodyStart) {
+      let sepPos = bodyStart - 1  // \n before first gc(0)
 
-    while (true) {
-      const si = dxfText.indexOf(sep, sepPos)
-      if (si < 0 || si >= entEnd) break
+      while (true) {
+        const si = dxfText.indexOf(SEP, sepPos)
+        if (si < 0 || si >= entEnd) break
 
-      const eStart = si + 3  // entity content start
-      const nextSi = dxfText.indexOf(sep, eStart)
-      const eEnd = (nextSi >= 0 && nextSi < entEnd) ? nextSi : entEnd
+        const eStart = si + SEP.length
+        const nextSi = dxfText.indexOf(SEP, eStart)
+        const eEnd = (nextSi >= 0 && nextSi < entEnd) ? nextSi : entEnd
 
-      // Find \n8\n (layer group code) within this entity — no regex
-      const l8 = dxfText.indexOf('\n8\n', eStart)
-      if (l8 >= 0 && l8 < eEnd) {
-        const nameStart = l8 + 3
-        const nameNl = dxfText.indexOf('\n', nameStart)
-        const name = dxfText.substring(nameStart, (nameNl >= 0 && nameNl <= eEnd) ? nameNl : eEnd).trim()
-        layerCounts.set(name, (layerCounts.get(name) || 0) + 1)
+        const l8 = dxfText.indexOf(GC8, eStart)
+        if (l8 >= 0 && l8 < eEnd) {
+          const ns = l8 + GC8.length
+          const nn = dxfText.indexOf('\n', ns)
+          const name = dxfText.substring(ns, (nn >= 0 && nn <= eEnd) ? nn : eEnd).trim()
+          layerCounts.set(name, (layerCounts.get(name) || 0) + 1)
+        }
+
+        if (nextSi < 0 || nextSi >= entEnd) break
+        sepPos = nextSi
       }
-
-      if (nextSi < 0 || nextSi >= entEnd) break
-      sepPos = nextSi
     }
   }
+  console.log(`[CadPreview] ENTITIES: ${layerCounts.size}개 레이어, ${[...layerCounts.values()].reduce((a, b) => a + b, 0)}개 엔티티`)
 
   // --- 3. 합치기 ---
   const allNames = new Set([...layerDefs.keys(), ...layerCounts.keys()])

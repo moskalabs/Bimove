@@ -208,31 +208,35 @@ function floatAt(text: string, start: number, end: number): number {
 
 // ===== DXF Parsing =====
 
-/** Extract a named section's inner text */
-function extractSection(dxf: string, name: string): string | null {
-  const hdr = `\n0\nSECTION\n2\n${name}\n`
+/** Extract a named section's inner text (padding-aware) */
+function extractSection(dxf: string, name: string, gc: (c: number) => string): string | null {
+  const hdr = `\n${gc(0)}\nSECTION\n${gc(2)}\n${name}\n`
   const idx = dxf.indexOf(hdr)
   if (idx < 0) return null
   const start = idx + hdr.length
-  const end = dxf.indexOf('\n0\nENDSEC', start)
+  const end = dxf.indexOf(`\n${gc(0)}\nENDSEC`, start)
   return end > start ? dxf.substring(start, end) : null
 }
 
 /** Parse $INSUNITS from HEADER section */
-function parseInsUnits(dxf: string): number {
-  const hdr = extractSection(dxf, 'HEADER')
+function parseInsUnits(dxf: string, gc: (c: number) => string): number {
+  const hdr = extractSection(dxf, 'HEADER', gc)
   if (!hdr) return 4  // default mm
   const m = hdr.match(/\$INSUNITS\n\s*70\n\s*(\d+)/)
   return m ? parseInt(m[1]) : 4
 }
 
-/** Parse BLOCKS section → Map<name, BlockDef> */
-function parseBlocks(dxf: string): Map<string, BlockDef> {
+/** Parse BLOCKS section → Map<name, BlockDef> (padding-aware) */
+function parseBlocks(dxf: string, gc: (c: number) => string): Map<string, BlockDef> {
   const blocks = new Map<string, BlockDef>()
-  const sec = extractSection(dxf, 'BLOCKS')
+  const sec = extractSection(dxf, 'BLOCKS', gc)
   if (!sec) return blocks
 
-  const chunks = sec.split('\n0\n')
+  const sep = `\n${gc(0)}\n`
+  const gc2 = `\n${gc(2)}\n`
+  const gc10 = `\n${gc(10)}\n`
+  const gc20 = `\n${gc(20)}\n`
+  const chunks = sec.split(sep)
   let cur: BlockDef | null = null
 
   for (let i = 0; i < chunks.length; i++) {
@@ -240,19 +244,18 @@ function parseBlocks(dxf: string): Map<string, BlockDef> {
     const type = chunk.split('\n', 1)[0].trim()
 
     if (type === 'BLOCK') {
-      const nameMatch = chunk.match(/\n2\n([^\n]+)/)
-      const bxMatch = chunk.match(/\n10\n([^\n]+)/)
-      const byMatch = chunk.match(/\n20\n([^\n]+)/)
+      const nameMatch = chunk.indexOf(gc2) >= 0 ? chunk.substring(chunk.indexOf(gc2) + gc2.length).split('\n', 1)[0].trim() : `_anon_${i}`
+      const bxIdx = chunk.indexOf(gc10)
+      const byIdx = chunk.indexOf(gc20)
       cur = {
-        name: nameMatch ? nameMatch[1].trim() : `_anon_${i}`,
-        baseX: bxMatch ? parseFloat(bxMatch[1]) : 0,
-        baseY: byMatch ? parseFloat(byMatch[1]) : 0,
+        name: nameMatch,
+        baseX: bxIdx >= 0 ? parseFloat(chunk.substring(bxIdx + gc10.length).split('\n', 1)[0]) : 0,
+        baseY: byIdx >= 0 ? parseFloat(chunk.substring(byIdx + gc20.length).split('\n', 1)[0]) : 0,
         entityChunks: [],
       }
     } else if (type === 'ENDBLK') {
       if (cur) { blocks.set(cur.name, cur); cur = null }
     } else if (cur && type) {
-      // Entity inside a block
       cur.entityChunks.push(chunk)
     }
   }
@@ -465,34 +468,32 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
 
   // 0. \r\n → \n 정규화 (Windows DXF 파일 호환)
   progress('줄바꿈 정규화', 2)
-  let dxfText = rawText.indexOf('\r') >= 0 ? rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n') : rawText
+  const dxfText = rawText.indexOf('\r') >= 0 ? rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n') : rawText
 
-  // 0-1. 패딩된 그룹 코드 정규화 (DXF 스펙: 우측 정렬 "  0" → "0")
-  const hasPadding = dxfText.indexOf('\n  0\n') >= 0 || dxfText.indexOf('\n 0\n') >= 0
-  if (hasPadding) {
-    progress('그룹 코드 정규화', 3)
-    dxfText = dxfText.replace(/\n {1,2}(\d{1,3})\n/g, '\n$1\n')
-    if (dxfText.charCodeAt(0) === 32) dxfText = dxfText.replace(/^ {1,2}(\d{1,3})\n/, '$1\n')
-  }
-  console.log(`[fast-worker] 텍스트 길이: ${dxfText.length} chars (CR정규화: ${rawText !== dxfText}, 패딩: ${hasPadding})`)
+  // 0-1. 패딩 감지 → 패턴 동적 생성 (186MB 파일에서 regex 정규화 대신 메모리 절약)
+  const padded = dxfText.charCodeAt(0) === 32
+  const gc = padded ? (c: number) => String(c).padStart(3) : (c: number) => String(c)
+  const SEP_PAT = `\n${gc(0)}\n`   // entity/section boundary pattern
+  const GC8_PAT = `\n${gc(8)}\n`   // layer group code
+  console.log(`[fast-worker] 텍스트 길이: ${dxfText.length} chars, 패딩: ${padded}, SEP=${JSON.stringify(SEP_PAT)}`)
 
   // 1. Header → units
   progress('헤더 분석', 5)
-  const insUnits = parseInsUnits(dxfText)
+  const insUnits = parseInsUnits(dxfText, gc)
 
   // 2. Blocks
   progress('블록 정의 파싱', 10)
-  const blocks = parseBlocks(dxfText)
+  const blocks = parseBlocks(dxfText, gc)
   console.log(`[fast-worker] ${blocks.size}개 블록 정의 (${(performance.now() - t0).toFixed(0)}ms)`)
 
-  // 3. Entities section
+  // 3. Entities section (padding-aware)
   progress('엔티티 섹션 추출', 20)
-  // 첫 섹션은 앞에 \n이 없을 수 있으므로 두 가지 패턴 시도
-  let entHdr = '\n0\nSECTION\n2\nENTITIES\n'
+  const ENDSEC_PAT = `\n${gc(0)}\nENDSEC`
+  let entHdr = `\n${gc(0)}\nSECTION\n${gc(2)}\nENTITIES\n`
   let entIdx = dxfText.indexOf(entHdr)
   if (entIdx < 0) {
     // 파일 시작이 0\nSECTION 인 경우 (HEADER 없는 DXF)
-    entHdr = '0\nSECTION\n2\nENTITIES\n'
+    entHdr = `${gc(0)}\nSECTION\n${gc(2)}\nENTITIES\n`
     entIdx = dxfText.indexOf(entHdr)
   }
   if (entIdx < 0) {
@@ -500,16 +501,22 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
     return { polylines: [], insUnits }
   }
   const entStart = entIdx + entHdr.length
-  const entEnd = dxfText.indexOf('\n0\nENDSEC', entStart)
+  const entEnd = dxfText.indexOf(ENDSEC_PAT, entStart)
   if (entEnd <= entStart) return { polylines: [], insUnits }
 
-  // 4. indexOf-based entity scanning — no substring/split of entire ENTITIES section
+  // 4. indexOf-based entity scanning (padding-aware SEP_PAT / GC8_PAT)
   //    Peak memory: O(selected entities) instead of O(all entities)
-  const SEP = '\n0\n'
+
+  // Additional padded group code patterns for entity parsing
+  const GC10 = `\n${gc(10)}\n`
+  const GC20 = `\n${gc(20)}\n`
+  const GC42 = `\n${gc(42)}\n`
+  const GC62 = `\n${gc(62)}\n`
+  const GC70 = `\n${gc(70)}\n`
 
   // Quick pre-count for progress reporting
   let totalEntities = 0
-  { let p = entStart - 1; while (true) { p = dxfText.indexOf(SEP, p); if (p < 0 || p >= entEnd) break; totalEntities++; p += 3 } }
+  { let p = entStart - 1; while (true) { p = dxfText.indexOf(SEP_PAT, p); if (p < 0 || p >= entEnd) break; totalEntities++; p += SEP_PAT.length } }
   console.log(`[fast-worker] ${totalEntities}개 엔티티 (indexOf scan, ${(performance.now() - t0).toFixed(0)}ms)`)
 
   progress('도면 요소 변환', 30)
@@ -521,16 +528,16 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   let errCount = 0
   let entityIdx = 0
 
-  // First \n0\n is at entStart-1 (the \n from ENTITIES header + 0 + \n)
+  // First SEP is at entStart - 1 (the \n from ENTITIES header + gc(0) + \n)
   let sepPos = entStart - 1
 
   while (true) {
-    const si = dxfText.indexOf(SEP, sepPos)
+    const si = dxfText.indexOf(SEP_PAT, sepPos)
     if (si < 0 || si >= entEnd) break
 
-    const eStart = si + 3                        // entity content start (TYPE\n...)
-    const nextSi = dxfText.indexOf(SEP, eStart)
-    const eEnd = (nextSi >= 0 && nextSi < entEnd) ? nextSi : entEnd  // entity content end
+    const eStart = si + SEP_PAT.length             // entity content start (TYPE\n...)
+    const nextSi = dxfText.indexOf(SEP_PAT, eStart)
+    const eEnd = (nextSi >= 0 && nextSi < entEnd) ? nextSi : entEnd
 
     entityIdx++
     if (entityIdx % 5000 === 0) {
@@ -544,14 +551,14 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
 
       // --- POLYLINE state machine ---
       if (type === 'VERTEX' && polylineState) {
-        const x10 = idxIn(dxfText, '\n10\n', eStart, eEnd)
-        const y20 = idxIn(dxfText, '\n20\n', eStart, eEnd)
+        const x10 = idxIn(dxfText, GC10, eStart, eEnd)
+        const y20 = idxIn(dxfText, GC20, eStart, eEnd)
         if (x10 >= 0 && y20 >= 0) {
-          const b42 = idxIn(dxfText, '\n42\n', eStart, eEnd)
+          const b42 = idxIn(dxfText, GC42, eStart, eEnd)
           polylineState.vertices.push({
-            x: floatAt(dxfText, x10 + 4, eEnd),
-            y: floatAt(dxfText, y20 + 4, eEnd),
-            bulge: b42 >= 0 ? floatAt(dxfText, b42 + 4, eEnd) : 0,
+            x: floatAt(dxfText, x10 + GC10.length, eEnd),
+            y: floatAt(dxfText, y20 + GC20.length, eEnd),
+            bulge: b42 >= 0 ? floatAt(dxfText, b42 + GC42.length, eEnd) : 0,
           })
         }
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
@@ -579,9 +586,9 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
       // Finalize any orphaned POLYLINE
       if (polylineState && type !== 'VERTEX') polylineState = null
 
-      // --- Quick layer check via indexOf (no regex, no chunk substring) ---
-      const l8 = idxIn(dxfText, '\n8\n', eStart, eEnd)
-      const entityLayer = l8 >= 0 ? valAt(dxfText, l8 + 3, eEnd) : '0'
+      // --- Quick layer check via indexOf (padding-aware) ---
+      const l8 = idxIn(dxfText, GC8_PAT, eStart, eEnd)
+      const entityLayer = l8 >= 0 ? valAt(dxfText, l8 + GC8_PAT.length, eEnd) : '0'
 
       if (!layerSet.has(entityLayer)) {  // ← THE KEY OPTIMIZATION
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
@@ -589,13 +596,13 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
 
       // Start POLYLINE state
       if (type === 'POLYLINE') {
-        const f70 = idxIn(dxfText, '\n70\n', eStart, eEnd)
-        const c62 = idxIn(dxfText, '\n62\n', eStart, eEnd)
+        const f70 = idxIn(dxfText, GC70, eStart, eEnd)
+        const c62 = idxIn(dxfText, GC62, eStart, eEnd)
         polylineState = {
           layer: entityLayer,
-          colorNum: c62 >= 0 ? parseInt(valAt(dxfText, c62 + 4, eEnd)) : -1,
+          colorNum: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
           vertices: [],
-          closed: f70 >= 0 ? (parseInt(valAt(dxfText, f70 + 4, eEnd)) & 1) !== 0 : false,
+          closed: f70 >= 0 ? (parseInt(valAt(dxfText, f70 + GC70.length, eEnd)) & 1) !== 0 : false,
         }
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
