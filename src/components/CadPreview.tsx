@@ -192,13 +192,17 @@ export default function CadPreview({
  */
 function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
   // 0. \r\n → \n 정규화 (Windows DXF 호환)
-  const dxfText = rawDxfText.indexOf('\r') >= 0
+  const hadCR = rawDxfText.indexOf('\r') >= 0
+  const dxfText = hadCR
     ? rawDxfText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
     : rawDxfText
+
+  console.log(`[CadPreview] 텍스트 길이: ${dxfText.length}, \\r\\n 정규화: ${hadCR}, 첫 200자: ${JSON.stringify(dxfText.substring(0, 200))}`)
 
   // --- 1. LAYER 테이블에서 정의된 레이어 + 색상 ---
   const layerDefs = new Map<string, number>() // name → ACI color
   const tablesMatch = dxfText.match(/\n0\nSECTION\n2\nTABLES\n([\s\S]*?)\n0\nENDSEC/i)
+  console.log(`[CadPreview] TABLES 매칭: ${!!tablesMatch}`)
   if (tablesMatch) {
     const tablesText = tablesMatch[1]
     // LAYER 엔티티 파싱: 그룹코드 2=이름, 62=색상
@@ -222,6 +226,7 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
   const entHdr = '\n0\nSECTION\n2\nENTITIES\n'
   const entStart = dxfText.indexOf(entHdr)
   const entEnd = dxfText.indexOf('\n0\nENDSEC', entStart > 0 ? entStart + 20 : 0)
+  console.log(`[CadPreview] ENTITIES entStart=${entStart}, entEnd=${entEnd}, layerDefs=${layerDefs.size}개`)
   if (entStart > 0 && entEnd > entStart) {
     const sep = '\n0\n'
     const bodyStart = entStart + entHdr.length  // after ENTITIES header
