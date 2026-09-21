@@ -249,7 +249,10 @@ function parseBlocks(dxf: string, gc: (c: number) => string): Map<string, BlockD
   const gc2 = `\n${gc(2)}\n`
   const gc10 = `\n${gc(10)}\n`
   const gc20 = `\n${gc(20)}\n`
-  const chunks = sec.split(sep)
+  // prepend \n so the first entity separator \n0\n is properly matched
+  // (extractSection returns content starting with "0\nBLOCK\n..." — without leading \n,
+  //  split misidentifies first chunk's type as "0" instead of "BLOCK")
+  const chunks = ('\n' + sec).split(sep)
   let cur: BlockDef | null = null
 
   for (let i = 0; i < chunks.length; i++) {
