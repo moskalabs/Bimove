@@ -186,14 +186,15 @@ function applyTransform(poly: number[][], t: Transform): void {
   const rad = t.rot * Math.PI / 180
   const cosR = Math.cos(rad), sinR = Math.sin(rad)
   for (const p of poly) {
+    let x = p[0], y = p[1]
+    // Extrusion Z flip — OCS→WCS, must be BEFORE scale/rotate/translate (FreeCAD convention)
+    if (t.ez === -1) x = -x
     // Scale
-    let x = p[0] * t.sx, y = p[1] * t.sy
+    x *= t.sx; y *= t.sy
     // Rotate
     if (t.rot) { const nx = x * cosR - y * sinR; y = y * cosR + x * sinR; x = nx }
     // Translate
     x += t.x; y += t.y
-    // Extrusion Z flip
-    if (t.ez === -1) x = -x
     p[0] = x; p[1] = y
   }
 }
@@ -462,8 +463,8 @@ function entityToPolyline(
       const rot = parseFloat(codes.get(50)?.[0] ?? '0')
       const rowN = Math.min(parseInt(codes.get(71)?.[0] ?? '1') || 1, 50)  // 배열 폭발 방지
       const colN = Math.min(parseInt(codes.get(70)?.[0] ?? '1') || 1, 50)
-      const rowSp = parseFloat(codes.get(44)?.[0] ?? '0')
-      const colSp = parseFloat(codes.get(45)?.[0] ?? '0')
+      const colSp = parseFloat(codes.get(44)?.[0] ?? '0')  // 44 = column spacing (DXF spec)
+      const rowSp = parseFloat(codes.get(45)?.[0] ?? '0')  // 45 = row spacing (DXF spec)
       const iez = codes.get(230)?.[0] ? parseFloat(codes.get(230)![0]) : 1
 
       const rotRad = rot * Math.PI / 180
