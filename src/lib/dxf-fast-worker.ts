@@ -483,8 +483,15 @@ function entityToPolyline(
             if (textsOutput && textsOutput.length >= MAX_TEXTS) break  // 성능 보호: 텍스트
             const { type: eType, codes: eCodes } = parseGroupCodes(chunk)
             if (eType === 'INSERT') {
-              // Nested INSERT
-              entityToPolyline(eType, eCodes, blocks, layer, nextTransforms, depth + 1, selectedLayers, output, textsOutput)
+              // Nested INSERT — 부모 블록의 base point를 빼줘야 위치가 맞음
+              // geometry와 동일하게 처리: subOutput → base point 빼기 → transforms 적용
+              const subOutput: PolylineData[] = []
+              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput)
+              for (const pl of subOutput) {
+                for (const p of pl.vertices) { p[0] -= block.baseX; p[1] -= block.baseY }
+                for (const tr of nextTransforms) applyTransform(pl.vertices, tr)
+                output.push(pl)
+              }
             } else if ((eType === 'TEXT' || eType === 'MTEXT') && textsOutput) {
               // TEXT/MTEXT inside block — extract with base point + transforms
               const blockColor = eCodes.get(62)?.[0] ? parseInt(eCodes.get(62)![0]) : -1
