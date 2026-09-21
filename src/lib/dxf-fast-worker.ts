@@ -34,9 +34,19 @@ export interface TextData {
   colorNumber: number
 }
 
+export interface HatchData {
+  pathData: string       // SVG path: "M0,0L100,0 ... Z"
+  patternName: string    // "SOLID", "ANSI31", etc.
+  patternScale: number
+  patternAngle: number
+  color?: string         // hex color
+  layer: string
+  cx: number; cy: number // centroid
+}
+
 export type WorkerOut =
   | { type: 'progress'; phase: string; percent: number }
-  | { type: 'result'; polylines: PolylineData[]; insUnits: number; texts: TextData[] }
+  | { type: 'result'; polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[] }
   | { type: 'error'; message: string }
 
 // ===== Internal types =====
@@ -68,6 +78,7 @@ const MAX_DEPTH = 8
 const ARC_STEP  = 5       // degrees
 const MAX_POLYLINES = 200_000  // 폴리라인 수 제한 (성능 보호)
 const MAX_TEXTS = 5_000        // 텍스트 수 제한
+const MAX_HATCHES = 2_000      // 해치 수 제한
 
 // ===== Geometry helpers =====
 
@@ -317,6 +328,262 @@ function parseGroupCodes(text: string): { type: string; codes: Map<number, strin
     arr.push(val)
   }
   return { type, codes }
+}
+
+// ===== ACI color table (subset: 1-9 standard colors) =====
+const ACI_HEX: Record<number, string> = {
+  1: '#ff0000', 2: '#ffff00', 3: '#00ff00', 4: '#00ffff',
+  5: '#0000ff', 6: '#ff00ff', 7: '#ffffff', 8: '#808080', 9: '#c0c0c0',
+  10: '#ff0000', 11: '#ff7f7f', 12: '#cc0000',
+  30: '#ff7f00', 40: '#ff7f00', 50: '#ffbf00',
+  250: '#333333', 251: '#545454', 252: '#787878', 253: '#a3a3a3', 254: '#c8c8c8', 255: '#ffffff',
+}
+
+function aciToHexFast(idx: number): string | undefined {
+  if (idx <= 0 || idx > 255) return undefined
+  return ACI_HEX[idx] || `hsl(${((idx - 1) * 360 / 255) | 0},80%,50%)`
+}
+
+function trueColorToHexFast(tc: number): string {
+  const r = (tc >> 16) & 0xff, g = (tc >> 8) & 0xff, b = tc & 0xff
+  return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`
+}
+
+// ===== HATCH entity parser =====
+
+/** Parse a HATCH entity from its group-code text chunk → HatchData or null */
+function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null {
+  const lines = chunk.split('\n')
+  // Build sequential pairs for stateful parsing
+  const pairs: Array<{ code: number; value: string }> = []
+  for (let i = 1; i < lines.length - 1; i += 2) {
+    const code = parseInt(lines[i].trim())
+    if (isNaN(code)) continue
+    pairs.push({ code, value: lines[i + 1]?.trim() ?? '' })
+  }
+
+  let layer = entityLayer
+  let colorIndex = 0
+  let trueColor = 0
+  let patternName = 'SOLID'
+  let patternScale = 1
+  let patternAngle = 0
+  let numBoundaryPaths = 0
+
+  // Parse header fields until group code 91 (boundary path count)
+  let pi = 0
+  while (pi < pairs.length && pairs[pi].code !== 91) {
+    const c = pairs[pi].code, v = pairs[pi].value
+    if (c === 8) layer = v
+    else if (c === 62) colorIndex = parseInt(v) || 0
+    else if (c === 420) trueColor = parseInt(v) || 0
+    else if (c === 2) patternName = v
+    else if (c === 41) patternScale = parseFloat(v) || 1
+    else if (c === 52) patternAngle = parseFloat(v) || 0
+    pi++
+  }
+  if (pi < pairs.length && pairs[pi].code === 91) {
+    numBoundaryPaths = parseInt(pairs[pi].value) || 0
+    pi++
+  }
+
+  // Resolve color
+  let color: string | undefined
+  if (trueColor > 0) color = trueColorToHexFast(trueColor)
+  else if (colorIndex > 0) color = aciToHexFast(colorIndex)
+
+  // Parse boundary paths → SVG path data
+  const svgParts: string[] = []
+  let sumX = 0, sumY = 0, ptCount = 0
+
+  for (let bp = 0; bp < numBoundaryPaths && pi < pairs.length; bp++) {
+    if (pairs[pi].code !== 92) break
+    const pathTypeFlag = parseInt(pairs[pi].value) || 0
+    pi++
+    const isPolyline = (pathTypeFlag & 2) !== 0
+
+    if (isPolyline) {
+      // Polyline boundary
+      const hasBulge = (pi < pairs.length && pairs[pi].code === 72) ? (parseInt(pairs[pi++].value) || 0) : 0
+      const isClosed = (pi < pairs.length && pairs[pi].code === 73) ? (parseInt(pairs[pi++].value) || 0) : 1
+      const numVerts = (pi < pairs.length && pairs[pi].code === 93) ? (parseInt(pairs[pi++].value) || 0) : 0
+
+      const verts: Array<{ x: number; y: number }> = []
+      for (let v = 0; v < numVerts && pi < pairs.length; v++) {
+        let vx = 0, vy = 0
+        if (pairs[pi].code === 10) { vx = parseFloat(pairs[pi].value) || 0; pi++ }
+        if (pi < pairs.length && pairs[pi].code === 20) { vy = parseFloat(pairs[pi].value) || 0; pi++ }
+        if (hasBulge && pi < pairs.length && pairs[pi].code === 42) pi++
+        verts.push({ x: vx, y: vy })
+        sumX += vx; sumY += vy; ptCount++
+      }
+      if (verts.length >= 2) {
+        const pts = [`M${verts[0].x},${verts[0].y}`]
+        for (let v = 1; v < verts.length; v++) pts.push(`L${verts[v].x},${verts[v].y}`)
+        if (isClosed) pts.push('Z')
+        svgParts.push(pts.join(''))
+      }
+    } else {
+      // Edge boundary
+      const numEdges = (pi < pairs.length && pairs[pi].code === 93) ? (parseInt(pairs[pi++].value) || 0) : 0
+      const edgeParts: string[] = []
+      let started = false
+
+      for (let e = 0; e < numEdges && pi < pairs.length; e++) {
+        if (pairs[pi].code !== 72) break
+        const edgeType = parseInt(pairs[pi].value) || 0
+        pi++
+
+        if (edgeType === 1) {
+          // Line edge
+          let x1 = 0, y1 = 0, x2 = 0, y2 = 0
+          while (pi < pairs.length && pairs[pi].code !== 72 && pairs[pi].code !== 92 && pairs[pi].code !== 0) {
+            const c = pairs[pi].code, v = parseFloat(pairs[pi].value) || 0
+            if (c === 10) x1 = v; else if (c === 20) y1 = v
+            else if (c === 11) x2 = v; else if (c === 21) y2 = v
+            else if (c === 97) break
+            pi++
+          }
+          if (!started) { edgeParts.push(`M${x1},${y1}`); started = true }
+          edgeParts.push(`L${x2},${y2}`)
+          sumX += x1 + x2; sumY += y1 + y2; ptCount += 2
+        } else if (edgeType === 2) {
+          // Arc edge
+          let cx = 0, cy = 0, r = 0, sa = 0, ea = 360, ccw = 1
+          while (pi < pairs.length && pairs[pi].code !== 72 && pairs[pi].code !== 92 && pairs[pi].code !== 0) {
+            const c = pairs[pi].code, v = parseFloat(pairs[pi].value) || 0
+            if (c === 10) cx = v; else if (c === 20) cy = v
+            else if (c === 40) r = v; else if (c === 50) sa = v
+            else if (c === 51) ea = v; else if (c === 73) ccw = v
+            else if (c === 97) break
+            pi++
+          }
+          let saRad = sa * Math.PI / 180, eaRad = ea * Math.PI / 180
+          if (!ccw) { const tmp = saRad; saRad = eaRad; eaRad = tmp }
+          if (eaRad <= saRad) eaRad += 2 * Math.PI
+          const steps = Math.max(3, Math.ceil(((eaRad - saRad) * 180) / (Math.PI * 15)))
+          const dt = (eaRad - saRad) / steps
+          for (let s = 0; s <= steps; s++) {
+            const t = saRad + dt * s
+            const px = cx + r * Math.cos(t), py = cy + r * Math.sin(t)
+            edgeParts.push(s === 0 && !started ? `M${px},${py}` : `L${px},${py}`)
+            if (s === 0) started = true
+          }
+          sumX += cx; sumY += cy; ptCount++
+        } else if (edgeType === 3) {
+          // Ellipse edge
+          let cx = 0, cy = 0, mx = 0, my = 0, ratio = 1, esa = 0, eea = 2 * Math.PI
+          while (pi < pairs.length && pairs[pi].code !== 72 && pairs[pi].code !== 92 && pairs[pi].code !== 0) {
+            const c = pairs[pi].code, v = parseFloat(pairs[pi].value) || 0
+            if (c === 10) cx = v; else if (c === 20) cy = v
+            else if (c === 11) mx = v; else if (c === 21) my = v
+            else if (c === 40) ratio = v
+            else if (c === 50) esa = v; else if (c === 51) eea = v
+            else if (c === 97) break
+            pi++
+          }
+          const a = Math.hypot(mx, my), b = a * ratio
+          const rot = Math.atan2(my, mx)
+          const cosR = Math.cos(rot), sinR = Math.sin(rot)
+          if (eea <= esa) eea += 2 * Math.PI
+          const N = 18, ddt = (eea - esa) / N
+          for (let s = 0; s <= N; s++) {
+            const t = esa + ddt * s
+            const lx = a * Math.cos(t), ly = b * Math.sin(t)
+            const px = cx + lx * cosR - ly * sinR, py = cy + lx * sinR + ly * cosR
+            edgeParts.push(s === 0 && !started ? `M${px},${py}` : `L${px},${py}`)
+            if (s === 0) started = true
+          }
+          sumX += cx; sumY += cy; ptCount++
+        } else if (edgeType === 4) {
+          // Spline edge
+          let spDegree = 3, numKnots = 0, numCtrl = 0
+          while (pi < pairs.length && pairs[pi].code !== 72 && pairs[pi].code !== 92 && pairs[pi].code !== 0) {
+            const c = pairs[pi].code
+            if (c === 94) spDegree = parseInt(pairs[pi].value) || 3
+            else if (c === 95) numKnots = parseInt(pairs[pi].value) || 0
+            else if (c === 96) { numCtrl = parseInt(pairs[pi].value) || 0; pi++; break }
+            else if (c === 97) break
+            pi++
+          }
+          const spKnots: number[] = []
+          for (let kk = 0; kk < numKnots && pi < pairs.length; kk++) {
+            if (pairs[pi].code === 40) { spKnots.push(parseFloat(pairs[pi].value) || 0); pi++ }
+          }
+          const spCtrl: Array<{ x: number; y: number }> = []
+          for (let cp = 0; cp < numCtrl && pi < pairs.length; ) {
+            if (pairs[pi].code === 10) {
+              const cx2 = parseFloat(pairs[pi].value) || 0; pi++
+              const cy2 = (pi < pairs.length && pairs[pi].code === 20) ? (parseFloat(pairs[pi++].value) || 0) : 0
+              spCtrl.push({ x: cx2, y: cy2 }); cp++
+            } else if (pairs[pi].code === 72 || pairs[pi].code === 92 || pairs[pi].code === 0 || pairs[pi].code === 97) {
+              break
+            } else { pi++ }
+          }
+          // Skip fit points
+          while (pi < pairs.length && pairs[pi].code === 42) pi++
+          while (pi < pairs.length && (pairs[pi].code === 11 || pairs[pi].code === 21)) pi++
+
+          // B-spline evaluation
+          if (spCtrl.length >= 2 && spKnots.length >= spCtrl.length + spDegree + 1) {
+            const pts2d = spCtrl.map(p => [p.x, p.y])
+            const N2 = Math.max(spCtrl.length * 4, 16)
+            const tMin = spKnots[spDegree], tMax = spKnots[spCtrl.length]
+            if (tMax > tMin) {
+              for (let s = 0; s <= N2; s++) {
+                const t = tMin + (tMax - tMin) * s / N2
+                const pt = deBoor(spDegree, pts2d, spKnots, t)
+                edgeParts.push(s === 0 && !started ? `M${pt[0]},${pt[1]}` : `L${pt[0]},${pt[1]}`)
+                if (s === 0) started = true
+                sumX += pt[0]; sumY += pt[1]; ptCount++
+              }
+            }
+          } else if (spCtrl.length >= 2) {
+            for (let s = 0; s < spCtrl.length; s++) {
+              edgeParts.push(s === 0 && !started ? `M${spCtrl[s].x},${spCtrl[s].y}` : `L${spCtrl[s].x},${spCtrl[s].y}`)
+              if (s === 0) started = true
+              sumX += spCtrl[s].x; sumY += spCtrl[s].y; ptCount++
+            }
+          }
+        } else {
+          // Unknown edge type - skip
+          while (pi < pairs.length && pairs[pi].code !== 72 && pairs[pi].code !== 92 && pairs[pi].code !== 0) {
+            if (pairs[pi].code === 97) break
+            pi++
+          }
+        }
+      }
+
+      if (started) {
+        edgeParts.push('Z')
+        svgParts.push(edgeParts.join(''))
+      }
+    }
+
+    // Skip source boundary objects (gc 97 + 330 handles)
+    while (pi < pairs.length && (pairs[pi].code === 97 || pairs[pi].code === 330)) {
+      if (pairs[pi].code === 97) {
+        const cnt = parseInt(pairs[pi].value) || 0
+        pi++
+        for (let s = 0; s < cnt && pi < pairs.length; s++) {
+          if (pairs[pi].code === 330) pi++
+        }
+      } else { pi++ }
+    }
+  }
+
+  if (svgParts.length === 0 || ptCount === 0) return null
+
+  return {
+    pathData: svgParts.join(''),
+    patternName: patternName.toUpperCase(),
+    patternScale,
+    patternAngle,
+    color,
+    layer,
+    cx: sumX / ptCount,
+    cy: sumY / ptCount,
+  }
 }
 
 /** Pre-compute block entity into polyline (LINE/ARC/CIRCLE/ELLIPSE/LWPOLYLINE).
@@ -800,6 +1067,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   progress('도면 요소 변환', 30)
   const output: PolylineData[] = []
   const texts: TextData[] = []
+  const hatches: HatchData[] = []
 
   // Handle POLYLINE (old-style): accumulate VERTEX entities
   let polylineState: { layer: string; colorNum: number; vertices: Vertex[]; closed: boolean } | null = null
@@ -996,6 +1264,16 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
+      // ── HATCH: sequential group-code parsing (complex nested boundary structure) ──
+      if (type === 'HATCH') {
+        if (hatches.length < MAX_HATCHES) {
+          const chunk = dxfText.substring(eStart, eEnd)
+          const hd = parseHatchEntity(chunk, entityLayer)
+          if (hd) hatches.push(hd)
+        }
+        sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
+      }
+
       // ── Generic path: substring + parseGroupCodes (LWPOLYLINE, SPLINE, ELLIPSE, INSERT, DIMENSION, etc.) ──
       const chunk = dxfText.substring(eStart, eEnd)
       const { codes } = parseGroupCodes(chunk)
@@ -1021,9 +1299,9 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
 
   progress('완료', 95)
   const elapsed = (performance.now() - t0).toFixed(0)
-  console.log(`[fast-worker] 파싱 완료: ${output.length}개 폴리라인, ${texts.length}개 텍스트, ${errCount}개 에러 (${elapsed}ms)`)
+  console.log(`[fast-worker] 파싱 완료: ${output.length}개 폴리라인, ${texts.length}개 텍스트, ${hatches.length}개 해치, ${errCount}개 에러 (${elapsed}ms)`)
 
-  return { polylines: output, insUnits, texts }
+  return { polylines: output, insUnits, texts, hatches }
 }
 
 // ===== Worker message handler =====
@@ -1036,7 +1314,7 @@ self.onmessage = (e: MessageEvent<ParseRequest>) => {
 
   try {
     const result = parseDxfFast(e.data.dxfText, e.data.selectedLayers, progress)
-    post({ type: 'result', polylines: result.polylines, insUnits: result.insUnits, texts: result.texts })
+    post({ type: 'result', polylines: result.polylines, insUnits: result.insUnits, texts: result.texts, hatches: result.hatches })
   } catch (err) {
     post({ type: 'error', message: err instanceof Error ? err.message : String(err) })
   }

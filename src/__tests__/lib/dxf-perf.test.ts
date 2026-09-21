@@ -165,11 +165,12 @@ function gcIfAvailable(): void {
 
 type PolylineData = { vertices: number[][]; layer: string; colorNumber: number }
 type TextData = { x: number; y: number; text: string; height: number; rotation: number; layer: string; colorNumber: number }
+type HatchData = { pathData: string; patternName: string; patternScale: number; patternAngle: number; color?: string; layer: string; cx: number; cy: number }
 
 function callWorkerSync(
   dxfText: string,
   selectedLayers: string[],
-): Promise<{ polylines: PolylineData[]; insUnits: number; texts: TextData[] }> {
+): Promise<{ polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[] }> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Worker mock timeout (15s)')), 15000)
 
@@ -184,6 +185,7 @@ function callWorkerSync(
           polylines: msg.polylines as PolylineData[],
           insUnits: msg.insUnits as number,
           texts: (msg.texts || []) as TextData[],
+          hatches: (msg.hatches || []) as HatchData[],
         })
       } else if (msg.type === 'error') {
         clearTimeout(timeout)
@@ -426,5 +428,123 @@ describe('DXF Performance Benchmark', () => {
 
     // SMALL 블록은 파싱됨, HUGE 블록은 건너뜀 (500 entity limit)
     expect(result.polylines.length).toBe(1)
+  })
+
+  // HATCH 파싱: polyline boundary + edge boundary
+  it('HATCH: polyline boundary + edge boundary parsed correctly', async () => {
+    const parts: string[] = [makeDxfHeader()]
+    parts.push(`${g(0)}\nSECTION\n${g(2)}\nBLOCKS\n${g(0)}\nENDSEC\n`)
+    parts.push(`${g(0)}\nSECTION\n${g(2)}\nENTITIES\n`)
+
+    // HATCH 1: SOLID polyline boundary (사각형)
+    parts.push([
+      `${g(0)}`, 'HATCH',
+      `${g(8)}`, 'WALL',
+      `${g(2)}`, 'SOLID',
+      `${g(70)}`, '1',     // solid fill
+      `${g(71)}`, '0',     // non-associative
+      `${g(91)}`, '1',     // 1 boundary path
+      `${g(92)}`, '7',     // polyline boundary (flag & 2)
+      `${g(72)}`, '0',     // no bulge
+      `${g(73)}`, '1',     // closed
+      `${g(93)}`, '4',     // 4 vertices
+      `${g(10)}`, '0',  `${g(20)}`, '0',
+      `${g(10)}`, '100',`${g(20)}`, '0',
+      `${g(10)}`, '100',`${g(20)}`, '50',
+      `${g(10)}`, '0',  `${g(20)}`, '50',
+      `${g(75)}`, '0',     // hatch style
+      `${g(76)}`, '1',     // pattern type
+    ].join('\n'))
+
+    // HATCH 2: ANSI31 edge boundary (삼각형 = 3 line edges)
+    parts.push([
+      `${g(0)}`, 'HATCH',
+      `${g(8)}`, 'WALL',
+      `${g(62)}`, '1',     // red (ACI)
+      `${g(2)}`, 'ANSI31',
+      `${g(41)}`, '2.5',   // pattern scale
+      `${g(52)}`, '45',    // pattern angle
+      `${g(70)}`, '0',     // pattern fill
+      `${g(71)}`, '0',
+      `${g(91)}`, '1',     // 1 boundary path
+      `${g(92)}`, '1',     // edge boundary (not polyline)
+      `${g(93)}`, '3',     // 3 edges
+      // Edge 1: line
+      `${g(72)}`, '1',
+      `${g(10)}`, '200', `${g(20)}`, '0',
+      `${g(11)}`, '300', `${g(21)}`, '0',
+      // Edge 2: line
+      `${g(72)}`, '1',
+      `${g(10)}`, '300', `${g(20)}`, '0',
+      `${g(11)}`, '250', `${g(21)}`, '100',
+      // Edge 3: line
+      `${g(72)}`, '1',
+      `${g(10)}`, '250', `${g(20)}`, '100',
+      `${g(11)}`, '200', `${g(21)}`, '0',
+      `${g(75)}`, '0',
+      `${g(76)}`, '1',
+    ].join('\n'))
+
+    // HATCH 3: arc edge boundary
+    parts.push([
+      `${g(0)}`, 'HATCH',
+      `${g(8)}`, 'WALL',
+      `${g(420)}`, `${(255 << 16) | (128 << 8) | 0}`,  // trueColor: orange
+      `${g(2)}`, 'CONCRETE',
+      `${g(41)}`, '1',
+      `${g(70)}`, '0',
+      `${g(71)}`, '0',
+      `${g(91)}`, '1',
+      `${g(92)}`, '1',     // edge boundary
+      `${g(93)}`, '2',     // 2 edges
+      // Edge 1: arc
+      `${g(72)}`, '2',
+      `${g(10)}`, '400', `${g(20)}`, '50',    // center
+      `${g(40)}`, '50',                        // radius
+      `${g(50)}`, '0',  `${g(51)}`, '180',     // start/end angle
+      `${g(73)}`, '1',                          // CCW
+      // Edge 2: line (close bottom)
+      `${g(72)}`, '1',
+      `${g(10)}`, '350', `${g(20)}`, '50',
+      `${g(11)}`, '450', `${g(21)}`, '50',
+      `${g(75)}`, '0',
+      `${g(76)}`, '1',
+    ].join('\n'))
+
+    parts.push(`${g(0)}\nENDSEC\n${g(0)}\nEOF\n`)
+    const dxf = parts.join('\n')
+
+    const result = await callWorkerSync(dxf, ['WALL'])
+
+    console.log(`\n[BENCH] HATCH test:`)
+    console.log(`  Hatches found: ${result.hatches.length}`)
+    result.hatches.forEach((h, i) => {
+      console.log(`  [${i}] pattern=${h.patternName}, scale=${h.patternScale}, angle=${h.patternAngle}, color=${h.color}, cx=${h.cx.toFixed(1)}, cy=${h.cy.toFixed(1)}`)
+      console.log(`       pathData (first 80): ${h.pathData.substring(0, 80)}...`)
+    })
+
+    expect(result.hatches.length).toBe(3)
+
+    // HATCH 1: SOLID, polyline rect
+    const h1 = result.hatches[0]
+    expect(h1.patternName).toBe('SOLID')
+    expect(h1.layer).toBe('WALL')
+    expect(h1.pathData).toContain('M')
+    expect(h1.pathData).toContain('Z')
+    expect(h1.cx).toBeCloseTo(50, 0)
+    expect(h1.cy).toBeCloseTo(25, 0)
+
+    // HATCH 2: ANSI31, edge boundary triangle
+    const h2 = result.hatches[1]
+    expect(h2.patternName).toBe('ANSI31')
+    expect(h2.patternScale).toBe(2.5)
+    expect(h2.patternAngle).toBe(45)
+    expect(h2.color).toBeDefined()  // ACI 1 = red
+
+    // HATCH 3: CONCRETE, arc edge + trueColor
+    const h3 = result.hatches[2]
+    expect(h3.patternName).toBe('CONCRETE')
+    expect(h3.color).toBeDefined()  // trueColor orange
+    expect(h3.pathData).toContain('L')  // arc → line approximation
   })
 })

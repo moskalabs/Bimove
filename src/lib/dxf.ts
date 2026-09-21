@@ -2210,13 +2210,13 @@ export function commitCadImport(
  * - UI 스레드 블로킹 없음 (Worker)
  * - 진행률 콜백 지원
  */
-import type { PolylineData, TextData, WorkerOut } from './dxf-fast-worker'
+import type { PolylineData, TextData, HatchData, WorkerOut } from './dxf-fast-worker'
 
 function runFastWorker(
   dxfText: string,
   selectedLayers: string[],
   onProgress?: (msg: string) => void,
-): Promise<{ polylines: PolylineData[]; insUnits: number; texts: TextData[] }> {
+): Promise<{ polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[] }> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(
       new URL('./dxf-fast-worker.ts', import.meta.url),
@@ -2238,7 +2238,7 @@ function runFastWorker(
       } else if (msg.type === 'result') {
         clearTimeout(timeout)
         worker.terminate()
-        resolve({ polylines: msg.polylines, insUnits: msg.insUnits, texts: msg.texts || [] })
+        resolve({ polylines: msg.polylines, insUnits: msg.insUnits, texts: msg.texts || [], hatches: msg.hatches || [] })
       } else if (msg.type === 'error') {
         clearTimeout(timeout)
         worker.terminate()
@@ -2273,11 +2273,13 @@ export async function commitCadImportV2(
   let polylines: PolylineData[]
   let insUnits: number
   let workerTexts: TextData[] = []
+  let workerHatches: HatchData[] = []
   try {
     const result = await runFastWorker(dxfText, layerArr, onProgress)
     polylines = result.polylines
     insUnits = result.insUnits
     workerTexts = result.texts || []
+    workerHatches = result.hatches || []
   } catch (workerErr) {
     console.error(`[CAD V2] Worker 실패:`, workerErr)
     // 동기 fallback 제거 — 메인 스레드에서 100MB+ 파일 파싱 시 브라우저 완전 멈춤
@@ -2288,7 +2290,7 @@ export async function commitCadImportV2(
     return 0
   }
   const parseMs = (performance.now() - t0).toFixed(0)
-  console.log(`[CAD V2] 파싱 완료: ${polylines.length}개 폴리라인 (${parseMs}ms)`)
+  console.log(`[CAD V2] 파싱 완료: ${polylines.length}개 폴리라인, ${workerHatches.length}개 해치 (${parseMs}ms)`)
 
   // 2. 유닛 스케일
   const unit = insUnits
@@ -2499,6 +2501,33 @@ export async function commitCadImportV2(
     }))
   console.log(`[CAD V2] ${pxTexts.length}개 텍스트 변환`)
 
+  // ── HATCH 좌표 변환 (DXF → px, Y flip, SVG path 좌표 변환) ──
+  const COORD_LIMIT = 1e8
+  type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; color?: string; layer: string; cx: number; cy: number }
+  const pxHatches: PxHatch[] = workerHatches
+    .filter(h => Math.abs(h.cx) < COORD_LIMIT && Math.abs(h.cy) < COORD_LIMIT && isFinite(h.cx) && isFinite(h.cy))
+    .map(h => {
+      const transformedPath = h.pathData.replace(
+        /([MLZ])([\d.e+-]+),([\d.e+-]+)/g,
+        (_, cmd: string, xStr: string, yStr: string) => {
+          const nx = parseFloat(xStr) * textScale
+          const ny = -parseFloat(yStr) * textScale
+          return `${cmd}${nx.toFixed(1)},${ny.toFixed(1)}`
+        }
+      )
+      return {
+        pathData: transformedPath,
+        patternName: h.patternName,
+        patternScale: h.patternScale,
+        patternAngle: h.patternAngle,
+        color: h.color,
+        layer: h.layer,
+        cx: h.cx * textScale,
+        cy: -h.cy * textScale,
+      }
+    })
+  console.log(`[CAD V2] ${pxHatches.length}개 해치 변환`)
+
   // ── 100+ segs: DxfGroup 모드 ──
   if (finalSegs.length >= 100) {
     // 레이어+색상별 그루핑 (같은 색상끼리 묶어야 렌더링 시 색 적용 가능)
@@ -2512,6 +2541,7 @@ export async function commitCadImportV2(
     }
 
     const assignedTextIdx = new Set<number>()
+    const assignedHatchIdx = new Set<number>()
 
     // 텍스트 공간 인덱스 구축 (O(n²) 방지 — 그리드 기반 조회)
     const TEXT_CELL = 100  // 100px 셀
@@ -2607,6 +2637,29 @@ export async function commitCadImportV2(
           }
         }
 
+        // 해치 수집: 이 클러스터 바운딩박스 내의 HATCH
+        const hatchMargin = 50
+        const localHatches: Array<{ d: string; p: string; s: number; a: number; c?: string }> = []
+        for (let hi = 0; hi < pxHatches.length; hi++) {
+          if (assignedHatchIdx.has(hi)) continue
+          const hh = pxHatches[hi]
+          if (hh.cx >= gMinX - hatchMargin && hh.cx <= gMaxX + hatchMargin &&
+              hh.cy >= gMinY - hatchMargin && hh.cy <= gMaxY + hatchMargin) {
+            const localPath = hh.pathData.replace(
+              /([MLZ])([\d.e+-]+),([\d.e+-]+)/g,
+              (_, cmd: string, xStr: string, yStr: string) => {
+                const lx = parseFloat(xStr) - gMinX
+                const ly = parseFloat(yStr) - gMinY
+                return `${cmd}${lx.toFixed(1)},${ly.toFixed(1)}`
+              }
+            )
+            localHatches.push({
+              d: localPath, p: hh.patternName, s: hh.patternScale, a: hh.patternAngle, c: hh.color,
+            })
+            assignedHatchIdx.add(hi)
+          }
+        }
+
         const gx = gMinX - offsetX
         const gy = gMinY - offsetY
         const w = Math.max(gMaxX - gMinX, 1)
@@ -2631,7 +2684,7 @@ export async function commitCadImportV2(
           props: {
             w, h, pathData, thickness: thickness * autoScale * 0.3, segCount: clusterSlice.length,
             textsJson: localTexts.length > 0 ? JSON.stringify(localTexts) : '',
-            hatchesJson: '',
+            hatchesJson: localHatches.length > 0 ? JSON.stringify(localHatches) : '',
           },
           meta: {
             dxfFingerprint: fingerprint,
@@ -2642,7 +2695,7 @@ export async function commitCadImportV2(
       }
     }
 
-    console.log(`[CAD V2] ${groupShapes.length}개 DxfGroup 생성 (텍스트 ${assignedTextIdx.size}/${pxTexts.length}개 할당)`)
+    console.log(`[CAD V2] ${groupShapes.length}개 DxfGroup 생성 (텍스트 ${assignedTextIdx.size}/${pxTexts.length}, 해치 ${assignedHatchIdx.size}/${pxHatches.length}개 할당)`)
 
     // 배치 생성 (배치 간 yield로 UI 멈춤 방지)
     const BATCH = 200
