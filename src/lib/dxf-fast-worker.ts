@@ -43,11 +43,18 @@ export type WorkerOut =
 
 interface Vertex { x: number; y: number; bulge: number }
 
+interface PrecomputedPoly {
+  vertices: number[][]     // pre-computed polyline points (entity EZ applied)
+  rawLayer: string | null  // null = gc8 absent, inherit from INSERT's layer
+  colorNumber: number
+}
+
 interface BlockDef {
   name: string
   baseX: number
   baseY: number
-  entityChunks: string[]   // raw text chunks for lazy parsing
+  entityChunks: string[]          // raw text chunks for complex entities (INSERT, TEXT, SPLINE...)
+  precomputed: PrecomputedPoly[]  // pre-parsed geometry (LINE, ARC, CIRCLE, ELLIPSE, LWPOLYLINE)
 }
 
 interface Transform {
@@ -268,9 +275,26 @@ function parseBlocks(dxf: string, gc: (c: number) => string): Map<string, BlockD
         baseX: bxIdx >= 0 ? parseFloat(chunk.substring(bxIdx + gc10.length).split('\n', 1)[0]) : 0,
         baseY: byIdx >= 0 ? parseFloat(chunk.substring(byIdx + gc20.length).split('\n', 1)[0]) : 0,
         entityChunks: [],
+        precomputed: [],
       }
     } else if (type === 'ENDBLK') {
-      if (cur) { blocks.set(cur.name, cur); cur = null }
+      if (cur) {
+        // Precompute simple geometry entities for faster INSERT expansion
+        // LINE/ARC/CIRCLE/ELLIPSE/LWPOLYLINE are parsed ONCE here;
+        // each INSERT reference just clones + transforms (no re-parsing)
+        const remaining: string[] = []
+        for (const ec of cur.entityChunks) {
+          const pre = precomputeEntity(ec)
+          if (pre) {
+            cur.precomputed.push(pre)
+          } else {
+            remaining.push(ec)
+          }
+        }
+        cur.entityChunks = remaining
+        blocks.set(cur.name, cur)
+        cur = null
+      }
     } else if (cur && type) {
       cur.entityChunks.push(chunk)
     }
@@ -293,6 +317,94 @@ function parseGroupCodes(text: string): { type: string; codes: Map<number, strin
     arr.push(val)
   }
   return { type, codes }
+}
+
+/** Pre-compute block entity into polyline (LINE/ARC/CIRCLE/ELLIPSE/LWPOLYLINE).
+ *  Returns null for entities that can't be precomputed (INSERT, TEXT, SPLINE, etc.) */
+function precomputeEntity(chunk: string): PrecomputedPoly | null {
+  const { type, codes } = parseGroupCodes(chunk)
+  const rawLayer = codes.get(8)?.[0]?.trim() ?? null
+  const colorNumber = codes.get(62)?.[0] ? parseInt(codes.get(62)![0]) : -1
+  const ez = codes.get(230)?.[0] ? parseFloat(codes.get(230)![0]) : 1
+
+  let poly: number[][] | null = null
+
+  switch (type) {
+    case 'LINE': {
+      const x1 = parseFloat(codes.get(10)?.[0] ?? '0')
+      const y1 = parseFloat(codes.get(20)?.[0] ?? '0')
+      const x2 = parseFloat(codes.get(11)?.[0] ?? '0')
+      const y2 = parseFloat(codes.get(21)?.[0] ?? '0')
+      if (Math.abs(x1 - x2) > 1e-6 || Math.abs(y1 - y2) > 1e-6) {
+        poly = [[x1, y1], [x2, y2]]
+      }
+      break
+    }
+    case 'ARC': {
+      const cx = parseFloat(codes.get(10)?.[0] ?? '0')
+      const cy = parseFloat(codes.get(20)?.[0] ?? '0')
+      const r = parseFloat(codes.get(40)?.[0] ?? '0')
+      if (r > 0.01) {
+        const sa = parseFloat(codes.get(50)?.[0] ?? '0') * Math.PI / 180
+        const ea = parseFloat(codes.get(51)?.[0] ?? '360') * Math.PI / 180
+        poly = interpEllipse(cx, cy, r, r, sa, ea)
+        if (ez === -1) for (const p of poly) p[0] = -p[0]
+      }
+      break
+    }
+    case 'CIRCLE': {
+      const cx = parseFloat(codes.get(10)?.[0] ?? '0')
+      const cy = parseFloat(codes.get(20)?.[0] ?? '0')
+      const r = parseFloat(codes.get(40)?.[0] ?? '0')
+      if (r > 0.01) {
+        poly = interpEllipse(cx, cy, r, r, 0, Math.PI * 2)
+        if (ez === -1) for (const p of poly) p[0] = -p[0]
+      }
+      break
+    }
+    case 'ELLIPSE': {
+      const cx = parseFloat(codes.get(10)?.[0] ?? '0')
+      const cy = parseFloat(codes.get(20)?.[0] ?? '0')
+      const mjx = parseFloat(codes.get(11)?.[0] ?? '1')
+      const mjy = parseFloat(codes.get(21)?.[0] ?? '0')
+      const ratio = parseFloat(codes.get(40)?.[0] ?? '1')
+      const sp = parseFloat(codes.get(41)?.[0] ?? '0')
+      const ep = parseFloat(codes.get(42)?.[0] ?? `${Math.PI * 2}`)
+      const rx = Math.sqrt(mjx * mjx + mjy * mjy)
+      const ry = ratio * rx
+      const rot = -Math.atan2(-mjy, mjx)
+      poly = interpEllipse(cx, cy, rx, ry, sp, ep, rot)
+      if (ez === -1) for (const p of poly) p[0] = -p[0]
+      break
+    }
+    case 'LWPOLYLINE': {
+      const xs = codes.get(10) || []
+      const ys = codes.get(20) || []
+      const bulges = codes.get(42) || []
+      const flag = parseInt(codes.get(70)?.[0] ?? '0')
+      const closed = (flag & 1) !== 0
+      const n = Math.min(xs.length, ys.length)
+      if (n < 2) break
+      const verts: Vertex[] = []
+      for (let i = 0; i < n; i++) {
+        verts.push({ x: parseFloat(xs[i]), y: parseFloat(ys[i]), bulge: parseFloat(bulges[i] || '0') })
+      }
+      if (closed) verts.push({ ...verts[0], bulge: 0 })
+      poly = []
+      for (let i = 0; i < verts.length - 1; i++) {
+        const f = verts[i], t = verts[i + 1]
+        poly.push([f.x, f.y])
+        if (f.bulge) poly.push(...bulgeArc(f.x, f.y, t.x, t.y, f.bulge))
+        if (i === verts.length - 2) poly.push([t.x, t.y])
+      }
+      break
+    }
+    default:
+      return null
+  }
+
+  if (!poly || poly.length < 2) return null
+  return { vertices: poly, rawLayer, colorNumber }
 }
 
 /** 글로벌 엔티티 평가 카운터 (INSERT 재귀 폭발 방지) */
@@ -457,7 +569,8 @@ function entityToPolyline(
       const blockName = codes.get(2)?.[0]?.trim() ?? ''
       const block = blocks.get(blockName)
       if (!block) break
-      if (block.entityChunks.length > 500) break  // 거대 블록 건너뛰기 (성능 보호)
+      const totalEnts = block.entityChunks.length + block.precomputed.length
+      if (totalEnts > 500) break  // 거대 블록 건너뛰기 (성능 보호)
 
       const ix = parseFloat(codes.get(10)?.[0] ?? '0')
       const iy = parseFloat(codes.get(20)?.[0] ?? '0')
@@ -481,14 +594,31 @@ function entityToPolyline(
           const t: Transform = { x: ox, y: oy, sx, sy, rot, ez: iez }
           const nextTransforms = [...transforms, t]
 
-          // Process block entities (inheriting layer per DXF convention)
+          // ── Fast path: precomputed entities (LINE/ARC/CIRCLE/ELLIPSE/LWPOLYLINE) ──
+          // 블록 정의 시 1회 파싱 완료 → INSERT마다 clone+transform만 (재파싱 없음)
+          for (const pe of block.precomputed) {
+            if (output.length >= MAX_POLYLINES) break
+            globalEntityEvals++
+            if (globalEntityEvals > MAX_ENTITY_EVALS) break
+
+            const entityLayer = pe.rawLayer ?? layer
+            if (selectedLayers.length > 0 && !selectedLayers.includes(entityLayer)) continue
+
+            // Clone vertices + apply base point offset + transforms
+            const verts: number[][] = new Array(pe.vertices.length)
+            for (let vi = 0; vi < pe.vertices.length; vi++) {
+              verts[vi] = [pe.vertices[vi][0] - block.baseX, pe.vertices[vi][1] - block.baseY]
+            }
+            for (const tr of nextTransforms) applyTransform(verts, tr)
+            output.push({ vertices: verts, layer: entityLayer, colorNumber: pe.colorNumber })
+          }
+
+          // ── Slow path: remaining entity chunks (INSERT, TEXT, SPLINE, etc.) ──
           for (const chunk of block.entityChunks) {
-            if (output.length >= MAX_POLYLINES) break  // 성능 보호: 폴리라인
-            if (textsOutput && textsOutput.length >= MAX_TEXTS) break  // 성능 보호: 텍스트
+            if (output.length >= MAX_POLYLINES) break
+            if (textsOutput && textsOutput.length >= MAX_TEXTS) break
             const { type: eType, codes: eCodes } = parseGroupCodes(chunk)
             if (eType === 'INSERT') {
-              // Nested INSERT — 부모 블록의 base point를 빼줘야 위치가 맞음
-              // geometry와 동일하게 처리: subOutput → base point 빼기 → transforms 적용
               const subOutput: PolylineData[] = []
               entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput)
               for (const pl of subOutput) {
@@ -497,17 +627,9 @@ function entityToPolyline(
                 output.push(pl)
               }
             } else if ((eType === 'TEXT' || eType === 'MTEXT') && textsOutput) {
-              // TEXT/MTEXT inside block — extract with base point + transforms
               const blockColor = eCodes.get(62)?.[0] ? parseInt(eCodes.get(62)![0]) : -1
               const td = extractTextEntity(eType, eCodes, layer, blockColor, nextTransforms)
               if (td) {
-                // Apply base point offset
-                td.x -= block.baseX
-                td.y -= block.baseY
-                // Re-apply transforms (extractTextEntity already applied nextTransforms,
-                // but we need to adjust for base point first — so we reconstruct)
-                // Actually, simpler: adjust the raw coords before transform
-                // Let's re-extract with adjusted coords:
                 const rawX = parseFloat(eCodes.get(10)?.[0] ?? '0') - block.baseX
                 const rawY = parseFloat(eCodes.get(20)?.[0] ?? '0') - block.baseY
                 const pt = [[rawX, rawY]]
@@ -516,15 +638,10 @@ function entityToPolyline(
                 textsOutput.push(td)
               }
             } else {
-              // Geometry entity — subtract block base point, convert to polyline
               const subOutput: PolylineData[] = []
               entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput)
-
-              // Apply base point offset + all accumulated transforms
               for (const pl of subOutput) {
-                // Subtract block base point
                 for (const p of pl.vertices) { p[0] -= block.baseX; p[1] -= block.baseY }
-                // Apply all transforms in order (innermost first)
                 for (const tr of nextTransforms) applyTransform(pl.vertices, tr)
                 output.push(pl)
               }
