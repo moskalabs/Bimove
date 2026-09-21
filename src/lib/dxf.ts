@@ -2481,6 +2481,19 @@ export async function commitCadImportV2(
     }
 
     const assignedTextIdx = new Set<number>()
+
+    // 텍스트 공간 인덱스 구축 (O(n²) 방지 — 그리드 기반 조회)
+    const TEXT_CELL = 100  // 100px 셀
+    const textGrid = new Map<string, number[]>()
+    pxTexts.forEach((t, idx) => {
+      const cx = Math.floor(t.x / TEXT_CELL)
+      const cy = Math.floor(t.y / TEXT_CELL)
+      const key = `${cx},${cy}`
+      let bucket = textGrid.get(key)
+      if (!bucket) { bucket = []; textGrid.set(key, bucket) }
+      bucket.push(idx)
+    })
+
     const groupShapes: unknown[] = []
     for (const [, { layer, color: groupColor, segs }] of layerGroups) {
       // 대형 레이어는 클러스터링 생략
@@ -2500,25 +2513,36 @@ export async function commitCadImportV2(
         const clusterH = gMaxY - gMinY
         if (clusterW < 4 && clusterH < 4) continue
 
-        // 이 클러스터 바운딩박스 내의 텍스트 수집 (여유 margin 포함)
+        // 그리드 기반 텍스트 수집 (O(1) 셀 조회, O(n²) → O(k))
         const margin = 20
         const localTexts: Array<{ x: number; y: number; t: string; h: number; r?: number; c?: string }> = []
-        pxTexts.forEach((t, idx) => {
-          if (assignedTextIdx.has(idx)) return
-          if ((t.layer || '0') !== layer) return
-          if (t.x >= gMinX - margin && t.x <= gMaxX + margin &&
-              t.y >= gMinY - margin && t.y <= gMaxY + margin) {
-            localTexts.push({
-              x: +(t.x - gMinX).toFixed(1),
-              y: +(t.y - gMinY).toFixed(1),
-              t: t.text,
-              h: +t.height.toFixed(1),
-              r: t.rotation,
-              c: t.color,
-            })
-            assignedTextIdx.add(idx)
+        const cxMin = Math.floor((gMinX - margin) / TEXT_CELL)
+        const cxMax = Math.floor((gMaxX + margin) / TEXT_CELL)
+        const cyMin = Math.floor((gMinY - margin) / TEXT_CELL)
+        const cyMax = Math.floor((gMaxY + margin) / TEXT_CELL)
+        for (let cx = cxMin; cx <= cxMax; cx++) {
+          for (let cy = cyMin; cy <= cyMax; cy++) {
+            const bucket = textGrid.get(`${cx},${cy}`)
+            if (!bucket) continue
+            for (const idx of bucket) {
+              if (assignedTextIdx.has(idx)) continue
+              const t = pxTexts[idx]
+              if ((t.layer || '0') !== layer) continue
+              if (t.x >= gMinX - margin && t.x <= gMaxX + margin &&
+                  t.y >= gMinY - margin && t.y <= gMaxY + margin) {
+                localTexts.push({
+                  x: +(t.x - gMinX).toFixed(1),
+                  y: +(t.y - gMinY).toFixed(1),
+                  t: t.text,
+                  h: +t.height.toFixed(1),
+                  r: t.rotation,
+                  c: t.color,
+                })
+                assignedTextIdx.add(idx)
+              }
+            }
           }
-        })
+        }
 
         const gx = gMinX - offsetX
         const gy = gMinY - offsetY
@@ -2554,16 +2578,23 @@ export async function commitCadImportV2(
     console.log(`[CAD V2] ${groupShapes.length}개 DxfGroup 생성 (텍스트 ${assignedTextIdx.size}/${pxTexts.length}개 할당)`)
 
     // 배치 생성
-    const BATCH = 1000
+    const newShapeIds = groupShapes.map((s: any) => s.id)
+    const BATCH = 500
     for (let i = 0; i < groupShapes.length; i += BATCH) {
       editor.createShapes(groupShapes.slice(i, i + BATCH) as never)
     }
 
+    // 새로 만든 shape만 선택 → zoomToFit (selectAll은 O(전체 shape)이라 느림)
     setTimeout(() => {
       try {
-        editor.selectAll()
-        editor.zoomToFit({ animation: { duration: 0 } })
-        editor.selectNone()
+        if (newShapeIds.length <= 5000) {
+          editor.select(...newShapeIds)
+          editor.zoomToSelection({ animation: { duration: 0 } })
+          editor.selectNone()
+        } else {
+          // 너무 많으면 선택 없이 zoomToFit
+          editor.zoomToFit({ animation: { duration: 0 } })
+        }
       } catch { /* ignore */ }
     }, 300)
 
