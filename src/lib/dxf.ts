@@ -2458,6 +2458,9 @@ export async function commitCadImportV2(
       bucket.push(idx)
     })
 
+    // 점 필터에 사용할 전체 도면 스팬 (autoScale 적용 후 px 기준)
+    const drawingSpan = Math.max(maxX - minX, maxY - minY) || 1
+
     const groupShapes: unknown[] = []
     for (const [, { layer, color: groupColor, segs }] of layerGroups) {
       // 대형 레이어는 클러스터링 생략
@@ -2472,13 +2475,25 @@ export async function commitCadImportV2(
           gMaxY = Math.max(gMaxY, s.y1, s.y1 + s.dy)
         }
 
-        // 점 방지: 작은 클러스터 건너뛰기
+        // 점/잔해 방지: 공격적 필터링
         const clusterW = gMaxX - gMinX
         const clusterH = gMaxY - gMinY
-        // 8px 미만 양쪽 → 무조건 점
-        if (clusterW < 8 && clusterH < 8) continue
-        // 세그먼트 3개 이하 + 20px 미만 → 거의 점/잔해
-        if (cluster.length <= 3 && clusterW < 20 && clusterH < 20) continue
+        const clusterMaxDim = Math.max(clusterW, clusterH)
+
+        // 1) 양쪽 15px 미만 → 무조건 점
+        if (clusterW < 15 && clusterH < 15) continue
+
+        // 2) 최대 치수가 전체 도면의 0.3% 미만 → 기호/마커 잔해
+        if (clusterMaxDim < drawingSpan * 0.003) continue
+
+        // 3) 총 경로 길이 계산 — 너무 짧으면 시각적 노이즈
+        let totalPathLen = 0
+        for (const s of cluster) totalPathLen += Math.hypot(s.dx, s.dy)
+        if (totalPathLen < 30) continue
+
+        // 4) 세그먼트 적고 작은 클러스터 → 기호 잔해
+        if (cluster.length <= 5 && clusterMaxDim < 40) continue
+        if (cluster.length <= 10 && clusterMaxDim < 25) continue
 
         // 그리드 기반 텍스트 수집 (O(1) 셀 조회, O(n²) → O(k))
         const margin = 20
