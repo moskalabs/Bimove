@@ -1622,11 +1622,15 @@ function clusterConnectedSegs(segs: RawSeg[]): RawSeg[][] {
   if (segs.length <= 1) return [segs]
 
   const SNAP_TOL = 5 // px 단위 endpoint 근접 허용치
+  const MAX_BUCKET = 30 // 버킷당 최대 세그먼트 수 (O(n²) 방지)
+  const TIME_BUDGET = 2000 // 최대 2초
   const n = segs.length
+  const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now()
 
   // Union-Find
-  const parent = Array.from({ length: n }, (_, i) => i)
-  const rank = new Array(n).fill(0)
+  const parent = new Int32Array(n)
+  const rank = new Uint8Array(n)
+  for (let i = 0; i < n; i++) parent[i] = i
   function find(x: number): number {
     while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x] }
     return x
@@ -1639,47 +1643,60 @@ function clusterConnectedSegs(segs: RawSeg[]): RawSeg[][] {
     else { parent[rb] = ra; rank[ra]++ }
   }
 
-  // endpoint를 grid cell로 해싱 → 같은 cell에 endpoint가 있는 세그먼트 연결
+  // endpoint를 grid cell로 해싱
   const cellSize = SNAP_TOL
-  const cellMap = new Map<string, number[]>() // cellKey → seg indices
+  const cellMap = new Map<string, number[]>()
+  let timedOut = false
 
   for (let i = 0; i < n; i++) {
+    // 시간 예산 체크 (매 500개마다)
+    if ((i & 511) === 0 && i > 0) {
+      const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0
+      if (elapsed > TIME_BUDGET) { timedOut = true; break }
+    }
+
     const s = segs[i]
-    const pts = [
-      { x: s.x1, y: s.y1 },
-      { x: s.x1 + s.dx, y: s.y1 + s.dy },
-    ]
-    for (const p of pts) {
-      // 인접 4셀 검사 (경계 근처 누락 방지)
-      const cx = Math.round(p.x / cellSize)
-      const cy = Math.round(p.y / cellSize)
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          const key = `${cx + dx},${cy + dy}`
-          const bucket = cellMap.get(key)
-          if (bucket) {
-            for (const j of bucket) {
-              // 실제 거리 확인
-              const sj = segs[j]
-              const pts2 = [
-                { x: sj.x1, y: sj.y1 },
-                { x: sj.x1 + sj.dx, y: sj.y1 + sj.dy },
-              ]
-              for (const q of pts2) {
-                if (Math.hypot(p.x - q.x, p.y - q.y) <= SNAP_TOL) {
-                  union(i, j)
-                }
-              }
+    const x1 = s.x1, y1 = s.y1, x2 = s.x1 + s.dx, y2 = s.y1 + s.dy
+
+    // 두 endpoint에 대해
+    for (let ep = 0; ep < 2; ep++) {
+      const px = ep === 0 ? x1 : x2
+      const py = ep === 0 ? y1 : y2
+      const cx = Math.round(px / cellSize)
+      const cy = Math.round(py / cellSize)
+
+      // 인접 셀 검사
+      for (let ddx = -1; ddx <= 1; ddx++) {
+        for (let ddy = -1; ddy <= 1; ddy++) {
+          const bucket = cellMap.get(`${cx + ddx},${cy + ddy}`)
+          if (!bucket) continue
+          // 버킷이 너무 크면 건너뛰기 (밀집 영역 O(n²) 방지)
+          if (bucket.length > MAX_BUCKET) continue
+          for (const j of bucket) {
+            if (find(i) === find(j)) continue // 이미 같은 그룹
+            const sj = segs[j]
+            const jx1 = sj.x1, jy1 = sj.y1, jx2 = sj.x1 + sj.dx, jy2 = sj.y1 + sj.dy
+            // 빠른 거리 체크 (hypot 대신 제곱 비교)
+            const tol2 = SNAP_TOL * SNAP_TOL
+            if ((px - jx1) * (px - jx1) + (py - jy1) * (py - jy1) <= tol2 ||
+                (px - jx2) * (px - jx2) + (py - jy2) * (py - jy2) <= tol2) {
+              union(i, j)
             }
           }
         }
       }
+
       // 자기 자신 등록
       const ownKey = `${cx},${cy}`
       let ownBucket = cellMap.get(ownKey)
       if (!ownBucket) { ownBucket = []; cellMap.set(ownKey, ownBucket) }
-      ownBucket.push(i)
+      if (ownBucket.length < MAX_BUCKET * 2) ownBucket.push(i) // 과대 버킷 방지
     }
+  }
+
+  if (timedOut) {
+    console.warn(`[CAD] clusterConnectedSegs 시간 초과 (${n}개 세그먼트, ${((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0).toFixed(0)}ms) → 단일 그룹 반환`)
+    return [segs]
   }
 
   // 그룹별로 세그먼트 수집
@@ -2463,8 +2480,8 @@ export async function commitCadImportV2(
 
     const groupShapes: unknown[] = []
     for (const [, { layer, color: groupColor, segs }] of layerGroups) {
-      // 대형 레이어는 클러스터링 생략
-      const clusters = segs.length > 3000 ? [segs] : clusterConnectedSegs(segs)
+      // 대형 레이어는 클러스터링 생략 (O(n²) 방지)
+      const clusters = segs.length > 800 ? [segs] : clusterConnectedSegs(segs)
 
       for (const cluster of clusters) {
         let gMinX = Infinity, gMinY = Infinity, gMaxX = -Infinity, gMaxY = -Infinity
