@@ -2352,6 +2352,34 @@ export async function commitCadImportV2(
   let finalSegs = merged.length > 0 ? merged : rawSegs
   console.log(`[CAD V2] 병합: ${rawSegs.length} → ${finalSegs.length}`)
 
+  // 6-1. 좌표 반올림 + 중복 세그먼트 제거 (메모리 절감)
+  const dedupSet = new Set<string>()
+  const dedupSegs: RawSeg[] = []
+  for (const s of finalSegs) {
+    const rx1 = Math.round(s.x1), ry1 = Math.round(s.y1)
+    const rx2 = Math.round(s.x1 + s.dx), ry2 = Math.round(s.y1 + s.dy)
+    if (rx1 === rx2 && ry1 === ry2) continue // 반올림 후 점
+    const key = `${rx1},${ry1},${rx2},${ry2}`
+    if (dedupSet.has(key)) continue
+    dedupSet.add(key)
+    dedupSegs.push({ x1: rx1, y1: ry1, dx: rx2 - rx1, dy: ry2 - ry1, layer: s.layer, color: s.color })
+  }
+  console.log(`[CAD V2] 중복제거: ${finalSegs.length} → ${dedupSegs.length}`)
+  finalSegs = dedupSegs
+
+  // 6-2. 하드 캡: 최대 50,000 세그먼트 (메모리 보호)
+  const MAX_FINAL_SEGS = 50_000
+  if (finalSegs.length > MAX_FINAL_SEGS) {
+    // 균등 샘플링으로 줄이기
+    const step = finalSegs.length / MAX_FINAL_SEGS
+    const sampled: RawSeg[] = []
+    for (let i = 0; i < MAX_FINAL_SEGS; i++) {
+      sampled.push(finalSegs[Math.floor(i * step)])
+    }
+    console.log(`[CAD V2] 세그먼트 캡: ${finalSegs.length} → ${MAX_FINAL_SEGS}`)
+    finalSegs = sampled
+  }
+
   // 7. 아웃라이어(점) 제거 — O(N) quickselect 기반
   function nthElement(arr: Float64Array, k: number): number {
     // Floyd-Rivest quickselect — O(N) average
@@ -2570,12 +2598,16 @@ export async function commitCadImportV2(
         const w = Math.max(gMaxX - gMinX, 1)
         const h = Math.max(gMaxY - gMinY, 1)
 
-        const pathData = cluster.map((s) => {
-          const x1 = s.x1 - gMinX
-          const y1 = s.y1 - gMinY
-          const x2 = x1 + s.dx
-          const y2 = y1 + s.dy
-          return `M${x1.toFixed(1)},${y1.toFixed(1)}L${x2.toFixed(1)},${y2.toFixed(1)}`
+        // shape당 최대 3000 세그먼트 (pathData 크기 제한 → 메모리 절감)
+        const maxSegsPerShape = 3000
+        const clusterSlice = cluster.length > maxSegsPerShape ? cluster.slice(0, maxSegsPerShape) : cluster
+
+        const pathData = clusterSlice.map((s) => {
+          const x1 = (s.x1 - gMinX) | 0
+          const y1 = (s.y1 - gMinY) | 0
+          const x2 = (x1 + s.dx) | 0
+          const y2 = (y1 + s.dy) | 0
+          return `M${x1},${y1}L${x2},${y2}`
         }).join('')
 
         groupShapes.push({
@@ -2583,7 +2615,7 @@ export async function commitCadImportV2(
           type: 'dxfgroup',
           x: gx, y: gy,
           props: {
-            w, h, pathData, thickness: thickness * autoScale * 0.3, segCount: cluster.length,
+            w, h, pathData, thickness: thickness * autoScale * 0.3, segCount: clusterSlice.length,
             textsJson: localTexts.length > 0 ? JSON.stringify(localTexts) : '',
             hatchesJson: '',
           },
