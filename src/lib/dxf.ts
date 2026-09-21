@@ -2391,7 +2391,7 @@ export async function commitCadImportV2(
     }
     const lo = Math.floor(cnt * pLoPct), hi = Math.min(Math.ceil(cnt * pHiPct) - 1, cnt - 1)
     // quickselect로 O(N)에 퍼센타일 찾기
-    const xsCopy = new Float64Array(xs), ysCopy = new Float64Array(ys)
+    const xsCopy = new Float64Array(xs)
     const minX = nthElement(xsCopy, lo)
     const xsCopy2 = new Float64Array(xs)
     const maxX = nthElement(xsCopy2, hi)
@@ -2599,7 +2599,6 @@ export async function commitCadImportV2(
     console.log(`[CAD V2] ${groupShapes.length}개 DxfGroup 생성 (텍스트 ${assignedTextIdx.size}/${pxTexts.length}개 할당)`)
 
     // 배치 생성 (배치 간 yield로 UI 멈춤 방지)
-    const newShapeIds = groupShapes.map((s: any) => s.id)
     const BATCH = 200
     for (let i = 0; i < groupShapes.length; i += BATCH) {
       editor.createShapes(groupShapes.slice(i, i + BATCH) as never)
