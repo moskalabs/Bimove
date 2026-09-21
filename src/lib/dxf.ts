@@ -2345,40 +2345,49 @@ export async function commitCadImportV2(
   let finalSegs = merged.length > 0 ? merged : rawSegs
   console.log(`[CAD V2] 병합: ${rawSegs.length} → ${finalSegs.length}`)
 
-  // 7. 퍼센타일 bbox (P2~P98) + 아웃라이어(점) 제거
-  const allXCoords: number[] = []
-  const allYCoords: number[] = []
-  for (const s of finalSegs) {
-    allXCoords.push(s.x1, s.x1 + s.dx)
-    allYCoords.push(s.y1, s.y1 + s.dy)
+  // 7. 퍼센타일 bbox (P5~P95) + 2-pass 아웃라이어(점) 제거
+  function computePercentileBBox(segs: RawSeg[], pLoPct: number, pHiPct: number) {
+    const xs: number[] = [], ys: number[] = []
+    for (const s of segs) { xs.push(s.x1, s.x1 + s.dx); ys.push(s.y1, s.y1 + s.dy) }
+    xs.sort((a, b) => a - b); ys.sort((a, b) => a - b)
+    const cnt = xs.length
+    const lo = cnt > 500 ? Math.floor(cnt * pLoPct) : 0
+    const hi = cnt > 500 ? Math.ceil(cnt * pHiPct) - 1 : cnt - 1
+    return { minX: xs[lo], maxX: xs[hi], minY: ys[lo], maxY: ys[hi], n: cnt }
   }
-  allXCoords.sort((a, b) => a - b)
-  allYCoords.sort((a, b) => a - b)
-  const n = allXCoords.length
-  const pLo = n > 1000 ? Math.floor(n * 0.02) : 0
-  const pHi = n > 1000 ? Math.ceil(n * 0.98) - 1 : n - 1
-  let minX = allXCoords[pLo], maxX = allXCoords[pHi]
-  let minY = allYCoords[pLo], maxY = allYCoords[pHi]
 
-  // 아웃라이어 세그먼트 제거: core bbox의 2배 이상 떨어진 세그먼트 필터링
-  if (n > 200) {
-    const coreW = maxX - minX || 1
-    const coreH = maxY - minY || 1
-    const padX = coreW * 2  // core bbox의 2배 여유
-    const padY = coreH * 2
-    const beforeCount = finalSegs.length
-    const noOutliers = finalSegs.filter((s) => {
+  function filterOutliers(segs: RawSeg[], pLo: number, pHi: number, padMul: number): RawSeg[] {
+    const { minX, maxX, minY, maxY, n } = computePercentileBBox(segs, pLo, pHi)
+    if (n < 200) return segs
+    const coreW = maxX - minX || 1, coreH = maxY - minY || 1
+    const padX = coreW * padMul, padY = coreH * padMul
+    const filtered = segs.filter((s) => {
       const sx1 = s.x1, sy1 = s.y1, sx2 = s.x1 + s.dx, sy2 = s.y1 + s.dy
       return sx1 >= minX - padX && sx1 <= maxX + padX &&
              sy1 >= minY - padY && sy1 <= maxY + padY &&
              sx2 >= minX - padX && sx2 <= maxX + padX &&
              sy2 >= minY - padY && sy2 <= maxY + padY
     })
-    if (noOutliers.length >= beforeCount * 0.5 && noOutliers.length < beforeCount) {
-      finalSegs = noOutliers
-      console.log(`[CAD V2] 아웃라이어 제거: ${beforeCount} → ${finalSegs.length}개 (${beforeCount - finalSegs.length}개 제거)`)
-    }
+    // 최소 50% 유지
+    return filtered.length >= segs.length * 0.5 ? filtered : segs
   }
+
+  // 1차: P5~P95 core bbox × 0.5 패딩
+  const before1 = finalSegs.length
+  finalSegs = filterOutliers(finalSegs, 0.05, 0.95, 0.5)
+  if (finalSegs.length < before1) {
+    console.log(`[CAD V2] 아웃라이어 1차: ${before1} → ${finalSegs.length}개 (${before1 - finalSegs.length}개 제거)`)
+  }
+  // 2차: 다시 P5~P95, 더 타이트한 패딩 (0.3)
+  const before2 = finalSegs.length
+  finalSegs = filterOutliers(finalSegs, 0.05, 0.95, 0.3)
+  if (finalSegs.length < before2) {
+    console.log(`[CAD V2] 아웃라이어 2차: ${before2} → ${finalSegs.length}개 (${before2 - finalSegs.length}개 제거)`)
+  }
+
+  // 최종 bbox 계산
+  const { minX: _minX, maxX: _maxX, minY: _minY, maxY: _maxY } = computePercentileBBox(finalSegs, 0, 1)
+  let minX = _minX, maxX = _maxX, minY = _minY, maxY = _maxY
 
   // 8. autoScale
   const MAX_CANVAS_SPAN = 12000
@@ -2463,10 +2472,13 @@ export async function commitCadImportV2(
           gMaxY = Math.max(gMaxY, s.y1, s.y1 + s.dy)
         }
 
-        // 점 방지: bbox가 4px 미만인 클러스터 건너뛰기
+        // 점 방지: 작은 클러스터 건너뛰기
         const clusterW = gMaxX - gMinX
         const clusterH = gMaxY - gMinY
-        if (clusterW < 4 && clusterH < 4) continue
+        // 8px 미만 양쪽 → 무조건 점
+        if (clusterW < 8 && clusterH < 8) continue
+        // 세그먼트 3개 이하 + 20px 미만 → 거의 점/잔해
+        if (cluster.length <= 3 && clusterW < 20 && clusterH < 20) continue
 
         // 그리드 기반 텍스트 수집 (O(1) 셀 조회, O(n²) → O(k))
         const margin = 20

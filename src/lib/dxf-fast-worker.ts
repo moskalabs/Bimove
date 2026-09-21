@@ -535,7 +535,7 @@ function entityToPolyline(
       if (poly[i][1] > pMaxY) pMaxY = poly[i][1]
     }
     const span = Math.max(pMaxX - pMinX, pMaxY - pMinY)
-    if (span < 0.01) return  // 너무 작은 폴리라인 → 점처럼 보임
+    if (span < 0.1) return  // 너무 작은 폴리라인 → 점처럼 보임
 
     output.push({ vertices: poly, layer, colorNumber: colorNum })
   }
