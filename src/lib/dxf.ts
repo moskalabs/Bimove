@@ -2446,13 +2446,42 @@ export async function commitCadImportV2(
     return filtered.length >= segs.length * 0.5 ? filtered : segs
   }
 
-  // 1차 + 2차 아웃라이어 제거
+  // 1차 + 2차 아웃라이어 제거 (percentile 기반)
   const before1 = finalSegs.length
   finalSegs = filterOutliers(finalSegs, 0.05, 0.95, 0.5)
   if (finalSegs.length < before1) console.log(`[CAD V2] 아웃라이어 1차: ${before1} → ${finalSegs.length}개`)
   const before2 = finalSegs.length
   finalSegs = filterOutliers(finalSegs, 0.05, 0.95, 0.3)
   if (finalSegs.length < before2) console.log(`[CAD V2] 아웃라이어 2차: ${before2} → ${finalSegs.length}개`)
+
+  // 3차: IQR 기반 극단 좌표 제거 (C-LIGHT X:-1.5M, E-1 X:+3.6M 같은 경우)
+  // percentile 필터를 통과한 후에도 bbox 스팬이 IQR 대비 극단적이면 추가 제거
+  if (finalSegs.length > 100) {
+    const before3 = finalSegs.length
+    const cnt3 = finalSegs.length * 2
+    const xs3 = new Float64Array(cnt3), ys3 = new Float64Array(cnt3)
+    for (let i = 0; i < finalSegs.length; i++) {
+      xs3[i * 2] = finalSegs[i].x1; xs3[i * 2 + 1] = finalSegs[i].x1 + finalSegs[i].dx
+      ys3[i * 2] = finalSegs[i].y1; ys3[i * 2 + 1] = finalSegs[i].y1 + finalSegs[i].dy
+    }
+    const q1x = nthElement(new Float64Array(xs3), Math.floor(cnt3 * 0.25))
+    const q3x = nthElement(new Float64Array(xs3), Math.floor(cnt3 * 0.75))
+    const q1y = nthElement(new Float64Array(ys3), Math.floor(cnt3 * 0.25))
+    const q3y = nthElement(new Float64Array(ys3), Math.floor(cnt3 * 0.75))
+    const iqrX = (q3x - q1x) || 1, iqrY = (q3y - q1y) || 1
+    const fenceX = iqrX * 3, fenceY = iqrY * 3  // 3×IQR = 극단 아웃라이어
+    const loX = q1x - fenceX, hiX = q3x + fenceX
+    const loY = q1y - fenceY, hiY = q3y + fenceY
+    const filtered3 = finalSegs.filter(s => {
+      const sx2 = s.x1 + s.dx, sy2 = s.y1 + s.dy
+      return s.x1 >= loX && s.x1 <= hiX && sx2 >= loX && sx2 <= hiX &&
+             s.y1 >= loY && s.y1 <= hiY && sy2 >= loY && sy2 <= hiY
+    })
+    if (filtered3.length >= finalSegs.length * 0.5) {
+      finalSegs = filtered3
+      if (finalSegs.length < before3) console.log(`[CAD V2] 아웃라이어 3차(IQR): ${before3} → ${finalSegs.length}개`)
+    }
+  }
 
   // 최종 bbox (O(N) min/max)
   const { minX: _minX, maxX: _maxX, minY: _minY, maxY: _maxY } = computeBBox(finalSegs, 0, 1)
