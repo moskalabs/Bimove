@@ -520,13 +520,21 @@ function entityToPolyline(
   }
 
   if (poly && poly.length >= 2) {
-    // Apply extrusion Z flip if entity-level (non-INSERT)
-    // Already handled per entity type above
-
     // Apply accumulated transforms (from parent INSERTs)
     if (transforms.length) {
       for (const tr of transforms) applyTransform(poly, tr)
     }
+
+    // 점 방지: 바운딩박스가 극소인 폴리라인 건너뛰기
+    let pMinX = poly[0][0], pMaxX = poly[0][0], pMinY = poly[0][1], pMaxY = poly[0][1]
+    for (let i = 1; i < poly.length; i++) {
+      if (poly[i][0] < pMinX) pMinX = poly[i][0]
+      if (poly[i][0] > pMaxX) pMaxX = poly[i][0]
+      if (poly[i][1] < pMinY) pMinY = poly[i][1]
+      if (poly[i][1] > pMaxY) pMaxY = poly[i][1]
+    }
+    const span = Math.max(pMaxX - pMinX, pMaxY - pMinY)
+    if (span < 0.01) return  // 너무 작은 폴리라인 → 점처럼 보임
 
     output.push({ vertices: poly, layer, colorNumber: colorNum })
   }

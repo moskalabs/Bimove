@@ -2387,10 +2387,10 @@ export async function commitCadImportV2(
   // 6. 동일선상 병합
   onProgress?.('세그먼트 병합 중...')
   const merged = mergeDxfSegments(rawSegs)
-  const finalSegs = merged.length > 0 ? merged : rawSegs
+  let finalSegs = merged.length > 0 ? merged : rawSegs
   console.log(`[CAD V2] 병합: ${rawSegs.length} → ${finalSegs.length}`)
 
-  // 7. 퍼센타일 bbox (P2~P98)
+  // 7. 퍼센타일 bbox (P2~P98) + 아웃라이어(점) 제거
   const allXCoords: number[] = []
   const allYCoords: number[] = []
   for (const s of finalSegs) {
@@ -2404,6 +2404,26 @@ export async function commitCadImportV2(
   const pHi = n > 1000 ? Math.ceil(n * 0.98) - 1 : n - 1
   let minX = allXCoords[pLo], maxX = allXCoords[pHi]
   let minY = allYCoords[pLo], maxY = allYCoords[pHi]
+
+  // 아웃라이어 세그먼트 제거: core bbox의 2배 이상 떨어진 세그먼트 필터링
+  if (n > 200) {
+    const coreW = maxX - minX || 1
+    const coreH = maxY - minY || 1
+    const padX = coreW * 2  // core bbox의 2배 여유
+    const padY = coreH * 2
+    const beforeCount = finalSegs.length
+    const noOutliers = finalSegs.filter((s) => {
+      const sx1 = s.x1, sy1 = s.y1, sx2 = s.x1 + s.dx, sy2 = s.y1 + s.dy
+      return sx1 >= minX - padX && sx1 <= maxX + padX &&
+             sy1 >= minY - padY && sy1 <= maxY + padY &&
+             sx2 >= minX - padX && sx2 <= maxX + padX &&
+             sy2 >= minY - padY && sy2 <= maxY + padY
+    })
+    if (noOutliers.length >= beforeCount * 0.5 && noOutliers.length < beforeCount) {
+      finalSegs = noOutliers
+      console.log(`[CAD V2] 아웃라이어 제거: ${beforeCount} → ${finalSegs.length}개 (${beforeCount - finalSegs.length}개 제거)`)
+    }
+  }
 
   // 8. autoScale
   const MAX_CANVAS_SPAN = 12000
@@ -2474,6 +2494,11 @@ export async function commitCadImportV2(
           gMaxX = Math.max(gMaxX, s.x1, s.x1 + s.dx)
           gMaxY = Math.max(gMaxY, s.y1, s.y1 + s.dy)
         }
+
+        // 점 방지: bbox가 4px 미만인 클러스터 건너뛰기
+        const clusterW = gMaxX - gMinX
+        const clusterH = gMaxY - gMinY
+        if (clusterW < 4 && clusterH < 4) continue
 
         // 이 클러스터 바운딩박스 내의 텍스트 수집 (여유 margin 포함)
         const margin = 20
