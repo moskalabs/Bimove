@@ -2546,21 +2546,26 @@ export async function commitCadImportV2(
         const clusterW = gMaxX - gMinX
         const clusterH = gMaxY - gMinY
         const clusterMaxDim = Math.max(clusterW, clusterH)
+        const clusterMinDim = Math.min(clusterW, clusterH)
 
-        // 1) 양쪽 15px 미만 → 무조건 점
-        if (clusterW < 15 && clusterH < 15) continue
+        // 1) 양쪽 25px 미만 → 무조건 점/기호
+        if (clusterW < 25 && clusterH < 25) continue
 
-        // 2) 최대 치수가 전체 도면의 0.3% 미만 → 기호/마커 잔해
-        if (clusterMaxDim < drawingSpan * 0.003) continue
+        // 2) 최대 치수가 전체 도면의 0.5% 미만 → 기호/마커/제목블록 잔해
+        if (clusterMaxDim < drawingSpan * 0.005) continue
 
         // 3) 총 경로 길이 계산 — 너무 짧으면 시각적 노이즈
         let totalPathLen = 0
         for (const s of cluster) totalPathLen += Math.hypot(s.dx, s.dy)
-        if (totalPathLen < 30) continue
+        if (totalPathLen < 50) continue
 
         // 4) 세그먼트 적고 작은 클러스터 → 기호 잔해
-        if (cluster.length <= 5 && clusterMaxDim < 40) continue
-        if (cluster.length <= 10 && clusterMaxDim < 25) continue
+        if (cluster.length <= 5 && clusterMaxDim < 60) continue
+        if (cluster.length <= 10 && clusterMaxDim < 40) continue
+        if (cluster.length <= 20 && clusterMaxDim < 30) continue
+
+        // 5) 한쪽이 극단적으로 얇은 클러스터 (점선/작은 틱 마크)
+        if (clusterMinDim < 3 && cluster.length <= 5) continue
 
         // 그리드 기반 텍스트 수집 (O(1) 셀 조회, O(n²) → O(k))
         const margin = 20
