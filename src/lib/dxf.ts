@@ -2547,6 +2547,7 @@ export async function commitCadImportV2(
         const clusterH = gMaxY - gMinY
         const clusterMaxDim = Math.max(clusterW, clusterH)
         const clusterMinDim = Math.min(clusterW, clusterH)
+        const clusterArea = clusterW * clusterH
 
         // 1) 양쪽 25px 미만 → 무조건 점/기호
         if (clusterW < 25 && clusterH < 25) continue
@@ -2560,12 +2561,20 @@ export async function commitCadImportV2(
         if (totalPathLen < 50) continue
 
         // 4) 세그먼트 적고 작은 클러스터 → 기호 잔해
-        if (cluster.length <= 5 && clusterMaxDim < 60) continue
-        if (cluster.length <= 10 && clusterMaxDim < 40) continue
-        if (cluster.length <= 20 && clusterMaxDim < 30) continue
+        if (cluster.length <= 5 && clusterMaxDim < 80) continue
+        if (cluster.length <= 10 && clusterMaxDim < 60) continue
+        if (cluster.length <= 20 && clusterMaxDim < 40) continue
+        if (cluster.length <= 30 && clusterMaxDim < 30) continue
 
         // 5) 한쪽이 극단적으로 얇은 클러스터 (점선/작은 틱 마크)
-        if (clusterMinDim < 3 && cluster.length <= 5) continue
+        if (clusterMinDim < 5 && cluster.length <= 10) continue
+
+        // 6) 면적 기반: 전체 도면 면적의 0.01% 미만 + 세그먼트 50개 이하 → 잔해
+        const drawingArea = (maxX - minX) * (maxY - minY) || 1
+        if (clusterArea < drawingArea * 0.0001 && cluster.length <= 50) continue
+
+        // 7) 경로 길이 대비 면적이 너무 작은 고립 기호 (작은 테이블 셀, 마커 등)
+        if (clusterArea < 5000 && totalPathLen < 200 && cluster.length <= 30) continue
 
         // 그리드 기반 텍스트 수집 (O(1) 셀 조회, O(n²) → O(k))
         const margin = 20
