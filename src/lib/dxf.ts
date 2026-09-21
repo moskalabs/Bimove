@@ -2021,26 +2021,31 @@ export function commitCadImport(
         })
 
         // 이 클러스터 바운딩박스 내의 HATCH 수집
-        const localHatches: Array<{ d: string; p: string; s: number; a: number; c?: string }> = []
+        const localHatches: Array<{ d: string; p: string; s: number; a: number; c?: string; dim?: number }> = []
         pxHatches.forEach((h, idx) => {
           if (assignedHatchIdx.has(idx)) return
           if (h.cx >= gMinX - margin && h.cx <= gMaxX + margin &&
               h.cy >= gMinY - margin && h.cy <= gMaxY + margin) {
-            // pathData를 shape-local 좌표로 변환
+            // pathData를 shape-local 좌표로 변환 + 바운딩박스 계산
+            let hMinX2 = Infinity, hMaxX2 = -Infinity, hMinY2 = Infinity, hMaxY2 = -Infinity
             const localPath = h.pathData.replace(
               /([ML])([\d.e+-]+),([\d.e+-]+)/g,
-              (_, cmd, xStr, yStr) => {
+              (_, cmd: string, xStr: string, yStr: string) => {
                 const lx = parseFloat(xStr) - gMinX
                 const ly = parseFloat(yStr) - gMinY
+                hMinX2 = Math.min(hMinX2, lx); hMaxX2 = Math.max(hMaxX2, lx)
+                hMinY2 = Math.min(hMinY2, ly); hMaxY2 = Math.max(hMaxY2, ly)
                 return `${cmd}${lx.toFixed(1)},${ly.toFixed(1)}`
               }
             )
+            const hDim = Math.max(hMaxX2 - hMinX2, hMaxY2 - hMinY2, 10)
             localHatches.push({
               d: localPath,
               p: h.patternName,
               s: h.patternScale,
               a: h.patternAngle,
               c: h.color,
+              dim: +hDim.toFixed(1),
             })
             assignedHatchIdx.add(idx)
           }
@@ -2667,22 +2672,27 @@ export async function commitCadImportV2(
 
         // 해치 수집: 이 클러스터 바운딩박스 내의 HATCH
         const hatchMargin = 50
-        const localHatches: Array<{ d: string; p: string; s: number; a: number; c?: string }> = []
+        const localHatches: Array<{ d: string; p: string; s: number; a: number; c?: string; dim?: number }> = []
         for (let hi = 0; hi < pxHatches.length; hi++) {
           if (assignedHatchIdx.has(hi)) continue
           const hh = pxHatches[hi]
           if (hh.cx >= gMinX - hatchMargin && hh.cx <= gMaxX + hatchMargin &&
               hh.cy >= gMinY - hatchMargin && hh.cy <= gMaxY + hatchMargin) {
+            let hMinX2 = Infinity, hMaxX2 = -Infinity, hMinY2 = Infinity, hMaxY2 = -Infinity
             const localPath = hh.pathData.replace(
               /([MLZ])([\d.e+-]+),([\d.e+-]+)/g,
               (_, cmd: string, xStr: string, yStr: string) => {
                 const lx = parseFloat(xStr) - gMinX
                 const ly = parseFloat(yStr) - gMinY
+                hMinX2 = Math.min(hMinX2, lx); hMaxX2 = Math.max(hMaxX2, lx)
+                hMinY2 = Math.min(hMinY2, ly); hMaxY2 = Math.max(hMaxY2, ly)
                 return `${cmd}${lx.toFixed(1)},${ly.toFixed(1)}`
               }
             )
+            const hDim = Math.max(hMaxX2 - hMinX2, hMaxY2 - hMinY2, 10)
             localHatches.push({
               d: localPath, p: hh.patternName, s: hh.patternScale, a: hh.patternAngle, c: hh.color,
+              dim: +hDim.toFixed(1),
             })
             assignedHatchIdx.add(hi)
           }

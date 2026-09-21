@@ -54,7 +54,7 @@ export type DxfGroupShapeProps = {
 }
 
 type DxfTextEntry = { x: number; y: number; t: string; h: number; r?: number; c?: string }
-type DxfHatchEntry = { d: string; p: string; s: number; a: number; c?: string }
+type DxfHatchEntry = { d: string; p: string; s: number; a: number; c?: string; dim?: number }
 
 /** DXF 패턴명 → SVG pattern 생성 */
 function dxfHatchPatternDef(
@@ -446,7 +446,7 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
     const isSolid = h.p.toUpperCase() === 'SOLID'
     return {
       id: patId,
-      def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor, Math.max(shape.props.w, shape.props.h)),
+      def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor, h.dim ?? Math.max(shape.props.w, shape.props.h)),
       isSolid,
       color: hColor,
     }
@@ -607,7 +607,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
       const hColor = h.c ? darkenForLightBg(h.c) : '#666'
       const patId = `hatch-svg-${shape.id}-${i}`
       const isSolid = h.p.toUpperCase() === 'SOLID'
-      return { id: patId, def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor, Math.max(shape.props.w, shape.props.h)), isSolid, color: hColor }
+      return { id: patId, def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor, h.dim ?? Math.max(shape.props.w, shape.props.h)), isSolid, color: hColor }
     })
 
     return (
