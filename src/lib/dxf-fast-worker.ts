@@ -291,6 +291,10 @@ function parseGroupCodes(text: string): { type: string; codes: Map<number, strin
   return { type, codes }
 }
 
+/** 글로벌 엔티티 평가 카운터 (INSERT 재귀 폭발 방지) */
+let globalEntityEvals = 0
+const MAX_ENTITY_EVALS = 500_000
+
 /** Convert a parsed entity to polyline vertices. Returns null for unsupported types. */
 function entityToPolyline(
   type: string,
@@ -303,6 +307,7 @@ function entityToPolyline(
   output: PolylineData[],
   textsOutput?: TextData[],
 ): void {
+  if (++globalEntityEvals > MAX_ENTITY_EVALS) return  // 총 평가 횟수 초과 → bail
   const layer = layerOverride || (codes.get(8)?.[0]?.trim() ?? '0')
   const colorNum = codes.get(62)?.[0] ? parseInt(codes.get(62)![0]) : -1
 
@@ -601,6 +606,7 @@ function extractTextEntity(
 
 function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number; texts: TextData[] } {
   const t0 = performance.now()
+  globalEntityEvals = 0  // 글로벌 카운터 리셋
   const layerSet = new Set(selectedLayers)
 
   // 0. \r\n → \n 정규화 (Windows DXF 파일 호환)

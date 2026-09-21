@@ -1740,16 +1740,6 @@ function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
     const len = Math.hypot(first.dx, first.dy)
     const ux = first.dx / len, uy = first.dy / len
 
-    // 모든 endpoint를 투영
-    type Proj = { t: number; seg: RawSeg }
-    const projs: Proj[] = []
-    for (const s of group) {
-      const t1 = (s.x1 - first.x1) * ux + (s.y1 - first.y1) * uy
-      const t2 = t1 + s.dx * ux + s.dy * uy
-      projs.push({ t: Math.min(t1, t2), seg: s })
-      projs.push({ t: Math.max(t1, t2), seg: s })
-    }
-
     // 연속 구간 탐지: 세그먼트들을 투영 시작점 기준 정렬 후 병합
     const intervals: { lo: number; hi: number; seg: RawSeg }[] = []
     for (const s of group) {
@@ -2362,22 +2352,60 @@ export async function commitCadImportV2(
   let finalSegs = merged.length > 0 ? merged : rawSegs
   console.log(`[CAD V2] 병합: ${rawSegs.length} → ${finalSegs.length}`)
 
-  // 7. 퍼센타일 bbox (P5~P95) + 2-pass 아웃라이어(점) 제거
-  function computePercentileBBox(segs: RawSeg[], pLoPct: number, pHiPct: number) {
-    const xs: number[] = [], ys: number[] = []
-    for (const s of segs) { xs.push(s.x1, s.x1 + s.dx); ys.push(s.y1, s.y1 + s.dy) }
-    xs.sort((a, b) => a - b); ys.sort((a, b) => a - b)
-    const cnt = xs.length
-    const lo = cnt > 500 ? Math.floor(cnt * pLoPct) : 0
-    const hi = cnt > 500 ? Math.ceil(cnt * pHiPct) - 1 : cnt - 1
-    return { minX: xs[lo], maxX: xs[hi], minY: ys[lo], maxY: ys[hi], n: cnt }
+  // 7. 아웃라이어(점) 제거 — O(N) quickselect 기반
+  function nthElement(arr: Float64Array, k: number): number {
+    // Floyd-Rivest quickselect — O(N) average
+    let lo = 0, hi = arr.length - 1
+    while (lo < hi) {
+      const pivotIdx = lo + ((Math.random() * (hi - lo + 1)) | 0)
+      const pivot = arr[pivotIdx]
+      arr[pivotIdx] = arr[hi]; arr[hi] = pivot
+      let store = lo
+      for (let i = lo; i < hi; i++) {
+        if (arr[i] < pivot) { const t = arr[i]; arr[i] = arr[store]; arr[store] = t; store++ }
+      }
+      arr[hi] = arr[store]; arr[store] = pivot
+      if (store === k) break
+      else if (store < k) lo = store + 1
+      else hi = store - 1
+    }
+    return arr[k]
+  }
+
+  function computeBBox(segs: RawSeg[], pLoPct: number, pHiPct: number) {
+    const cnt = segs.length * 2
+    const xs = new Float64Array(cnt), ys = new Float64Array(cnt)
+    for (let i = 0; i < segs.length; i++) {
+      const s = segs[i]
+      xs[i * 2] = s.x1; xs[i * 2 + 1] = s.x1 + s.dx
+      ys[i * 2] = s.y1; ys[i * 2 + 1] = s.y1 + s.dy
+    }
+    if (cnt <= 500 || (pLoPct === 0 && pHiPct === 1)) {
+      // 전체 범위: min/max로 충분 (O(N))
+      let mnX = xs[0], mxX = xs[0], mnY = ys[0], mxY = ys[0]
+      for (let i = 1; i < cnt; i++) {
+        if (xs[i] < mnX) mnX = xs[i]; if (xs[i] > mxX) mxX = xs[i]
+        if (ys[i] < mnY) mnY = ys[i]; if (ys[i] > mxY) mxY = ys[i]
+      }
+      return { minX: mnX, maxX: mxX, minY: mnY, maxY: mxY, n: cnt }
+    }
+    const lo = Math.floor(cnt * pLoPct), hi = Math.min(Math.ceil(cnt * pHiPct) - 1, cnt - 1)
+    // quickselect로 O(N)에 퍼센타일 찾기
+    const xsCopy = new Float64Array(xs), ysCopy = new Float64Array(ys)
+    const minX = nthElement(xsCopy, lo)
+    const xsCopy2 = new Float64Array(xs)
+    const maxX = nthElement(xsCopy2, hi)
+    const ysCopy2 = new Float64Array(ys)
+    const minY = nthElement(ysCopy2, lo)
+    const ysCopy3 = new Float64Array(ys)
+    const maxY = nthElement(ysCopy3, hi)
+    return { minX, maxX, minY, maxY, n: cnt }
   }
 
   function filterOutliers(segs: RawSeg[], pLo: number, pHi: number, padMul: number): RawSeg[] {
-    const { minX, maxX, minY, maxY, n } = computePercentileBBox(segs, pLo, pHi)
+    const { minX, maxX, minY, maxY, n } = computeBBox(segs, pLo, pHi)
     if (n < 200) return segs
-    const coreW = maxX - minX || 1, coreH = maxY - minY || 1
-    const padX = coreW * padMul, padY = coreH * padMul
+    const padX = (maxX - minX || 1) * padMul, padY = (maxY - minY || 1) * padMul
     const filtered = segs.filter((s) => {
       const sx1 = s.x1, sy1 = s.y1, sx2 = s.x1 + s.dx, sy2 = s.y1 + s.dy
       return sx1 >= minX - padX && sx1 <= maxX + padX &&
@@ -2385,25 +2413,19 @@ export async function commitCadImportV2(
              sx2 >= minX - padX && sx2 <= maxX + padX &&
              sy2 >= minY - padY && sy2 <= maxY + padY
     })
-    // 최소 50% 유지
     return filtered.length >= segs.length * 0.5 ? filtered : segs
   }
 
-  // 1차: P5~P95 core bbox × 0.5 패딩
+  // 1차 + 2차 아웃라이어 제거
   const before1 = finalSegs.length
   finalSegs = filterOutliers(finalSegs, 0.05, 0.95, 0.5)
-  if (finalSegs.length < before1) {
-    console.log(`[CAD V2] 아웃라이어 1차: ${before1} → ${finalSegs.length}개 (${before1 - finalSegs.length}개 제거)`)
-  }
-  // 2차: 다시 P5~P95, 더 타이트한 패딩 (0.3)
+  if (finalSegs.length < before1) console.log(`[CAD V2] 아웃라이어 1차: ${before1} → ${finalSegs.length}개`)
   const before2 = finalSegs.length
   finalSegs = filterOutliers(finalSegs, 0.05, 0.95, 0.3)
-  if (finalSegs.length < before2) {
-    console.log(`[CAD V2] 아웃라이어 2차: ${before2} → ${finalSegs.length}개 (${before2 - finalSegs.length}개 제거)`)
-  }
+  if (finalSegs.length < before2) console.log(`[CAD V2] 아웃라이어 2차: ${before2} → ${finalSegs.length}개`)
 
-  // 최종 bbox 계산
-  const { minX: _minX, maxX: _maxX, minY: _minY, maxY: _maxY } = computePercentileBBox(finalSegs, 0, 1)
+  // 최종 bbox (O(N) min/max)
+  const { minX: _minX, maxX: _maxX, minY: _minY, maxY: _maxY } = computeBBox(finalSegs, 0, 1)
   let minX = _minX, maxX = _maxX, minY = _minY, maxY = _maxY
 
   // 8. autoScale
@@ -2576,24 +2598,20 @@ export async function commitCadImportV2(
 
     console.log(`[CAD V2] ${groupShapes.length}개 DxfGroup 생성 (텍스트 ${assignedTextIdx.size}/${pxTexts.length}개 할당)`)
 
-    // 배치 생성
+    // 배치 생성 (배치 간 yield로 UI 멈춤 방지)
     const newShapeIds = groupShapes.map((s: any) => s.id)
-    const BATCH = 500
+    const BATCH = 200
     for (let i = 0; i < groupShapes.length; i += BATCH) {
       editor.createShapes(groupShapes.slice(i, i + BATCH) as never)
+      if (i + BATCH < groupShapes.length) {
+        await new Promise(r => setTimeout(r, 0)) // yield to event loop
+      }
     }
 
-    // 새로 만든 shape만 선택 → zoomToFit (selectAll은 O(전체 shape)이라 느림)
+    // zoomToFit (select spread 대신 zoomToFit 사용 — spread 5000개는 V8 성능 문제)
     setTimeout(() => {
       try {
-        if (newShapeIds.length <= 5000) {
-          editor.select(...newShapeIds)
-          editor.zoomToSelection({ animation: { duration: 0 } })
-          editor.selectNone()
-        } else {
-          // 너무 많으면 선택 없이 zoomToFit
-          editor.zoomToFit({ animation: { duration: 0 } })
-        }
+        editor.zoomToFit({ animation: { duration: 0 } })
       } catch { /* ignore */ }
     }, 300)
 
