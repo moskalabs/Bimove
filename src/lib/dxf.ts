@@ -2215,9 +2215,9 @@ function runFastWorker(
       new URL('./dxf-fast-worker.ts', import.meta.url),
       { type: 'module' },
     )
-    // 파일 크기에 비례한 타임아웃: 최소 60초, MB당 +2초, 최대 300초
+    // 파일 크기에 비례한 타임아웃: 최소 60초, MB당 +3초, 최대 600초(10분)
     const sizeMB = dxfText.length / 1_000_000
-    const timeoutMs = Math.min(300_000, Math.max(60_000, sizeMB * 2000 + 60_000))
+    const timeoutMs = Math.min(600_000, Math.max(60_000, sizeMB * 3000 + 60_000))
     console.log(`[CAD V2] Worker 타임아웃: ${(timeoutMs / 1000).toFixed(0)}초 (${sizeMB.toFixed(1)}MB)`)
     const timeout = setTimeout(() => {
       worker.terminate()
@@ -2272,58 +2272,13 @@ export async function commitCadImportV2(
     insUnits = result.insUnits
     workerTexts = result.texts || []
   } catch (workerErr) {
-    console.warn(`[CAD V2] Worker 실패, 동기 fallback 사용:`, workerErr)
-    onProgress?.('동기 파싱으로 전환 중... (대형 도면은 수십 초 소요)')
-
-    // @ts-ignore -- dxf package fallback
-    const dxfPkg = await import('dxf')
-    const dxfParseString = dxfPkg.parseString || dxfPkg.default?.parseString
-    const dxfToPolylines = dxfPkg.toPolylines || dxfPkg.default?.toPolylines
-
-    const parsed = dxfParseString(dxfText)
-    const header = parsed.header as Record<string, unknown> | undefined
-    insUnits = (header?.['$INSUNITS'] as number | undefined) ?? 4
-
-    // SPLINE 엔티티 중 controlPoints/knots 없는 것 제거 (b-spline 크래시 방지)
-    const patchSplines = (entities: unknown[]) => {
-      if (!entities) return []
-      return entities.filter((e: unknown) => {
-        const ent = e as { type?: string; controlPoints?: unknown[]; knots?: unknown[] }
-        if (ent.type === 'SPLINE') {
-          return Array.isArray(ent.controlPoints) && ent.controlPoints.length >= 2 &&
-                 Array.isArray(ent.knots) && ent.knots.length >= 2
-        }
-        return true
-      })
-    }
-    parsed.entities = patchSplines(parsed.entities)
-    if (parsed.blocks) {
-      for (const block of parsed.blocks) {
-        if (block.entities) block.entities = patchSplines(block.entities)
-      }
-    }
-
-    let result: { polylines: Array<{ vertices: number[][]; rgb: number[]; layer: { name: string; colorNumber?: number } | null }> }
-    try {
-      result = dxfToPolylines(parsed)
-    } catch (polyErr) {
-      console.error('[CAD V2] toPolylines도 실패:', polyErr)
-      // 최후 수단: 빈 결과
-      polylines = []
-      insUnits = 4
-      return 0
-    }
-
-    polylines = result.polylines
-      .filter((pl) => {
-        const ln = pl.layer?.name || '0'
-        return selectedLayers.has(ln)
-      })
-      .map((pl) => ({
-        vertices: pl.vertices,
-        layer: pl.layer?.name || '0',
-        colorNumber: pl.layer?.colorNumber ?? -1,
-      }))
+    console.error(`[CAD V2] Worker 실패:`, workerErr)
+    // 동기 fallback 제거 — 메인 스레드에서 100MB+ 파일 파싱 시 브라우저 완전 멈춤
+    // 대신 에러 알림 후 빈 결과 반환
+    onProgress?.('파싱 실패 — 다시 시도해주세요')
+    polylines = []
+    insUnits = 4
+    return 0
   }
   const parseMs = (performance.now() - t0).toFixed(0)
   console.log(`[CAD V2] 파싱 완료: ${polylines.length}개 폴리라인 (${parseMs}ms)`)

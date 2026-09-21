@@ -448,14 +448,15 @@ function entityToPolyline(
       const blockName = codes.get(2)?.[0]?.trim() ?? ''
       const block = blocks.get(blockName)
       if (!block) break
+      if (block.entityChunks.length > 500) break  // 거대 블록 건너뛰기 (성능 보호)
 
       const ix = parseFloat(codes.get(10)?.[0] ?? '0')
       const iy = parseFloat(codes.get(20)?.[0] ?? '0')
       const sx = parseFloat(codes.get(41)?.[0] ?? '1')
       const sy = parseFloat(codes.get(42)?.[0] ?? '1')
       const rot = parseFloat(codes.get(50)?.[0] ?? '0')
-      const rowN = parseInt(codes.get(71)?.[0] ?? '1') || 1
-      const colN = parseInt(codes.get(70)?.[0] ?? '1') || 1
+      const rowN = Math.min(parseInt(codes.get(71)?.[0] ?? '1') || 1, 50)  // 배열 폭발 방지
+      const colN = Math.min(parseInt(codes.get(70)?.[0] ?? '1') || 1, 50)
       const rowSp = parseFloat(codes.get(44)?.[0] ?? '0')
       const colSp = parseFloat(codes.get(45)?.[0] ?? '0')
       const iez = codes.get(230)?.[0] ? parseFloat(codes.get(230)![0]) : 1
