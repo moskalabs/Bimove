@@ -176,7 +176,6 @@ function callWorkerSync(
 
     // self.postMessage를 가로채서 결과 수집
     const origPost = self.postMessage
-    // @ts-expect-error — mock
     self.postMessage = (msg: Record<string, unknown>) => {
       if (msg.type === 'result') {
         clearTimeout(timeout)

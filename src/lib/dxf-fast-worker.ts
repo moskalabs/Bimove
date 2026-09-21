@@ -869,7 +869,7 @@ function entityToPolyline(
             if (globalEntityEvals > MAX_ENTITY_EVALS) break
 
             const entityLayer = pe.rawLayer ?? layer
-            if (selectedLayers.length > 0 && !selectedLayers.includes(entityLayer)) continue
+            if (selectedLayers.size > 0 && !selectedLayers.has(entityLayer)) continue
 
             // Clone vertices + apply base point offset + transforms
             const verts: number[][] = new Array(pe.vertices.length)
@@ -999,7 +999,7 @@ function extractTextEntity(
   return { x, y, text, height, rotation, layer, colorNumber: colorNum }
 }
 
-function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number; texts: TextData[] } {
+function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[] } {
   const t0 = performance.now()
   globalEntityEvals = 0  // 글로벌 카운터 리셋
   const layerSet = new Set(selectedLayers)
@@ -1036,11 +1036,11 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   }
   if (entIdx < 0) {
     console.warn('[fast-worker] ENTITIES 섹션 없음')
-    return { polylines: [], insUnits, texts: [] }
+    return { polylines: [], insUnits, texts: [], hatches: [] }
   }
   const entStart = entIdx + entHdr.length
   const entEnd = dxfText.indexOf(ENDSEC_PAT, entStart)
-  if (entEnd <= entStart) return { polylines: [], insUnits, texts: [] }
+  if (entEnd <= entStart) return { polylines: [], insUnits, texts: [], hatches: [] }
 
   // 4. indexOf-based entity scanning (padding-aware SEP_PAT / GC8_PAT)
   //    Peak memory: O(selected entities) instead of O(all entities)

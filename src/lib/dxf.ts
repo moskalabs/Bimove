@@ -2502,7 +2502,6 @@ export async function commitCadImportV2(
   console.log(`[CAD V2] ${pxTexts.length}개 텍스트 변환`)
 
   // ── HATCH 좌표 변환 (DXF → px, Y flip, SVG path 좌표 변환) ──
-  const COORD_LIMIT = 1e8
   type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; color?: string; layer: string; cx: number; cy: number }
   const pxHatches: PxHatch[] = workerHatches
     .filter(h => Math.abs(h.cx) < COORD_LIMIT && Math.abs(h.cy) < COORD_LIMIT && isFinite(h.cx) && isFinite(h.cy))
