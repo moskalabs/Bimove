@@ -8,11 +8,15 @@ import { useEffect, useState, useMemo, useCallback } from 'react'
 
 const STRUCTURAL_KEYWORDS = /wall|window|win(?!ter)|door|stair|column|beam|slab|elev|건축|벽|창문|문/i
 
+/** 기본 제외 레이어: 비출력/보조/타이틀블록 레이어 */
+const EXCLUDE_LAYER_PATTERNS = /^(DEFPOINTS|TB[-_]|TITLE[-_ ]?BLOCK|VIEWPORT|PAPER[-_ ]?SPACE|\*PAPER|\*MODEL)/i
+
 interface LayerInfo {
   name: string
   color: string
   segCount: number
   likelyStructural: boolean
+  excluded?: boolean   // 비출력/보조 레이어 (DEFPOINTS, TB-* 등)
   approx?: boolean  // 대용량 파일 샘플링 시 true
 }
 
@@ -54,8 +58,8 @@ export default function CadPreview({
 
         const hasStructural = result.some((l) => l.likelyStructural)
         const initialSelected = hasStructural
-          ? new Set(result.filter((l) => l.likelyStructural).map((l) => l.name))
-          : new Set(result.map((l) => l.name))
+          ? new Set(result.filter((l) => l.likelyStructural && !EXCLUDE_LAYER_PATTERNS.test(l.name)).map((l) => l.name))
+          : new Set(result.filter((l) => !EXCLUDE_LAYER_PATTERNS.test(l.name)).map((l) => l.name))
         setSelected(initialSelected)
 
         console.log(`[CadPreview] ${result.length}개 레이어 추출 (${(performance.now() - t0).toFixed(0)}ms)`)
@@ -158,6 +162,7 @@ export default function CadPreview({
               <span className="cad-layer-name">
                 {layer.name}
                 {layer.likelyStructural && <span className="cad-layer-tag">구조</span>}
+                {layer.excluded && <span className="cad-layer-tag" style={{ background: '#666', color: '#ccc' }}>보조</span>}
               </span>
               <span className="cad-layer-seg">{layer.approx ? '~' : ''}{layer.segCount.toLocaleString()}</span>
             </label>
@@ -312,6 +317,7 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
       color: aciToHex(aci),
       segCount: count,
       likelyStructural: STRUCTURAL_KEYWORDS.test(name),
+      excluded: EXCLUDE_LAYER_PATTERNS.test(name),
       approx: extrapolated,
     })
   }
