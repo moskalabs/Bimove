@@ -2364,17 +2364,17 @@ export async function commitCadImportV2(
   let finalSegs = merged.length > 0 ? merged : rawSegs
   console.log(`[CAD V2] 병합: ${rawSegs.length} → ${finalSegs.length}`)
 
-  // 6-1. 좌표 반올림 + 중복 세그먼트 제거 (메모리 절감)
+  // 6-1. 중복 세그먼트 제거 (1px 해상도 키로 중복 판별, 원본 float 좌표 유지)
   const dedupSet = new Set<string>()
   const dedupSegs: RawSeg[] = []
   for (const s of finalSegs) {
     const rx1 = Math.round(s.x1), ry1 = Math.round(s.y1)
     const rx2 = Math.round(s.x1 + s.dx), ry2 = Math.round(s.y1 + s.dy)
-    if (rx1 === rx2 && ry1 === ry2) continue // 반올림 후 점
+    if (rx1 === rx2 && ry1 === ry2) continue // 반올림 후 점 (1px 미만)
     const key = `${rx1},${ry1},${rx2},${ry2}`
     if (dedupSet.has(key)) continue
     dedupSet.add(key)
-    dedupSegs.push({ x1: rx1, y1: ry1, dx: rx2 - rx1, dy: ry2 - ry1, layer: s.layer, color: s.color })
+    dedupSegs.push(s)  // 원본 float 좌표 유지 (반올림은 dedup key로만 사용)
   }
   console.log(`[CAD V2] 중복제거: ${finalSegs.length} → ${dedupSegs.length}`)
   finalSegs = dedupSegs
@@ -2718,11 +2718,11 @@ export async function commitCadImportV2(
         const clusterSlice = cluster.length > maxSegsPerShape ? cluster.slice(0, maxSegsPerShape) : cluster
 
         const pathData = clusterSlice.map((s) => {
-          const x1 = Math.round(s.x1 - gMinX)
-          const y1 = Math.round(s.y1 - gMinY)
-          const x2 = Math.round(x1 + s.dx)
-          const y2 = Math.round(y1 + s.dy)
-          return `M${x1},${y1}L${x2},${y2}`
+          const x1 = s.x1 - gMinX
+          const y1 = s.y1 - gMinY
+          const x2 = x1 + s.dx
+          const y2 = y1 + s.dy
+          return `M${x1.toFixed(1)},${y1.toFixed(1)}L${x2.toFixed(1)},${y2.toFixed(1)}`
         }).join('')
 
         groupShapes.push({
