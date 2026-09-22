@@ -1552,7 +1552,9 @@ export async function parseCadFile(
     dxf.entities as unknown as Array<Record<string, unknown>>,
     layerDefs, blocks,
   )
-  console.log(`[CAD Import] 세그먼트: ${segs.length}`)
+  // DEFPOINTS 레이어: AutoCAD 비인쇄 특수 레이어 → 지오메트리 제외 (TEXT는 유지)
+  const segsFiltered = segs.filter(s => s.layer?.toUpperCase() !== 'DEFPOINTS')
+  console.log(`[CAD Import] 세그먼트: ${segs.length} (DEFPOINTS 제외: ${segsFiltered.length})`)
   const texts = collectTextsWithBlocks(
     dxf.entities as unknown as Array<Record<string, unknown>>,
     layerDefs, blocks,
@@ -1560,25 +1562,25 @@ export async function parseCadFile(
   console.log(`[CAD Import] 텍스트: ${texts.length}`)
 
   ;(notify?.onInfo ?? notify?.onSuccess)?.(
-    `해치 패턴 추출 중... (세그먼트 ${segs.length.toLocaleString()}개)`,
+    `해치 패턴 추출 중... (세그먼트 ${segsFiltered.length.toLocaleString()}개)`,
   )
   await yieldUI()
 
   // dxf-parser는 HATCH를 파싱하지 않으므로 raw text에서 직접 추출
   const hatches = parseRawHatches(text, layerDefs)
   console.log(`[CAD Import] 해치: ${hatches.length}`)
-  if (!segs.length && !texts.length) {
+  if (!segsFiltered.length && !texts.length) {
     console.error('[CAD Import] 세그먼트/텍스트 0개 → 실패')
     notify?.onError?.('DXF에서 도형 데이터를 찾지 못했습니다.')
     return null
   }
-  if (segs.length >= MAX_SEGMENTS) {
+  if (segsFiltered.length >= MAX_SEGMENTS) {
     notify?.onInfo?.(`세그먼트 ${MAX_SEGMENTS.toLocaleString()}개 제한으로 일부만 로드됩니다.`)
   }
 
   // 레이어별 세그먼트 수 집계
   const layerMap = new Map<string, number>()
-  for (const s of segs) {
+  for (const s of segsFiltered) {
     const ln = s.layer || '0'
     layerMap.set(ln, (layerMap.get(ln) || 0) + 1)
   }
@@ -1607,9 +1609,9 @@ export async function parseCadFile(
     isDwg,
     fingerprint: dxfFingerprint(file.name, file.size, dxf.entities.length),
     layers,
-    totalSegments: segs.length,
+    totalSegments: segsFiltered.length,
     unitToMm,
-    _segs: segs,
+    _segs: segsFiltered,
     _texts: texts,
     _hatches: hatches,
   }
@@ -2310,11 +2312,14 @@ export async function commitCadImportV2(
   console.log(`[CAD V2] scale=${scale}, unitToMm=${unitToMm}`)
 
   // 3. 폴리라인 → RawSeg 변환 (Y flip + 스케일, 레이어 필터는 Worker에서 이미 적용됨)
+  //    DEFPOINTS 레이어: AutoCAD 비인쇄 특수 레이어 → 지오메트리 제외 (TEXT는 Worker에서 별도 수집)
   onProgress?.('좌표 변환 중...')
   const rawSegsAll: RawSeg[] = []
   for (const pl of polylines) {
     const verts = pl.vertices
     if (!verts || verts.length < 2) continue
+    // DEFPOINTS 레이어의 지오메트리는 비인쇄 → 건너뛰기
+    if (pl.layer?.toUpperCase() === 'DEFPOINTS') continue
 
     // ACI colorNumber → hex
     const color = pl.colorNumber >= 0 ? aciToHex(pl.colorNumber) : undefined
@@ -2543,6 +2548,7 @@ export async function commitCadImportV2(
   // ── HATCH 좌표 변환 (DXF → px, Y flip, SVG path 좌표 변환) ──
   type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; color?: string; layer: string; cx: number; cy: number }
   const pxHatches: PxHatch[] = workerHatches
+    .filter(h => h.layer?.toUpperCase() !== 'DEFPOINTS')  // DEFPOINTS 비인쇄 레이어 제외
     .filter(h => Math.abs(h.cx) < COORD_LIMIT && Math.abs(h.cy) < COORD_LIMIT && isFinite(h.cx) && isFinite(h.cy))
     .map(h => {
       const transformedPath = h.pathData.replace(
