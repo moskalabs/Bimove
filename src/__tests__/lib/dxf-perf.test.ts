@@ -402,13 +402,13 @@ describe('DXF Performance Benchmark', () => {
     expect(hasRowOffset).toBe(true)
   })
 
-  // 큰 블록 건너뛰기 보호
-  it('Block with >500 entities: safely skipped', async () => {
+  // 큰 블록 건너뛰기 보호 (2000 entity limit)
+  it('Block with >2000 entities: safely skipped', async () => {
     const parts: string[] = [makeDxfHeader()]
     parts.push(`${g(0)}\nSECTION\n${g(2)}\nBLOCKS\n`)
 
     let hugeEnts = ''
-    for (let i = 0; i < 600; i++) {
+    for (let i = 0; i < 2100; i++) {
       hugeEnts += makeLine(i, 0, i, 100, '0')
     }
     parts.push(makeBlock('HUGE', hugeEnts, 0, 0))
@@ -425,7 +425,7 @@ describe('DXF Performance Benchmark', () => {
 
     console.log(`\n[BENCH] Huge block test: ${result.polylines.length} polylines`)
 
-    // SMALL 블록은 파싱됨, HUGE 블록은 건너뜀 (500 entity limit)
+    // SMALL 블록은 파싱됨, HUGE 블록은 건너뜀 (2000 entity limit)
     expect(result.polylines.length).toBe(1)
   })
 

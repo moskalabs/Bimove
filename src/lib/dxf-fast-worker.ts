@@ -63,8 +63,8 @@ interface BlockDef {
   name: string
   baseX: number
   baseY: number
-  entityChunks: string[]          // raw text chunks for complex entities (INSERT, TEXT, SPLINE...)
-  precomputed: PrecomputedPoly[]  // pre-parsed geometry (LINE, ARC, CIRCLE, ELLIPSE, LWPOLYLINE)
+  entityChunks: string[]          // raw text chunks for complex entities (INSERT, TEXT, ATTRIB...)
+  precomputed: PrecomputedPoly[]  // pre-parsed geometry (LINE, ARC, CIRCLE, ELLIPSE, LWPOLYLINE, SPLINE, SOLID, 3DFACE, POLYLINE)
 }
 
 interface Transform {
@@ -290,9 +290,54 @@ function parseBlocks(dxf: string, gc: (c: number) => string): Map<string, BlockD
       }
     } else if (type === 'ENDBLK') {
       if (cur) {
-        // Precompute simple geometry entities for faster INSERT expansion
-        // LINE/ARC/CIRCLE/ELLIPSE/LWPOLYLINE are parsed ONCE here;
-        // each INSERT reference just clones + transforms (no re-parsing)
+        // ── Phase 1: heavyweight POLYLINE sequences → precomputed polylines ──
+        // POLYLINE → VERTEX* → SEQEND 시퀀스를 감지하여 바로 precomputed로 변환
+        const afterPoly: string[] = []
+        let polyState: { rawLayer: string | null; colorNumber: number; vertices: Vertex[]; closed: boolean } | null = null
+        for (const ec of cur.entityChunks) {
+          const ecType = ec.split('\n', 1)[0].trim()
+          if (ecType === 'POLYLINE') {
+            const { codes: pc } = parseGroupCodes(ec)
+            polyState = {
+              rawLayer: pc.get(8)?.[0]?.trim() ?? null,
+              colorNumber: pc.get(62)?.[0] ? parseInt(pc.get(62)![0]) : -1,
+              vertices: [],
+              closed: (parseInt(pc.get(70)?.[0] ?? '0') & 1) !== 0,
+            }
+          } else if (ecType === 'VERTEX' && polyState) {
+            const { codes: vc } = parseGroupCodes(ec)
+            polyState.vertices.push({
+              x: parseFloat(vc.get(10)?.[0] ?? '0'),
+              y: parseFloat(vc.get(20)?.[0] ?? '0'),
+              bulge: parseFloat(vc.get(42)?.[0] ?? '0'),
+            })
+          } else if (ecType === 'SEQEND' && polyState) {
+            if (polyState.closed && polyState.vertices.length > 0) {
+              polyState.vertices.push({ ...polyState.vertices[0], bulge: 0 })
+            }
+            if (polyState.vertices.length >= 2) {
+              const verts = polyState.vertices
+              const poly: number[][] = []
+              for (let j = 0; j < verts.length - 1; j++) {
+                const f = verts[j], t = verts[j + 1]
+                poly.push([f.x, f.y])
+                if (f.bulge) poly.push(...bulgeArc(f.x, f.y, t.x, t.y, f.bulge))
+                if (j === verts.length - 2) poly.push([t.x, t.y])
+              }
+              if (poly.length >= 2) {
+                cur.precomputed.push({ vertices: poly, rawLayer: polyState.rawLayer, colorNumber: polyState.colorNumber })
+              }
+            }
+            polyState = null
+          } else {
+            if (polyState) polyState = null  // orphaned POLYLINE — reset
+            afterPoly.push(ec)
+          }
+        }
+        cur.entityChunks = afterPoly
+
+        // ── Phase 2: precompute simple geometry (LINE/ARC/CIRCLE/ELLIPSE/LWPOLYLINE/SPLINE/SOLID/3DFACE) ──
+        // 블록 정의 시 1회 파싱 → INSERT마다 clone+transform만 (재파싱 없음)
         const remaining: string[] = []
         for (const ec of cur.entityChunks) {
           const pre = precomputeEntity(ec)
@@ -666,6 +711,47 @@ function precomputeEntity(chunk: string): PrecomputedPoly | null {
       }
       break
     }
+    case 'SPLINE': {
+      const degree = parseInt(codes.get(71)?.[0] ?? '3')
+      const xs = codes.get(10) || []
+      const ys = codes.get(20) || []
+      const knotVals = codes.get(40) || []
+      const weightVals = codes.get(41) || []
+      const n = Math.min(xs.length, ys.length)
+      if (n < 2) break
+      const cps = []
+      for (let i = 0; i < n; i++) {
+        cps.push({ x: parseFloat(xs[i]), y: parseFloat(ys[i]) })
+      }
+      const knots = knotVals.map(v => parseFloat(v))
+      const weights = weightVals.length ? weightVals.map(v => parseFloat(v)) : undefined
+      if (knots.length >= n + degree + 1) {
+        poly = interpBSpline(cps, degree, knots, weights)
+      } else {
+        poly = cps.map(p => [p.x, p.y])
+      }
+      break
+    }
+    case 'SOLID':
+    case '3DFACE': {
+      const x0 = parseFloat(codes.get(10)?.[0] ?? '0')
+      const y0 = parseFloat(codes.get(20)?.[0] ?? '0')
+      const x1 = parseFloat(codes.get(11)?.[0] ?? '0')
+      const y1 = parseFloat(codes.get(21)?.[0] ?? '0')
+      const x2 = parseFloat(codes.get(12)?.[0] ?? '0')
+      const y2 = parseFloat(codes.get(22)?.[0] ?? '0')
+      const x3 = parseFloat(codes.get(13)?.[0] ?? `${x2}`)
+      const y3 = parseFloat(codes.get(23)?.[0] ?? `${y2}`)
+      const dx01 = Math.abs(x0 - x1) + Math.abs(y0 - y1)
+      const dx02 = Math.abs(x0 - x2) + Math.abs(y0 - y2)
+      if (dx01 < 1e-6 && dx02 < 1e-6) break
+      if (type === 'SOLID') {
+        poly = [[x0, y0], [x1, y1], [x3, y3], [x2, y2], [x0, y0]]
+      } else {
+        poly = [[x0, y0], [x1, y1], [x2, y2], [x3, y3], [x0, y0]]
+      }
+      break
+    }
     default:
       return null
   }
@@ -691,7 +777,9 @@ function entityToPolyline(
   textsOutput?: TextData[],
 ): void {
   if (++globalEntityEvals > MAX_ENTITY_EVALS) return  // 총 평가 횟수 초과 → bail
-  const layer = layerOverride || (codes.get(8)?.[0]?.trim() ?? '0')
+  // DXF layer "0" inheritance: 블록 내부 엔티티가 layer "0"이면 INSERT 레이어 상속
+  const entityOwnLayer = codes.get(8)?.[0]?.trim() || '0'
+  const layer = (entityOwnLayer === '0' && layerOverride) ? layerOverride : entityOwnLayer
   const colorNum = codes.get(62)?.[0] ? parseInt(codes.get(62)![0]) : -1
 
   // TEXT/MTEXT → texts output (if provided)
@@ -837,7 +925,7 @@ function entityToPolyline(
       const block = blocks.get(blockName)
       if (!block) break
       const totalEnts = block.entityChunks.length + block.precomputed.length
-      if (totalEnts > 500) break  // 거대 블록 건너뛰기 (성능 보호)
+      if (totalEnts > 2000) break  // 거대 블록 건너뛰기 (성능 보호)
 
       const ix = parseFloat(codes.get(10)?.[0] ?? '0')
       const iy = parseFloat(codes.get(20)?.[0] ?? '0')
@@ -868,7 +956,8 @@ function entityToPolyline(
             globalEntityEvals++
             if (globalEntityEvals > MAX_ENTITY_EVALS) break
 
-            const entityLayer = pe.rawLayer ?? layer
+            // DXF layer "0" inheritance: null(gc8 없음) 또는 "0" → INSERT 레이어 상속
+            const entityLayer = (!pe.rawLayer || pe.rawLayer === '0') ? layer : pe.rawLayer
             if (selectedLayers.size > 0 && !selectedLayers.has(entityLayer)) continue
 
             // Clone vertices + apply base point offset + transforms
@@ -880,22 +969,28 @@ function entityToPolyline(
             output.push({ vertices: verts, layer: entityLayer, colorNumber: pe.colorNumber })
           }
 
-          // ── Slow path: remaining entity chunks (INSERT, TEXT, SPLINE, etc.) ──
+          // ── Slow path: remaining entity chunks (INSERT, TEXT, ATTRIB, etc.) ──
           for (const chunk of block.entityChunks) {
             if (output.length >= MAX_POLYLINES) break
             if (textsOutput && textsOutput.length >= MAX_TEXTS) break
             const { type: eType, codes: eCodes } = parseGroupCodes(chunk)
+            // 블록 내부 엔티티 레이어: "0"이면 INSERT 레이어 상속
+            const eOwnLayer = eCodes.get(8)?.[0]?.trim() || '0'
+            const eLayer = (eOwnLayer === '0' && layer) ? layer : eOwnLayer
             if (eType === 'INSERT') {
               const subOutput: PolylineData[] = []
               entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput)
               for (const pl of subOutput) {
+                if (selectedLayers.size > 0 && !selectedLayers.has(pl.layer)) continue
                 for (const p of pl.vertices) { p[0] -= block.baseX; p[1] -= block.baseY }
                 for (const tr of nextTransforms) applyTransform(pl.vertices, tr)
                 output.push(pl)
               }
-            } else if ((eType === 'TEXT' || eType === 'MTEXT') && textsOutput) {
+            } else if ((eType === 'TEXT' || eType === 'MTEXT' || eType === 'ATTRIB') && textsOutput) {
+              // ATTRIB: INSERT에 부착된 속성 텍스트 (이름표, 번호 등)
+              if (selectedLayers.size > 0 && !selectedLayers.has(eLayer)) continue
               const blockColor = eCodes.get(62)?.[0] ? parseInt(eCodes.get(62)![0]) : -1
-              const td = extractTextEntity(eType, eCodes, layer, blockColor, nextTransforms)
+              const td = extractTextEntity(eType === 'ATTRIB' ? 'TEXT' : eType, eCodes, eLayer, blockColor, nextTransforms)
               if (td) {
                 const rawX = parseFloat(eCodes.get(10)?.[0] ?? '0') - block.baseX
                 const rawY = parseFloat(eCodes.get(20)?.[0] ?? '0') - block.baseY
@@ -905,6 +1000,7 @@ function entityToPolyline(
                 textsOutput.push(td)
               }
             } else {
+              if (selectedLayers.size > 0 && !selectedLayers.has(eLayer)) continue
               const subOutput: PolylineData[] = []
               entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput)
               for (const pl of subOutput) {
@@ -1237,8 +1333,8 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
-      // ── Fast-path: TEXT ──
-      if (type === 'TEXT') {
+      // ── Fast-path: TEXT / ATTRIB ──
+      if (type === 'TEXT' || type === 'ATTRIB') {
         if (texts.length < MAX_TEXTS) {
           const xi = idxIn(dxfText, GC10, eStart, eEnd)
           const yi = idxIn(dxfText, GC20, eStart, eEnd)
