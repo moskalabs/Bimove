@@ -2735,6 +2735,60 @@ export async function commitCadImportV2(
 
     console.log(`[CAD V2] ${groupShapes.length}개 DxfGroup 생성 (텍스트 ${assignedTextIdx.size}/${pxTexts.length}, 해치 ${assignedHatchIdx.size}/${pxHatches.length}개 할당)`)
 
+    // ── 고립 텍스트 처리: 클러스터에 할당 안 된 텍스트를 독립 DxfGroup으로 생성 ──
+    const orphanTexts = pxTexts.filter((_, idx) => !assignedTextIdx.has(idx))
+    if (orphanTexts.length > 0 && orphanTexts.length <= 500) {
+      // 근접 텍스트끼리 그루핑 (같은 Y 영역이면 한 그룹으로)
+      const TEXT_GROUP_GAP = 200 // px 간격 이내면 같은 그룹
+      const sorted = [...orphanTexts].sort((a, b) => a.y - b.y || a.x - b.x)
+      const textGroups: typeof orphanTexts[] = []
+      let curGroup: typeof orphanTexts = [sorted[0]]
+
+      for (let i = 1; i < sorted.length; i++) {
+        const prev = curGroup[curGroup.length - 1]
+        const cur = sorted[i]
+        if (Math.abs(cur.y - prev.y) < TEXT_GROUP_GAP && Math.abs(cur.x - prev.x) < TEXT_GROUP_GAP * 5) {
+          curGroup.push(cur)
+        } else {
+          textGroups.push(curGroup)
+          curGroup = [cur]
+        }
+      }
+      textGroups.push(curGroup)
+
+      for (const tg of textGroups) {
+        let tMinX = Infinity, tMinY = Infinity, tMaxX = -Infinity, tMaxY = -Infinity
+        for (const t of tg) {
+          tMinX = Math.min(tMinX, t.x)
+          tMinY = Math.min(tMinY, t.y - t.height)
+          tMaxX = Math.max(tMaxX, t.x + t.height * t.text.length * 0.6)
+          tMaxY = Math.max(tMaxY, t.y + t.height * 0.3)
+        }
+        const tw = Math.max(tMaxX - tMinX, 10)
+        const th = Math.max(tMaxY - tMinY, 10)
+        const localTexts = tg.map(t => ({
+          x: +(t.x - tMinX).toFixed(1),
+          y: +(t.y - tMinY).toFixed(1),
+          t: t.text,
+          h: +t.height.toFixed(1),
+          r: t.rotation,
+          c: t.color,
+        }))
+        groupShapes.push({
+          id: createShapeId(),
+          type: 'dxfgroup',
+          x: tMinX - offsetX, y: tMinY - offsetY,
+          props: {
+            w: tw, h: th, pathData: '', thickness: 0, segCount: 0,
+            textsJson: JSON.stringify(localTexts),
+            hatchesJson: '',
+          },
+          meta: { dxfFingerprint: fingerprint, dxfLayer: tg[0].layer || '0' },
+        })
+      }
+      console.log(`[CAD V2] 고립 텍스트: ${orphanTexts.length}개 → ${textGroups.length}개 그룹`)
+    }
+
     // 배치 생성 (배치 간 yield로 UI 멈춤 방지)
     const BATCH = 200
     for (let i = 0; i < groupShapes.length; i += BATCH) {
