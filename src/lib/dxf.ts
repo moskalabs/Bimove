@@ -2698,6 +2698,11 @@ export async function commitCadImportV2(
           }
         }
 
+        // 바운딩박스 패딩: 경계 선 stroke가 잘리지 않도록 2px 여유
+        const BBOX_PAD = 2
+        gMinX -= BBOX_PAD; gMinY -= BBOX_PAD
+        gMaxX += BBOX_PAD; gMaxY += BBOX_PAD
+
         const gx = gMinX - offsetX
         const gy = gMinY - offsetY
         const w = Math.max(gMaxX - gMinX, 1)
@@ -2708,10 +2713,10 @@ export async function commitCadImportV2(
         const clusterSlice = cluster.length > maxSegsPerShape ? cluster.slice(0, maxSegsPerShape) : cluster
 
         const pathData = clusterSlice.map((s) => {
-          const x1 = (s.x1 - gMinX) | 0
-          const y1 = (s.y1 - gMinY) | 0
-          const x2 = (x1 + s.dx) | 0
-          const y2 = (y1 + s.dy) | 0
+          const x1 = Math.round(s.x1 - gMinX)
+          const y1 = Math.round(s.y1 - gMinY)
+          const x2 = Math.round(x1 + s.dx)
+          const y2 = Math.round(y1 + s.dy)
           return `M${x1},${y1}L${x2},${y2}`
         }).join('')
 
