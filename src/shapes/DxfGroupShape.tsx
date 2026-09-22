@@ -453,7 +453,7 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
   })
 
   return (
-    <SVGContainer>
+    <SVGContainer style={{ overflow: 'visible' }}>
       {hatchDefs.some(d => d.def) && (
         <defs>
           {hatchDefs.map(d => d.def)}
