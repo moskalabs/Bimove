@@ -8,10 +8,10 @@ import { useEffect, useState, useMemo, useCallback } from 'react'
 
 const STRUCTURAL_KEYWORDS = /wall|window|win(?!ter)|door|stair|column|beam|slab|elev|건축|벽|창문|문/i
 
-/** 기본 제외 레이어: 비출력/보조/타이틀블록 레이어
- * NOTE: DEFPOINTS는 치수 보조 레이어지만, 실무에서 섹션 라벨 등
- * 유용한 TEXT를 올리는 경우가 많아 제외 목록에서 뺌. */
-const EXCLUDE_LAYER_PATTERNS = /^(TB[-_]|TITLE[-_ ]?BLOCK|VIEWPORT|PAPER[-_ ]?SPACE|\*PAPER|\*MODEL)/i
+/** 기본 제외 레이어: viewport/paperspace 계열만 제외.
+ * DEFPOINTS, TB-* 등은 실무에서 유용한 내용(라벨, 격자선)이
+ * 있는 경우가 많아 기본 포함. 안 보려면 사용자가 직접 체크 해제. */
+const EXCLUDE_LAYER_PATTERNS = /^(VIEWPORT|PAPER[-_ ]?SPACE|\*PAPER|\*MODEL)/i
 
 interface LayerInfo {
   name: string

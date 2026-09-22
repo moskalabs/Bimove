@@ -2051,6 +2051,11 @@ export function commitCadImport(
           }
         })
 
+        // 바운딩박스 패딩: 경계 선 stroke 잘림 방지
+        const BBOX_PAD_V1 = 2
+        gMinX -= BBOX_PAD_V1; gMinY -= BBOX_PAD_V1
+        gMaxX += BBOX_PAD_V1; gMaxY += BBOX_PAD_V1
+
         const gx = gMinX - offsetX
         const gy = gMinY - offsetY
         const w = Math.max(gMaxX - gMinX, 1)
