@@ -1105,7 +1105,9 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   const dxfText = rawText.indexOf('\r') >= 0 ? rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n') : rawText
 
   // 0-1. 패딩 감지 → 패턴 동적 생성 (186MB 파일에서 regex 정규화 대신 메모리 절약)
-  const padded = dxfText.charCodeAt(0) === 32
+  // 첫 바이트 체크 + fallback: 파일이 999(주석)으로 시작하면 첫 바이트가 숫자이므로
+  // "\n  0\nSECTION" 패턴으로 재검사
+  const padded = dxfText.charCodeAt(0) === 32 || (dxfText.charCodeAt(0) !== 32 && dxfText.indexOf('\n  0\nSECTION') >= 0)
   const gc = padded ? (c: number) => String(c).padStart(3) : (c: number) => String(c)
   const SEP_PAT = `\n${gc(0)}\n`   // entity/section boundary pattern
   const GC8_PAT = `\n${gc(8)}\n`   // layer group code

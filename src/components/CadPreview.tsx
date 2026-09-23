@@ -207,7 +207,8 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
 
   // 0-1. 패딩 감지 → 패턴 동적 생성 (186MB에서 regex 정규화 대신 메모리 0 복사)
   // DXF 스펙: 그룹 코드 3자리 우측 정렬 ("  0", "  2", " 10", " 62", "100" 등)
-  const padded = dxfText.charCodeAt(0) === 32  // 첫 줄이 "  0\n" 이면 패딩
+  // 첫 줄이 "  0\n" 이면 패딩. 999(주석)으로 시작하면 첫 바이트가 숫자이므로 fallback 검사
+  const padded = dxfText.charCodeAt(0) === 32 || dxfText.indexOf('\n  0\nSECTION') >= 0
   const gc = padded ? (c: number) => String(c).padStart(3) : (c: number) => String(c)
 
   // 핵심 패턴들 (패딩 유무에 따라 자동 변환)
