@@ -427,7 +427,7 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
   const dxfLw = (meta.dxfLineweight as number) ?? 0
   // non-scaling-stroke: 브라우저가 줌과 무관하게 화면 픽셀 기준으로 렌더링
   // → 수동 zoom 보정 불필요, 항상 선명한 선
-  const strokeW = dxfLw > 0 ? Math.max(0.8, Math.min(dxfLw / 100, 3)) : 1.2
+  const strokeW = dxfLw > 0 ? Math.max(1.0, Math.min(dxfLw / 100, 3)) : 1.5
 
   // 텍스트/HATCH 데이터: useMemo로 캐싱 (리렌더 시 JSON.parse 재실행 방지)
   const texts: DxfTextEntry[] = useMemo(() => {

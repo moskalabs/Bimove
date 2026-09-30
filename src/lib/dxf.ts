@@ -2620,6 +2620,13 @@ export async function commitCadImportV2(
 
   // ── 100+ segs: DxfGroup 모드 ──
   if (finalSegs.length >= 100) {
+    // DEFPOINTS 레이어 필터링 (AutoCAD 비출력 시스템 레이어)
+    const preFilterCount = finalSegs.length
+    finalSegs = finalSegs.filter(s => (s.layer || '0').toUpperCase() !== 'DEFPOINTS')
+    if (finalSegs.length < preFilterCount) {
+      console.log(`[CAD V2] DEFPOINTS 필터: ${preFilterCount} → ${finalSegs.length} (${preFilterCount - finalSegs.length}개 제거)`)
+    }
+
     // 레이어+색상별 그루핑 (같은 색상끼리 묶어야 렌더링 시 색 적용 가능)
     const layerGroups = new Map<string, { layer: string; color?: string; segs: RawSeg[] }>()
     for (const s of finalSegs) {
@@ -2629,6 +2636,13 @@ export async function commitCadImportV2(
       if (!g) { g = { layer, color: s.color, segs: [] }; layerGroups.set(key, g) }
       g.segs.push(s)
     }
+
+    // 레이어별 세그먼트 수 로그
+    const layerCounts: string[] = []
+    for (const [, { layer, segs }] of layerGroups) {
+      layerCounts.push(`${layer}:${segs.length}`)
+    }
+    console.log(`[CAD V2] 레이어별 세그먼트: ${layerCounts.slice(0, 15).join(', ')}${layerCounts.length > 15 ? ` (+${layerCounts.length - 15}개)` : ''}`)
 
     const assignedTextIdx = new Set<number>()
     const assignedHatchIdx = new Set<number>()
@@ -2688,22 +2702,18 @@ export async function commitCadImportV2(
         const clusterW = gMaxX - gMinX
         const clusterH = gMaxY - gMinY
         const clusterMaxDim = Math.max(clusterW, clusterH)
-        const clusterMinDim = Math.min(clusterW, clusterH)
 
-        // 1) 양쪽 10px 미만 → 점/기호 (25→10으로 완화)
+        // 1) 양쪽 10px 미만 → 점/기호
         if (clusterW < 10 && clusterH < 10) continue
 
         // 2) 총 경로 길이 계산
         let totalPathLen = 0
         for (const s of cluster) totalPathLen += Math.hypot(s.dx, s.dy)
-        if (totalPathLen < 20) continue  // 50→20으로 완화
+        if (totalPathLen < 20) continue
 
         // 3) 세그먼트 적고 아주 작은 클러스터만 제거
         if (cluster.length <= 3 && clusterMaxDim < 15) continue
         if (cluster.length <= 5 && clusterMaxDim < 10) continue
-
-        // 4) 한쪽이 극단적으로 얇은 단일 세그먼트 (점)
-        if (clusterMinDim < 3 && cluster.length <= 3) continue
 
         // 그리드 기반 텍스트 수집 (O(1) 셀 조회, O(n²) → O(k))
         const margin = 20
