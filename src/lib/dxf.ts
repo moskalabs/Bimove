@@ -2231,7 +2231,7 @@ type PxText = { x: number; y: number; text: string; height: number; rotation?: n
 type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; color?: string; layer: string; cx: number; cy: number }
 
 const COORD_LIMIT = 1e8
-const MAX_FINAL_SEGS = 50_000
+const MAX_FINAL_SEGS = 100_000
 
 /** Floyd-Rivest quickselect — O(N) average */
 function nthElement(arr: Float64Array, k: number): number {
@@ -2354,12 +2354,29 @@ function filterAndCleanSegments(rawSegsAll: RawSeg[]): RawSeg[] {
   console.log(`[CAD V2] 중복제거: ${finalSegs.length} → ${dedupSegs.length}`)
   finalSegs = dedupSegs
 
-  // 하드 캡: 최대 50,000 세그먼트
+  // 하드 캡: 레이어별 비례 샘플링 (특정 레이어만 날아가는 것 방지)
   if (finalSegs.length > MAX_FINAL_SEGS) {
-    const step = finalSegs.length / MAX_FINAL_SEGS
+    const ratio = MAX_FINAL_SEGS / finalSegs.length
+    // 레이어별 그루핑
+    const byLayer = new Map<string, RawSeg[]>()
+    for (const s of finalSegs) {
+      const key = s.layer || '0'
+      let arr = byLayer.get(key)
+      if (!arr) { arr = []; byLayer.set(key, arr) }
+      arr.push(s)
+    }
+    // 각 레이어에서 비례 개수만큼 균등 샘플링 (최소 1개 보장)
     const sampled: RawSeg[] = []
-    for (let i = 0; i < MAX_FINAL_SEGS; i++) sampled.push(finalSegs[Math.floor(i * step)])
-    console.log(`[CAD V2] 세그먼트 캡: ${finalSegs.length} → ${MAX_FINAL_SEGS}`)
+    for (const [, layerSegs] of byLayer) {
+      const keep = Math.max(1, Math.round(layerSegs.length * ratio))
+      if (keep >= layerSegs.length) {
+        sampled.push(...layerSegs)
+      } else {
+        const step = layerSegs.length / keep
+        for (let i = 0; i < keep; i++) sampled.push(layerSegs[Math.floor(i * step)])
+      }
+    }
+    console.log(`[CAD V2] 세그먼트 캡: ${finalSegs.length} → ${sampled.length} (${byLayer.size}개 레이어 비례)`)
     finalSegs = sampled
   }
 
