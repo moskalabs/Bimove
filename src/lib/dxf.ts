@@ -2474,7 +2474,7 @@ function buildOrphanTextShapes(
   offsetX: number, offsetY: number, fingerprint: string,
 ): unknown[] {
   const orphanTexts = pxTexts.filter((_, idx) => !assignedTextIdx.has(idx))
-  if (orphanTexts.length === 0 || orphanTexts.length > 500) return []
+  if (orphanTexts.length === 0 || orphanTexts.length > 2000) return []
 
   const TEXT_GROUP_GAP = 200
   const sorted = [...orphanTexts].sort((a, b) => a.y - b.y || a.x - b.x)
@@ -2647,8 +2647,33 @@ export async function commitCadImportV2(
 
     const groupShapes: unknown[] = []
     for (const [, { layer, color: groupColor, segs }] of layerGroups) {
-      // 대형 레이어는 클러스터링 생략 (O(n²) 방지)
-      const clusters = segs.length > 800 ? [segs] : clusterConnectedSegs(segs)
+      // 대형 레이어: 공간 분할로 서브클러스터 생성 (O(n²) 클러스터링 대신)
+      let clusters: RawSeg[][]
+      if (segs.length > 2000) {
+        // 그리드 기반 공간 분할: 전체 bbox를 셀로 나누어 각 셀을 클러스터로 사용
+        const GRID_CELLS = Math.max(4, Math.ceil(Math.sqrt(segs.length / 500)))
+        let sMinX = Infinity, sMinY = Infinity, sMaxX = -Infinity, sMaxY = -Infinity
+        for (const s of segs) {
+          sMinX = Math.min(sMinX, s.x1); sMinY = Math.min(sMinY, s.y1)
+          sMaxX = Math.max(sMaxX, s.x1 + s.dx); sMaxY = Math.max(sMaxY, s.y1 + s.dy)
+        }
+        const cellW = (sMaxX - sMinX || 1) / GRID_CELLS
+        const cellH = (sMaxY - sMinY || 1) / GRID_CELLS
+        const grid = new Map<string, RawSeg[]>()
+        for (const s of segs) {
+          const cx = Math.floor((s.x1 - sMinX) / cellW)
+          const cy = Math.floor((s.y1 - sMinY) / cellH)
+          const key = `${cx},${cy}`
+          let cell = grid.get(key)
+          if (!cell) { cell = []; grid.set(key, cell) }
+          cell.push(s)
+        }
+        clusters = [...grid.values()]
+      } else if (segs.length > 800) {
+        clusters = [segs] // 800~2000: 단일 클러스터 (대부분 3000 이내)
+      } else {
+        clusters = clusterConnectedSegs(segs)
+      }
 
       for (const cluster of clusters) {
         let gMinX = Infinity, gMinY = Infinity, gMaxX = -Infinity, gMaxY = -Infinity
@@ -2749,33 +2774,37 @@ export async function commitCadImportV2(
         const w = Math.max(gMaxX - gMinX, 1)
         const h = Math.max(gMaxY - gMinY, 1)
 
-        // shape당 최대 3000 세그먼트 (pathData 크기 제한 → 메모리 절감)
+        // shape당 최대 3000 세그먼트 → 초과 시 여러 shape로 분할 (데이터 손실 없음)
         const maxSegsPerShape = 3000
-        const clusterSlice = cluster.length > maxSegsPerShape ? cluster.slice(0, maxSegsPerShape) : cluster
+        const sliceCount = Math.ceil(cluster.length / maxSegsPerShape)
+        for (let si = 0; si < sliceCount; si++) {
+          const sliceSegs = cluster.slice(si * maxSegsPerShape, (si + 1) * maxSegsPerShape)
 
-        const pathData = clusterSlice.map((s) => {
-          const x1 = s.x1 - gMinX
-          const y1 = s.y1 - gMinY
-          const x2 = x1 + s.dx
-          const y2 = y1 + s.dy
-          return `M${x1.toFixed(1)},${y1.toFixed(1)}L${x2.toFixed(1)},${y2.toFixed(1)}`
-        }).join('')
+          const pathData = sliceSegs.map((s) => {
+            const x1 = s.x1 - gMinX
+            const y1 = s.y1 - gMinY
+            const x2 = x1 + s.dx
+            const y2 = y1 + s.dy
+            return `M${x1.toFixed(1)},${y1.toFixed(1)}L${x2.toFixed(1)},${y2.toFixed(1)}`
+          }).join('')
 
-        groupShapes.push({
-          id: createShapeId(),
-          type: 'dxfgroup',
-          x: gx, y: gy,
-          props: {
-            w, h, pathData, thickness: thickness * autoScale * 0.3, segCount: clusterSlice.length,
-            textsJson: localTexts.length > 0 ? JSON.stringify(localTexts) : '',
-            hatchesJson: localHatches.length > 0 ? JSON.stringify(localHatches) : '',
-          },
-          meta: {
-            dxfFingerprint: fingerprint,
-            dxfLayer: layer,
-            ...(groupColor ? { dxfColor: groupColor } : {}),
-          },
-        })
+          groupShapes.push({
+            id: createShapeId(),
+            type: 'dxfgroup',
+            x: gx, y: gy,
+            props: {
+              w, h, pathData, thickness: thickness * autoScale * 0.3, segCount: sliceSegs.length,
+              // 텍스트/해치는 첫 번째 슬라이스에만 포함 (중복 방지)
+              textsJson: si === 0 && localTexts.length > 0 ? JSON.stringify(localTexts) : '',
+              hatchesJson: si === 0 && localHatches.length > 0 ? JSON.stringify(localHatches) : '',
+            },
+            meta: {
+              dxfFingerprint: fingerprint,
+              dxfLayer: layer,
+              ...(groupColor ? { dxfColor: groupColor } : {}),
+            },
+          })
+        }
       }
     }
 
