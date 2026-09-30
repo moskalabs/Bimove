@@ -2628,9 +2628,6 @@ export async function commitCadImportV2(
       bucket.push(idx)
     })
 
-    // 점 필터에 사용할 전체 도면 스팬 (autoScale 적용 후 px 기준)
-    const drawingSpan = Math.max(maxX - minX, maxY - minY) || 1
-
     const groupShapes: unknown[] = []
     for (const [, { layer, color: groupColor, segs }] of layerGroups) {
       // 대형 레이어는 클러스터링 생략 (O(n²) 방지)
@@ -2645,39 +2642,26 @@ export async function commitCadImportV2(
           gMaxY = Math.max(gMaxY, s.y1, s.y1 + s.dy)
         }
 
-        // 점/잔해 방지: 공격적 필터링
+        // 점/잔해 필터 (보수적: 멀티페이지 도면에서 정상 요소 보존)
         const clusterW = gMaxX - gMinX
         const clusterH = gMaxY - gMinY
         const clusterMaxDim = Math.max(clusterW, clusterH)
         const clusterMinDim = Math.min(clusterW, clusterH)
-        const clusterArea = clusterW * clusterH
 
-        // 1) 양쪽 25px 미만 → 무조건 점/기호
-        if (clusterW < 25 && clusterH < 25) continue
+        // 1) 양쪽 10px 미만 → 점/기호 (25→10으로 완화)
+        if (clusterW < 10 && clusterH < 10) continue
 
-        // 2) 최대 치수가 전체 도면의 0.5% 미만 → 기호/마커/제목블록 잔해
-        if (clusterMaxDim < drawingSpan * 0.005) continue
-
-        // 3) 총 경로 길이 계산 — 너무 짧으면 시각적 노이즈
+        // 2) 총 경로 길이 계산
         let totalPathLen = 0
         for (const s of cluster) totalPathLen += Math.hypot(s.dx, s.dy)
-        if (totalPathLen < 50) continue
+        if (totalPathLen < 20) continue  // 50→20으로 완화
 
-        // 4) 세그먼트 적고 작은 클러스터 → 기호 잔해
-        if (cluster.length <= 5 && clusterMaxDim < 80) continue
-        if (cluster.length <= 10 && clusterMaxDim < 60) continue
-        if (cluster.length <= 20 && clusterMaxDim < 40) continue
-        if (cluster.length <= 30 && clusterMaxDim < 30) continue
+        // 3) 세그먼트 적고 아주 작은 클러스터만 제거
+        if (cluster.length <= 3 && clusterMaxDim < 15) continue
+        if (cluster.length <= 5 && clusterMaxDim < 10) continue
 
-        // 5) 한쪽이 극단적으로 얇은 클러스터 (점선/작은 틱 마크)
-        if (clusterMinDim < 5 && cluster.length <= 10) continue
-
-        // 6) 면적 기반: 전체 도면 면적의 0.01% 미만 + 세그먼트 50개 이하 → 잔해
-        const drawingArea = (maxX - minX) * (maxY - minY) || 1
-        if (clusterArea < drawingArea * 0.0001 && cluster.length <= 50) continue
-
-        // 7) 경로 길이 대비 면적이 너무 작은 고립 기호 (작은 테이블 셀, 마커 등)
-        if (clusterArea < 5000 && totalPathLen < 200 && cluster.length <= 30) continue
+        // 4) 한쪽이 극단적으로 얇은 단일 세그먼트 (점)
+        if (clusterMinDim < 3 && cluster.length <= 3) continue
 
         // 그리드 기반 텍스트 수집 (O(1) 셀 조회, O(n²) → O(k))
         const margin = 20

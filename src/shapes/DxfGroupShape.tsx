@@ -425,9 +425,9 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
       ? (isNearBlack(rawColor) ? '#ccc' : rawColor)
       : darkenForLightBg(rawColor)
   const dxfLw = (meta.dxfLineweight as number) ?? 0
-  const baseStrokeW = dxfLw > 0 ? Math.max(0.5, Math.min(dxfLw / 100, 2)) : 0.8
-  const minStroke = 0.8 / Math.max(zoom, 0.001)
-  const strokeW = Math.max(baseStrokeW, minStroke)
+  // non-scaling-stroke: 브라우저가 줌과 무관하게 화면 픽셀 기준으로 렌더링
+  // → 수동 zoom 보정 불필요, 항상 선명한 선
+  const strokeW = dxfLw > 0 ? Math.max(0.8, Math.min(dxfLw / 100, 3)) : 1.2
 
   // 텍스트/HATCH 데이터: useMemo로 캐싱 (리렌더 시 JSON.parse 재실행 방지)
   const texts: DxfTextEntry[] = useMemo(() => {
@@ -497,6 +497,7 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
           stroke={stroke}
           strokeWidth={strokeW}
           strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
         />
       )}
       {texts.map((t, i) => {
