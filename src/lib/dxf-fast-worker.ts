@@ -80,7 +80,7 @@ const MAX_DEPTH = 8
 const ARC_STEP  = 5       // degrees
 const MAX_POLYLINES = 200_000  // 폴리라인 수 제한 (성능 보호)
 const MAX_TEXTS = 5_000        // 텍스트 수 제한
-const MAX_HATCHES = 2_000      // 해치 수 제한
+const MAX_HATCHES = 10_000     // 해치 수 제한 (블록 내부 해치 포함)
 
 // ===== Geometry helpers =====
 
@@ -764,6 +764,25 @@ function precomputeEntity(chunk: string): PrecomputedPoly | null {
 let globalEntityEvals = 0
 const MAX_ENTITY_EVALS = 500_000
 
+/** Transform HatchData SVG path coordinates: subtract base point, apply transforms */
+function transformHatchForInsert(
+  hd: HatchData, baseX: number, baseY: number, transforms: Transform[],
+): HatchData {
+  // Transform SVG path coordinates
+  const transformedPath = hd.pathData.replace(
+    /([MLZ])([\d.e+-]+),([\d.e+-]+)/g,
+    (_, cmd: string, xStr: string, yStr: string) => {
+      const pt = [[parseFloat(xStr) - baseX, parseFloat(yStr) - baseY]]
+      for (const tr of transforms) applyTransform(pt, tr)
+      return `${cmd}${pt[0][0]},${pt[0][1]}`
+    },
+  )
+  // Transform centroid
+  const cPt = [[hd.cx - baseX, hd.cy - baseY]]
+  for (const tr of transforms) applyTransform(cPt, tr)
+  return { ...hd, pathData: transformedPath, cx: cPt[0][0], cy: cPt[0][1] }
+}
+
 /** Convert a parsed entity to polyline vertices. Returns null for unsupported types. */
 function entityToPolyline(
   type: string,
@@ -775,6 +794,7 @@ function entityToPolyline(
   selectedLayers: Set<string>,
   output: PolylineData[],
   textsOutput?: TextData[],
+  hatchesOutput?: HatchData[],
 ): void {
   if (++globalEntityEvals > MAX_ENTITY_EVALS) return  // 총 평가 횟수 초과 → bail
   // DXF layer "0" inheritance: 블록 내부 엔티티가 layer "0"이면 INSERT 레이어 상속
@@ -856,12 +876,28 @@ function entityToPolyline(
             const eLayer = (eOwnLayer === '0' && layer) ? layer : eOwnLayer
             if (eType === 'INSERT') {
               const subOutput: PolylineData[] = []
-              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput)
+              const subHatches: HatchData[] = []
+              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput, hatchesOutput ? subHatches : undefined)
               for (const pl of subOutput) {
                 if (selectedLayers.size > 0 && !selectedLayers.has(pl.layer)) continue
                 for (const p of pl.vertices) { p[0] -= block.baseX; p[1] -= block.baseY }
                 for (const tr of nextTransforms) applyTransform(pl.vertices, tr)
                 output.push(pl)
+              }
+              // Transform nested hatches: subtract base + apply outer transforms
+              if (hatchesOutput) {
+                for (const sh of subHatches) {
+                  hatchesOutput.push(transformHatchForInsert(sh, block.baseX, block.baseY, nextTransforms))
+                }
+              }
+            } else if (eType === 'HATCH' && hatchesOutput) {
+              // HATCH inside block → parse and transform
+              if (selectedLayers.size > 0 && !selectedLayers.has(eLayer)) continue
+              if (hatchesOutput.length < MAX_HATCHES) {
+                const hd = parseHatchEntity(chunk, eLayer)
+                if (hd) {
+                  hatchesOutput.push(transformHatchForInsert(hd, block.baseX, block.baseY, nextTransforms))
+                }
               }
             } else if ((eType === 'TEXT' || eType === 'MTEXT' || eType === 'ATTRIB') && textsOutput) {
               // ATTRIB: INSERT에 부착된 속성 텍스트 (이름표, 번호 등)
@@ -879,11 +915,17 @@ function entityToPolyline(
             } else {
               if (selectedLayers.size > 0 && !selectedLayers.has(eLayer)) continue
               const subOutput: PolylineData[] = []
-              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput)
+              const subHatches2: HatchData[] = []
+              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput, hatchesOutput ? subHatches2 : undefined)
               for (const pl of subOutput) {
                 for (const p of pl.vertices) { p[0] -= block.baseX; p[1] -= block.baseY }
                 for (const tr of nextTransforms) applyTransform(pl.vertices, tr)
                 output.push(pl)
+              }
+              if (hatchesOutput) {
+                for (const sh of subHatches2) {
+                  hatchesOutput.push(transformHatchForInsert(sh, block.baseX, block.baseY, nextTransforms))
+                }
               }
             }
           }
@@ -1239,7 +1281,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
           if (td) texts.push(td)
         }
       } else {
-        entityToPolyline(type, codes, blocks, '', [], 0, layerSet, output, texts)
+        entityToPolyline(type, codes, blocks, '', [], 0, layerSet, output, texts, hatches)
       }
 
     } catch (err) {
