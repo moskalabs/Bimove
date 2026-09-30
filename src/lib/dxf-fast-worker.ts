@@ -10,7 +10,7 @@
  * - Zero npm dependencies (dxf-shared is internal)
  */
 
-import { ACI_TO_HEX, aciToHex, trueColorToHex, detectPadding, makeGcFormatter, decodeDxfSpecialChars, cleanMtextFormatting } from './dxf-shared'
+import { aciToHex, trueColorToHex, detectPadding, makeGcFormatter, decodeDxfSpecialChars, cleanMtextFormatting } from './dxf-shared'
 
 // ===== Public message types (also used by main thread) =====
 

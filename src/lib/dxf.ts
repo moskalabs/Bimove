@@ -2223,6 +2223,286 @@ function runFastWorker(
   })
 }
 
+// ── commitCadImportV2 파이프라인 헬퍼 함수들 ──
+
+/** 좌표 변환된 텍스트 */
+type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string }
+/** 좌표 변환된 해치 */
+type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; color?: string; layer: string; cx: number; cy: number }
+
+const COORD_LIMIT = 1e8
+const MAX_FINAL_SEGS = 50_000
+
+/** Floyd-Rivest quickselect — O(N) average */
+function nthElement(arr: Float64Array, k: number): number {
+  let lo = 0, hi = arr.length - 1
+  while (lo < hi) {
+    const pivotIdx = lo + ((Math.random() * (hi - lo + 1)) | 0)
+    const pivot = arr[pivotIdx]
+    arr[pivotIdx] = arr[hi]; arr[hi] = pivot
+    let store = lo
+    for (let i = lo; i < hi; i++) {
+      if (arr[i] < pivot) { const t = arr[i]; arr[i] = arr[store]; arr[store] = t; store++ }
+    }
+    arr[hi] = arr[store]; arr[store] = pivot
+    if (store === k) break
+    else if (store < k) lo = store + 1
+    else hi = store - 1
+  }
+  return arr[k]
+}
+
+/** 퍼센타일 기반 바운딩박스 계산 (O(N) quickselect) */
+function computeBBox(segs: RawSeg[], pLoPct: number, pHiPct: number) {
+  const cnt = segs.length * 2
+  const xs = new Float64Array(cnt), ys = new Float64Array(cnt)
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i]
+    xs[i * 2] = s.x1; xs[i * 2 + 1] = s.x1 + s.dx
+    ys[i * 2] = s.y1; ys[i * 2 + 1] = s.y1 + s.dy
+  }
+  if (cnt <= 500 || (pLoPct === 0 && pHiPct === 1)) {
+    let mnX = xs[0], mxX = xs[0], mnY = ys[0], mxY = ys[0]
+    for (let i = 1; i < cnt; i++) {
+      if (xs[i] < mnX) mnX = xs[i]; if (xs[i] > mxX) mxX = xs[i]
+      if (ys[i] < mnY) mnY = ys[i]; if (ys[i] > mxY) mxY = ys[i]
+    }
+    return { minX: mnX, maxX: mxX, minY: mnY, maxY: mxY, n: cnt }
+  }
+  const lo = Math.floor(cnt * pLoPct), hi = Math.min(Math.ceil(cnt * pHiPct) - 1, cnt - 1)
+  const xsCopy = new Float64Array(xs)
+  const minX = nthElement(xsCopy, lo)
+  const xsCopy2 = new Float64Array(xs)
+  const maxX = nthElement(xsCopy2, hi)
+  const ysCopy2 = new Float64Array(ys)
+  const minY = nthElement(ysCopy2, lo)
+  const ysCopy3 = new Float64Array(ys)
+  const maxY = nthElement(ysCopy3, hi)
+  return { minX, maxX, minY, maxY, n: cnt }
+}
+
+/** 퍼센타일 범위 + 패딩 기반 아웃라이어 필터 */
+function filterOutliersPass(segs: RawSeg[], pLo: number, pHi: number, padMul: number): RawSeg[] {
+  const { minX, maxX, minY, maxY, n } = computeBBox(segs, pLo, pHi)
+  if (n < 200) return segs
+  const padX = (maxX - minX || 1) * padMul, padY = (maxY - minY || 1) * padMul
+  const filtered = segs.filter((s) => {
+    const sx1 = s.x1, sy1 = s.y1, sx2 = s.x1 + s.dx, sy2 = s.y1 + s.dy
+    return sx1 >= minX - padX && sx1 <= maxX + padX &&
+           sy1 >= minY - padY && sy1 <= maxY + padY &&
+           sx2 >= minX - padX && sx2 <= maxX + padX &&
+           sy2 >= minY - padY && sy2 <= maxY + padY
+  })
+  return filtered.length >= segs.length * 0.5 ? filtered : segs
+}
+
+/** 폴리라인 → RawSeg 변환 (Y-flip, 스케일, DEFPOINTS 제외, ACI 색상) */
+function polylinesToSegments(polylines: PolylineData[], scale: number): RawSeg[] {
+  const segs: RawSeg[] = []
+  for (const pl of polylines) {
+    const verts = pl.vertices
+    if (!verts || verts.length < 2) continue
+    if (pl.layer?.toUpperCase() === 'DEFPOINTS') continue
+    const color = pl.colorNumber >= 0 ? aciToHex(pl.colorNumber) : undefined
+    for (let i = 0; i < verts.length - 1; i++) {
+      const x1 = verts[i][0] * scale
+      const y1 = -verts[i][1] * scale
+      const x2 = verts[i + 1][0] * scale
+      const y2 = -verts[i + 1][1] * scale
+      segs.push({ x1, y1, dx: x2 - x1, dy: y2 - y1, layer: pl.layer, color })
+    }
+  }
+  return segs
+}
+
+/** 세그먼트 정제: sanity → min length → merge → dedup → hard cap */
+function filterAndCleanSegments(rawSegsAll: RawSeg[]): RawSeg[] {
+  // 좌표 sanity 필터
+  const saneSegs = rawSegsAll.filter((s) => {
+    const x2 = s.x1 + s.dx, y2 = s.y1 + s.dy
+    return Math.abs(s.x1) < COORD_LIMIT && Math.abs(s.y1) < COORD_LIMIT &&
+           Math.abs(x2) < COORD_LIMIT && Math.abs(y2) < COORD_LIMIT &&
+           isFinite(s.x1) && isFinite(s.y1) && isFinite(s.dx) && isFinite(s.dy)
+  })
+
+  // 1px 필터 (0.1px fallback)
+  let rawSegs = saneSegs.filter((s) => Math.hypot(s.dx, s.dy) >= 1)
+  if (!rawSegs.length && saneSegs.length > 0) {
+    rawSegs = saneSegs.filter((s) => Math.hypot(s.dx, s.dy) >= 0.1)
+    if (!rawSegs.length) rawSegs = saneSegs.filter((s) => Math.hypot(s.dx, s.dy) > 1e-6)
+    if (!rawSegs.length) rawSegs = saneSegs
+  }
+  console.log(`[CAD V2] 필터 후: ${rawSegs.length}개 (sanity: ${saneSegs.length}, 1px: ${rawSegs.length})`)
+
+  // 동일선상 병합
+  const merged = mergeDxfSegments(rawSegs)
+  let finalSegs = merged.length > 0 ? merged : rawSegs
+  console.log(`[CAD V2] 병합: ${rawSegs.length} → ${finalSegs.length}`)
+
+  // 중복 세그먼트 제거 (1px 해상도 키, 원본 float 유지)
+  const dedupSet = new Set<string>()
+  const dedupSegs: RawSeg[] = []
+  for (const s of finalSegs) {
+    const rx1 = Math.round(s.x1), ry1 = Math.round(s.y1)
+    const rx2 = Math.round(s.x1 + s.dx), ry2 = Math.round(s.y1 + s.dy)
+    if (rx1 === rx2 && ry1 === ry2) continue
+    const key = `${rx1},${ry1},${rx2},${ry2}`
+    if (dedupSet.has(key)) continue
+    dedupSet.add(key)
+    dedupSegs.push(s)
+  }
+  console.log(`[CAD V2] 중복제거: ${finalSegs.length} → ${dedupSegs.length}`)
+  finalSegs = dedupSegs
+
+  // 하드 캡: 최대 50,000 세그먼트
+  if (finalSegs.length > MAX_FINAL_SEGS) {
+    const step = finalSegs.length / MAX_FINAL_SEGS
+    const sampled: RawSeg[] = []
+    for (let i = 0; i < MAX_FINAL_SEGS; i++) sampled.push(finalSegs[Math.floor(i * step)])
+    console.log(`[CAD V2] 세그먼트 캡: ${finalSegs.length} → ${MAX_FINAL_SEGS}`)
+    finalSegs = sampled
+  }
+
+  return finalSegs
+}
+
+/** 3-pass 아웃라이어 제거 (percentile + IQR) */
+function removeOutlierSegments(segs: RawSeg[]): RawSeg[] {
+  let finalSegs = segs
+
+  // 1차 + 2차: percentile 기반
+  const before1 = finalSegs.length
+  finalSegs = filterOutliersPass(finalSegs, 0.05, 0.95, 0.5)
+  if (finalSegs.length < before1) console.log(`[CAD V2] 아웃라이어 1차: ${before1} → ${finalSegs.length}개`)
+  const before2 = finalSegs.length
+  finalSegs = filterOutliersPass(finalSegs, 0.05, 0.95, 0.3)
+  if (finalSegs.length < before2) console.log(`[CAD V2] 아웃라이어 2차: ${before2} → ${finalSegs.length}개`)
+
+  // 3차: IQR 기반
+  if (finalSegs.length > 100) {
+    const before3 = finalSegs.length
+    const cnt3 = finalSegs.length * 2
+    const xs3 = new Float64Array(cnt3), ys3 = new Float64Array(cnt3)
+    for (let i = 0; i < finalSegs.length; i++) {
+      xs3[i * 2] = finalSegs[i].x1; xs3[i * 2 + 1] = finalSegs[i].x1 + finalSegs[i].dx
+      ys3[i * 2] = finalSegs[i].y1; ys3[i * 2 + 1] = finalSegs[i].y1 + finalSegs[i].dy
+    }
+    const q1x = nthElement(new Float64Array(xs3), Math.floor(cnt3 * 0.25))
+    const q3x = nthElement(new Float64Array(xs3), Math.floor(cnt3 * 0.75))
+    const q1y = nthElement(new Float64Array(ys3), Math.floor(cnt3 * 0.25))
+    const q3y = nthElement(new Float64Array(ys3), Math.floor(cnt3 * 0.75))
+    const iqrX = (q3x - q1x) || 1, iqrY = (q3y - q1y) || 1
+    const fenceX = iqrX * 3, fenceY = iqrY * 3
+    const loX = q1x - fenceX, hiX = q3x + fenceX
+    const loY = q1y - fenceY, hiY = q3y + fenceY
+    const filtered3 = finalSegs.filter(s => {
+      const sx2 = s.x1 + s.dx, sy2 = s.y1 + s.dy
+      return s.x1 >= loX && s.x1 <= hiX && sx2 >= loX && sx2 <= hiX &&
+             s.y1 >= loY && s.y1 <= hiY && sy2 >= loY && sy2 <= hiY
+    })
+    if (filtered3.length >= finalSegs.length * 0.5) {
+      finalSegs = filtered3
+      if (finalSegs.length < before3) console.log(`[CAD V2] 아웃라이어 3차(IQR): ${before3} → ${finalSegs.length}개`)
+    }
+  }
+
+  return finalSegs
+}
+
+/** Worker 텍스트 → px 좌표 변환 (Y-flip + scale) */
+function transformWorkerTexts(workerTexts: TextData[], textScale: number): PxText[] {
+  return workerTexts
+    .filter(t => Math.abs(t.x) < COORD_LIMIT && Math.abs(t.y) < COORD_LIMIT && isFinite(t.x) && isFinite(t.y))
+    .map(t => ({
+      x: t.x * textScale,
+      y: -t.y * textScale,
+      text: t.text,
+      height: Math.max(t.height * textScale, 4),
+      rotation: t.rotation,
+      color: t.colorNumber >= 0 ? aciToHex(t.colorNumber) : undefined,
+      layer: t.layer,
+    }))
+}
+
+/** Worker 해치 → px 좌표 변환 (Y-flip + scale, SVG path 변환) */
+function transformWorkerHatches(workerHatches: HatchData[], textScale: number): PxHatch[] {
+  return workerHatches
+    .filter(h => h.layer?.toUpperCase() !== 'DEFPOINTS')
+    .filter(h => Math.abs(h.cx) < COORD_LIMIT && Math.abs(h.cy) < COORD_LIMIT && isFinite(h.cx) && isFinite(h.cy))
+    .map(h => {
+      const transformedPath = h.pathData.replace(
+        /([MLZ])([\d.e+-]+),([\d.e+-]+)/g,
+        (_, cmd: string, xStr: string, yStr: string) => {
+          const nx = parseFloat(xStr) * textScale
+          const ny = -parseFloat(yStr) * textScale
+          return `${cmd}${nx.toFixed(1)},${ny.toFixed(1)}`
+        }
+      )
+      return {
+        pathData: transformedPath,
+        patternName: h.patternName,
+        patternScale: h.patternScale,
+        patternAngle: h.patternAngle,
+        color: h.color,
+        layer: h.layer,
+        cx: h.cx * textScale,
+        cy: -h.cy * textScale,
+      }
+    })
+}
+
+/** 클러스터 미할당 텍스트 → 독립 DxfGroup shape 생성 */
+function buildOrphanTextShapes(
+  pxTexts: PxText[], assignedTextIdx: Set<number>,
+  offsetX: number, offsetY: number, fingerprint: string,
+): unknown[] {
+  const orphanTexts = pxTexts.filter((_, idx) => !assignedTextIdx.has(idx))
+  if (orphanTexts.length === 0 || orphanTexts.length > 500) return []
+
+  const TEXT_GROUP_GAP = 200
+  const sorted = [...orphanTexts].sort((a, b) => a.y - b.y || a.x - b.x)
+  const textGroups: typeof orphanTexts[] = []
+  let curGroup: typeof orphanTexts = [sorted[0]]
+
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = curGroup[curGroup.length - 1]
+    const cur = sorted[i]
+    if (Math.abs(cur.y - prev.y) < TEXT_GROUP_GAP && Math.abs(cur.x - prev.x) < TEXT_GROUP_GAP * 5) {
+      curGroup.push(cur)
+    } else {
+      textGroups.push(curGroup)
+      curGroup = [cur]
+    }
+  }
+  textGroups.push(curGroup)
+
+  const shapes: unknown[] = []
+  for (const tg of textGroups) {
+    let tMinX = Infinity, tMinY = Infinity, tMaxX = -Infinity, tMaxY = -Infinity
+    for (const t of tg) {
+      tMinX = Math.min(tMinX, t.x)
+      tMinY = Math.min(tMinY, t.y - t.height)
+      tMaxX = Math.max(tMaxX, t.x + t.height * t.text.length * 0.6)
+      tMaxY = Math.max(tMaxY, t.y + t.height * 0.3)
+    }
+    const tw = Math.max(tMaxX - tMinX, 10)
+    const th = Math.max(tMaxY - tMinY, 10)
+    const localTexts = tg.map(t => ({
+      x: +(t.x - tMinX).toFixed(1), y: +(t.y - tMinY).toFixed(1),
+      t: t.text, h: +t.height.toFixed(1), r: t.rotation, c: t.color,
+    }))
+    shapes.push({
+      id: createShapeId(),
+      type: 'dxfgroup',
+      x: tMinX - offsetX, y: tMinY - offsetY,
+      props: { w: tw, h: th, pathData: '', thickness: 0, segCount: 0, textsJson: JSON.stringify(localTexts), hatchesJson: '' },
+      meta: { dxfFingerprint: fingerprint, dxfLayer: tg[0].layer || '0' },
+    })
+  }
+  console.log(`[CAD V2] 고립 텍스트: ${orphanTexts.length}개 → ${textGroups.length}개 그룹`)
+  return shapes
+}
+
 export async function commitCadImportV2(
   editor: Editor,
   dxfText: string,
@@ -2267,33 +2547,9 @@ export async function commitCadImportV2(
   const thickness = getDefaultWallThicknessMm() * getScaleConfig(editor).pxPerMm
   console.log(`[CAD V2] scale=${scale}, unitToMm=${unitToMm}`)
 
-  // 3. 폴리라인 → RawSeg 변환 (Y flip + 스케일, 레이어 필터는 Worker에서 이미 적용됨)
-  //    DEFPOINTS 레이어: AutoCAD 비인쇄 특수 레이어 → 지오메트리 제외 (TEXT는 Worker에서 별도 수집)
+  // 3. 폴리라인 → RawSeg 변환 + 필터링 파이프라인
   onProgress?.('좌표 변환 중...')
-  const rawSegsAll: RawSeg[] = []
-  for (const pl of polylines) {
-    const verts = pl.vertices
-    if (!verts || verts.length < 2) continue
-    // DEFPOINTS 레이어의 지오메트리는 비인쇄 → 건너뛰기
-    if (pl.layer?.toUpperCase() === 'DEFPOINTS') continue
-
-    // ACI colorNumber → hex
-    const color = pl.colorNumber >= 0 ? aciToHex(pl.colorNumber) : undefined
-
-    for (let i = 0; i < verts.length - 1; i++) {
-      const x1 = verts[i][0] * scale
-      const y1 = -verts[i][1] * scale // Y flip
-      const x2 = verts[i + 1][0] * scale
-      const y2 = -verts[i + 1][1] * scale
-      rawSegsAll.push({
-        x1, y1,
-        dx: x2 - x1,
-        dy: y2 - y1,
-        layer: pl.layer,
-        color,
-      })
-    }
-  }
+  const rawSegsAll = polylinesToSegments(polylines, scale)
   console.log(`[CAD V2] rawSegsAll: ${rawSegsAll.length}개 세그먼트`)
 
   if (rawSegsAll.length === 0) {
@@ -2301,160 +2557,13 @@ export async function commitCadImportV2(
     return 0
   }
 
-  // 4. 좌표 sanity 필터
-  const COORD_LIMIT = 1e8
-  const saneSegs = rawSegsAll.filter((s) => {
-    const x2 = s.x1 + s.dx, y2 = s.y1 + s.dy
-    return Math.abs(s.x1) < COORD_LIMIT && Math.abs(s.y1) < COORD_LIMIT &&
-           Math.abs(x2) < COORD_LIMIT && Math.abs(y2) < COORD_LIMIT &&
-           isFinite(s.x1) && isFinite(s.y1) && isFinite(s.dx) && isFinite(s.dy)
-  })
-
-  // 5. 1px 필터 (0.1px fallback)
-  let rawSegs = saneSegs.filter((s) => Math.hypot(s.dx, s.dy) >= 1)
-  if (!rawSegs.length && saneSegs.length > 0) {
-    rawSegs = saneSegs.filter((s) => Math.hypot(s.dx, s.dy) >= 0.1)
-    if (!rawSegs.length) rawSegs = saneSegs.filter((s) => Math.hypot(s.dx, s.dy) > 1e-6)  // 0-length 제외
-    if (!rawSegs.length) rawSegs = saneSegs  // 최후 수단
-  }
-  console.log(`[CAD V2] 필터 후: ${rawSegs.length}개 (sanity: ${saneSegs.length}, 1px: ${rawSegs.length})`)
-
-  // 6. 동일선상 병합
   onProgress?.('세그먼트 병합 중...')
-  const merged = mergeDxfSegments(rawSegs)
-  let finalSegs = merged.length > 0 ? merged : rawSegs
-  console.log(`[CAD V2] 병합: ${rawSegs.length} → ${finalSegs.length}`)
+  let finalSegs = filterAndCleanSegments(rawSegsAll)
 
-  // 6-1. 중복 세그먼트 제거 (1px 해상도 키로 중복 판별, 원본 float 좌표 유지)
-  const dedupSet = new Set<string>()
-  const dedupSegs: RawSeg[] = []
-  for (const s of finalSegs) {
-    const rx1 = Math.round(s.x1), ry1 = Math.round(s.y1)
-    const rx2 = Math.round(s.x1 + s.dx), ry2 = Math.round(s.y1 + s.dy)
-    if (rx1 === rx2 && ry1 === ry2) continue // 반올림 후 점 (1px 미만)
-    const key = `${rx1},${ry1},${rx2},${ry2}`
-    if (dedupSet.has(key)) continue
-    dedupSet.add(key)
-    dedupSegs.push(s)  // 원본 float 좌표 유지 (반올림은 dedup key로만 사용)
-  }
-  console.log(`[CAD V2] 중복제거: ${finalSegs.length} → ${dedupSegs.length}`)
-  finalSegs = dedupSegs
+  // 4. 아웃라이어 제거 (3-pass: percentile + IQR)
+  finalSegs = removeOutlierSegments(finalSegs)
 
-  // 6-2. 하드 캡: 최대 50,000 세그먼트 (메모리 보호)
-  const MAX_FINAL_SEGS = 50_000
-  if (finalSegs.length > MAX_FINAL_SEGS) {
-    // 균등 샘플링으로 줄이기
-    const step = finalSegs.length / MAX_FINAL_SEGS
-    const sampled: RawSeg[] = []
-    for (let i = 0; i < MAX_FINAL_SEGS; i++) {
-      sampled.push(finalSegs[Math.floor(i * step)])
-    }
-    console.log(`[CAD V2] 세그먼트 캡: ${finalSegs.length} → ${MAX_FINAL_SEGS}`)
-    finalSegs = sampled
-  }
-
-  // 7. 아웃라이어(점) 제거 — O(N) quickselect 기반
-  function nthElement(arr: Float64Array, k: number): number {
-    // Floyd-Rivest quickselect — O(N) average
-    let lo = 0, hi = arr.length - 1
-    while (lo < hi) {
-      const pivotIdx = lo + ((Math.random() * (hi - lo + 1)) | 0)
-      const pivot = arr[pivotIdx]
-      arr[pivotIdx] = arr[hi]; arr[hi] = pivot
-      let store = lo
-      for (let i = lo; i < hi; i++) {
-        if (arr[i] < pivot) { const t = arr[i]; arr[i] = arr[store]; arr[store] = t; store++ }
-      }
-      arr[hi] = arr[store]; arr[store] = pivot
-      if (store === k) break
-      else if (store < k) lo = store + 1
-      else hi = store - 1
-    }
-    return arr[k]
-  }
-
-  function computeBBox(segs: RawSeg[], pLoPct: number, pHiPct: number) {
-    const cnt = segs.length * 2
-    const xs = new Float64Array(cnt), ys = new Float64Array(cnt)
-    for (let i = 0; i < segs.length; i++) {
-      const s = segs[i]
-      xs[i * 2] = s.x1; xs[i * 2 + 1] = s.x1 + s.dx
-      ys[i * 2] = s.y1; ys[i * 2 + 1] = s.y1 + s.dy
-    }
-    if (cnt <= 500 || (pLoPct === 0 && pHiPct === 1)) {
-      // 전체 범위: min/max로 충분 (O(N))
-      let mnX = xs[0], mxX = xs[0], mnY = ys[0], mxY = ys[0]
-      for (let i = 1; i < cnt; i++) {
-        if (xs[i] < mnX) mnX = xs[i]; if (xs[i] > mxX) mxX = xs[i]
-        if (ys[i] < mnY) mnY = ys[i]; if (ys[i] > mxY) mxY = ys[i]
-      }
-      return { minX: mnX, maxX: mxX, minY: mnY, maxY: mxY, n: cnt }
-    }
-    const lo = Math.floor(cnt * pLoPct), hi = Math.min(Math.ceil(cnt * pHiPct) - 1, cnt - 1)
-    // quickselect로 O(N)에 퍼센타일 찾기
-    const xsCopy = new Float64Array(xs)
-    const minX = nthElement(xsCopy, lo)
-    const xsCopy2 = new Float64Array(xs)
-    const maxX = nthElement(xsCopy2, hi)
-    const ysCopy2 = new Float64Array(ys)
-    const minY = nthElement(ysCopy2, lo)
-    const ysCopy3 = new Float64Array(ys)
-    const maxY = nthElement(ysCopy3, hi)
-    return { minX, maxX, minY, maxY, n: cnt }
-  }
-
-  function filterOutliers(segs: RawSeg[], pLo: number, pHi: number, padMul: number): RawSeg[] {
-    const { minX, maxX, minY, maxY, n } = computeBBox(segs, pLo, pHi)
-    if (n < 200) return segs
-    const padX = (maxX - minX || 1) * padMul, padY = (maxY - minY || 1) * padMul
-    const filtered = segs.filter((s) => {
-      const sx1 = s.x1, sy1 = s.y1, sx2 = s.x1 + s.dx, sy2 = s.y1 + s.dy
-      return sx1 >= minX - padX && sx1 <= maxX + padX &&
-             sy1 >= minY - padY && sy1 <= maxY + padY &&
-             sx2 >= minX - padX && sx2 <= maxX + padX &&
-             sy2 >= minY - padY && sy2 <= maxY + padY
-    })
-    return filtered.length >= segs.length * 0.5 ? filtered : segs
-  }
-
-  // 1차 + 2차 아웃라이어 제거 (percentile 기반)
-  const before1 = finalSegs.length
-  finalSegs = filterOutliers(finalSegs, 0.05, 0.95, 0.5)
-  if (finalSegs.length < before1) console.log(`[CAD V2] 아웃라이어 1차: ${before1} → ${finalSegs.length}개`)
-  const before2 = finalSegs.length
-  finalSegs = filterOutliers(finalSegs, 0.05, 0.95, 0.3)
-  if (finalSegs.length < before2) console.log(`[CAD V2] 아웃라이어 2차: ${before2} → ${finalSegs.length}개`)
-
-  // 3차: IQR 기반 극단 좌표 제거 (C-LIGHT X:-1.5M, E-1 X:+3.6M 같은 경우)
-  // percentile 필터를 통과한 후에도 bbox 스팬이 IQR 대비 극단적이면 추가 제거
-  if (finalSegs.length > 100) {
-    const before3 = finalSegs.length
-    const cnt3 = finalSegs.length * 2
-    const xs3 = new Float64Array(cnt3), ys3 = new Float64Array(cnt3)
-    for (let i = 0; i < finalSegs.length; i++) {
-      xs3[i * 2] = finalSegs[i].x1; xs3[i * 2 + 1] = finalSegs[i].x1 + finalSegs[i].dx
-      ys3[i * 2] = finalSegs[i].y1; ys3[i * 2 + 1] = finalSegs[i].y1 + finalSegs[i].dy
-    }
-    const q1x = nthElement(new Float64Array(xs3), Math.floor(cnt3 * 0.25))
-    const q3x = nthElement(new Float64Array(xs3), Math.floor(cnt3 * 0.75))
-    const q1y = nthElement(new Float64Array(ys3), Math.floor(cnt3 * 0.25))
-    const q3y = nthElement(new Float64Array(ys3), Math.floor(cnt3 * 0.75))
-    const iqrX = (q3x - q1x) || 1, iqrY = (q3y - q1y) || 1
-    const fenceX = iqrX * 3, fenceY = iqrY * 3  // 3×IQR = 극단 아웃라이어
-    const loX = q1x - fenceX, hiX = q3x + fenceX
-    const loY = q1y - fenceY, hiY = q3y + fenceY
-    const filtered3 = finalSegs.filter(s => {
-      const sx2 = s.x1 + s.dx, sy2 = s.y1 + s.dy
-      return s.x1 >= loX && s.x1 <= hiX && sx2 >= loX && sx2 <= hiX &&
-             s.y1 >= loY && s.y1 <= hiY && sy2 >= loY && sy2 <= hiY
-    })
-    if (filtered3.length >= finalSegs.length * 0.5) {
-      finalSegs = filtered3
-      if (finalSegs.length < before3) console.log(`[CAD V2] 아웃라이어 3차(IQR): ${before3} → ${finalSegs.length}개`)
-    }
-  }
-
-  // 최종 bbox (O(N) min/max)
+  // 5. 최종 bbox
   const { minX: _minX, maxX: _maxX, minY: _minY, maxY: _maxY } = computeBBox(finalSegs, 0, 1)
   let minX = _minX, maxX = _maxX, minY = _minY, maxY = _maxY
 
@@ -2485,47 +2594,11 @@ export async function commitCadImportV2(
   const entityCount = polylines.length
   const fingerprint = dxfFingerprint(fileName, fileSize, entityCount)
 
-  // 10-1. Worker 텍스트 → px 좌표 변환 (Y flip + scale + autoScale)
+  // 10-1. 텍스트 + 해치 좌표 변환
   const textScale = scale * autoScale
-  type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string }
-  const pxTexts: PxText[] = workerTexts
-    .filter(t => Math.abs(t.x) < COORD_LIMIT && Math.abs(t.y) < COORD_LIMIT && isFinite(t.x) && isFinite(t.y))
-    .map(t => ({
-      x: t.x * textScale,
-      y: -t.y * textScale,
-      text: t.text,
-      height: Math.max(t.height * textScale, 4),
-      rotation: t.rotation,
-      color: t.colorNumber >= 0 ? aciToHex(t.colorNumber) : undefined,
-      layer: t.layer,
-    }))
+  const pxTexts = transformWorkerTexts(workerTexts, textScale)
   console.log(`[CAD V2] ${pxTexts.length}개 텍스트 변환`)
-
-  // ── HATCH 좌표 변환 (DXF → px, Y flip, SVG path 좌표 변환) ──
-  type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; color?: string; layer: string; cx: number; cy: number }
-  const pxHatches: PxHatch[] = workerHatches
-    .filter(h => h.layer?.toUpperCase() !== 'DEFPOINTS')  // DEFPOINTS 비인쇄 레이어 제외
-    .filter(h => Math.abs(h.cx) < COORD_LIMIT && Math.abs(h.cy) < COORD_LIMIT && isFinite(h.cx) && isFinite(h.cy))
-    .map(h => {
-      const transformedPath = h.pathData.replace(
-        /([MLZ])([\d.e+-]+),([\d.e+-]+)/g,
-        (_, cmd: string, xStr: string, yStr: string) => {
-          const nx = parseFloat(xStr) * textScale
-          const ny = -parseFloat(yStr) * textScale
-          return `${cmd}${nx.toFixed(1)},${ny.toFixed(1)}`
-        }
-      )
-      return {
-        pathData: transformedPath,
-        patternName: h.patternName,
-        patternScale: h.patternScale,
-        patternAngle: h.patternAngle,
-        color: h.color,
-        layer: h.layer,
-        cx: h.cx * textScale,
-        cy: -h.cy * textScale,
-      }
-    })
+  const pxHatches = transformWorkerHatches(workerHatches, textScale)
   console.log(`[CAD V2] ${pxHatches.length}개 해치 변환`)
 
   // ── 100+ segs: DxfGroup 모드 ──
@@ -2707,59 +2780,9 @@ export async function commitCadImportV2(
 
     console.log(`[CAD V2] ${groupShapes.length}개 DxfGroup 생성 (텍스트 ${assignedTextIdx.size}/${pxTexts.length}, 해치 ${assignedHatchIdx.size}/${pxHatches.length}개 할당)`)
 
-    // ── 고립 텍스트 처리: 클러스터에 할당 안 된 텍스트를 독립 DxfGroup으로 생성 ──
-    const orphanTexts = pxTexts.filter((_, idx) => !assignedTextIdx.has(idx))
-    if (orphanTexts.length > 0 && orphanTexts.length <= 500) {
-      // 근접 텍스트끼리 그루핑 (같은 Y 영역이면 한 그룹으로)
-      const TEXT_GROUP_GAP = 200 // px 간격 이내면 같은 그룹
-      const sorted = [...orphanTexts].sort((a, b) => a.y - b.y || a.x - b.x)
-      const textGroups: typeof orphanTexts[] = []
-      let curGroup: typeof orphanTexts = [sorted[0]]
-
-      for (let i = 1; i < sorted.length; i++) {
-        const prev = curGroup[curGroup.length - 1]
-        const cur = sorted[i]
-        if (Math.abs(cur.y - prev.y) < TEXT_GROUP_GAP && Math.abs(cur.x - prev.x) < TEXT_GROUP_GAP * 5) {
-          curGroup.push(cur)
-        } else {
-          textGroups.push(curGroup)
-          curGroup = [cur]
-        }
-      }
-      textGroups.push(curGroup)
-
-      for (const tg of textGroups) {
-        let tMinX = Infinity, tMinY = Infinity, tMaxX = -Infinity, tMaxY = -Infinity
-        for (const t of tg) {
-          tMinX = Math.min(tMinX, t.x)
-          tMinY = Math.min(tMinY, t.y - t.height)
-          tMaxX = Math.max(tMaxX, t.x + t.height * t.text.length * 0.6)
-          tMaxY = Math.max(tMaxY, t.y + t.height * 0.3)
-        }
-        const tw = Math.max(tMaxX - tMinX, 10)
-        const th = Math.max(tMaxY - tMinY, 10)
-        const localTexts = tg.map(t => ({
-          x: +(t.x - tMinX).toFixed(1),
-          y: +(t.y - tMinY).toFixed(1),
-          t: t.text,
-          h: +t.height.toFixed(1),
-          r: t.rotation,
-          c: t.color,
-        }))
-        groupShapes.push({
-          id: createShapeId(),
-          type: 'dxfgroup',
-          x: tMinX - offsetX, y: tMinY - offsetY,
-          props: {
-            w: tw, h: th, pathData: '', thickness: 0, segCount: 0,
-            textsJson: JSON.stringify(localTexts),
-            hatchesJson: '',
-          },
-          meta: { dxfFingerprint: fingerprint, dxfLayer: tg[0].layer || '0' },
-        })
-      }
-      console.log(`[CAD V2] 고립 텍스트: ${orphanTexts.length}개 → ${textGroups.length}개 그룹`)
-    }
+    // 고립 텍스트 → 독립 DxfGroup shape
+    const orphanShapes = buildOrphanTextShapes(pxTexts, assignedTextIdx, offsetX, offsetY, fingerprint)
+    groupShapes.push(...orphanShapes)
 
     // 배치 생성 (배치 간 yield로 UI 멈춤 방지)
     const BATCH = 200

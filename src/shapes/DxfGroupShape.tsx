@@ -2,7 +2,7 @@
  * DxfGroupShape: DXF 레이어의 모든 라인 세그먼트를 하나의 shape로 묶어
  * 단일 SVG <path>로 렌더링. 500개 개별 wall → 5-10개 그룹으로 축소.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Polygon2d,
   ShapeUtil,
