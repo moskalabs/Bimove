@@ -7,8 +7,10 @@
  * - No lodash.cloneDeep for block expansion
  * - No intermediate JSON object model
  * - Progress reporting to main thread
- * - Zero npm dependencies
+ * - Zero npm dependencies (dxf-shared is internal)
  */
+
+import { ACI_TO_HEX, aciToHex, trueColorToHex, detectPadding, makeGcFormatter, decodeDxfSpecialChars, cleanMtextFormatting } from './dxf-shared'
 
 // ===== Public message types (also used by main thread) =====
 
@@ -375,24 +377,8 @@ function parseGroupCodes(text: string): { type: string; codes: Map<number, strin
   return { type, codes }
 }
 
-// ===== ACI color table (subset: 1-9 standard colors) =====
-const ACI_HEX: Record<number, string> = {
-  1: '#ff0000', 2: '#ffff00', 3: '#00ff00', 4: '#00ffff',
-  5: '#0000ff', 6: '#ff00ff', 7: '#ffffff', 8: '#808080', 9: '#c0c0c0',
-  10: '#ff0000', 11: '#ff7f7f', 12: '#cc0000',
-  30: '#ff7f00', 40: '#ff7f00', 50: '#ffbf00',
-  250: '#333333', 251: '#545454', 252: '#787878', 253: '#a3a3a3', 254: '#c8c8c8', 255: '#ffffff',
-}
-
-function aciToHexFast(idx: number): string | undefined {
-  if (idx <= 0 || idx > 255) return undefined
-  return ACI_HEX[idx] || `hsl(${((idx - 1) * 360 / 255) | 0},80%,50%)`
-}
-
-function trueColorToHexFast(tc: number): string {
-  const r = (tc >> 16) & 0xff, g = (tc >> 8) & 0xff, b = tc & 0xff
-  return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`
-}
+// ACI color + trueColor → dxf-shared.ts에서 import
+// aciToHex/trueColorToHex → aciToHex/trueColorToHex로 통합
 
 // ===== HATCH entity parser =====
 
@@ -434,8 +420,8 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
 
   // Resolve color
   let color: string | undefined
-  if (trueColor > 0) color = trueColorToHexFast(trueColor)
-  else if (colorIndex > 0) color = aciToHexFast(colorIndex)
+  if (trueColor > 0) color = trueColorToHex(trueColor)
+  else if (colorIndex > 0) color = aciToHex(colorIndex)
 
   // Parse boundary paths → SVG path data
   const svgParts: string[] = []
@@ -661,48 +647,38 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
   }
 }
 
-/** Pre-compute block entity into polyline (LINE/ARC/CIRCLE/ELLIPSE/LWPOLYLINE).
- *  Returns null for entities that can't be precomputed (INSERT, TEXT, SPLINE, etc.) */
-function precomputeEntity(chunk: string): PrecomputedPoly | null {
-  const { type, codes } = parseGroupCodes(chunk)
-  const rawLayer = codes.get(8)?.[0]?.trim() ?? null
-  const colorNumber = codes.get(62)?.[0] ? parseInt(codes.get(62)![0]) : -1
-  const ez = codes.get(230)?.[0] ? parseFloat(codes.get(230)![0]) : 1
-
-  let poly: number[][] | null = null
-
+/** 공통 geometry 변환: group codes → polyline vertices
+ *  LINE, ARC, CIRCLE, ELLIPSE, LWPOLYLINE, SPLINE, SOLID, 3DFACE 지원.
+ *  INSERT, TEXT 등 지원 안 되는 타입은 null 반환. */
+function codesToPolyline(type: string, codes: Map<number, string[]>, ez: number): number[][] | null {
   switch (type) {
     case 'LINE': {
       const x1 = parseFloat(codes.get(10)?.[0] ?? '0')
       const y1 = parseFloat(codes.get(20)?.[0] ?? '0')
       const x2 = parseFloat(codes.get(11)?.[0] ?? '0')
       const y2 = parseFloat(codes.get(21)?.[0] ?? '0')
-      if (Math.abs(x1 - x2) > 1e-6 || Math.abs(y1 - y2) > 1e-6) {
-        poly = [[x1, y1], [x2, y2]]
-      }
-      break
+      if (Math.abs(x1 - x2) < 1e-6 && Math.abs(y1 - y2) < 1e-6) return null
+      return [[x1, y1], [x2, y2]]
     }
     case 'ARC': {
       const cx = parseFloat(codes.get(10)?.[0] ?? '0')
       const cy = parseFloat(codes.get(20)?.[0] ?? '0')
       const r = parseFloat(codes.get(40)?.[0] ?? '0')
-      if (r > 0.01) {
-        const sa = parseFloat(codes.get(50)?.[0] ?? '0') * Math.PI / 180
-        const ea = parseFloat(codes.get(51)?.[0] ?? '360') * Math.PI / 180
-        poly = interpEllipse(cx, cy, r, r, sa, ea)
-        if (ez === -1) for (const p of poly) p[0] = -p[0]
-      }
-      break
+      if (r <= 0.01) return null
+      const sa = parseFloat(codes.get(50)?.[0] ?? '0') * Math.PI / 180
+      const ea = parseFloat(codes.get(51)?.[0] ?? '360') * Math.PI / 180
+      const poly = interpEllipse(cx, cy, r, r, sa, ea)
+      if (ez === -1) for (const p of poly) p[0] = -p[0]
+      return poly
     }
     case 'CIRCLE': {
       const cx = parseFloat(codes.get(10)?.[0] ?? '0')
       const cy = parseFloat(codes.get(20)?.[0] ?? '0')
       const r = parseFloat(codes.get(40)?.[0] ?? '0')
-      if (r > 0.01) {
-        poly = interpEllipse(cx, cy, r, r, 0, Math.PI * 2)
-        if (ez === -1) for (const p of poly) p[0] = -p[0]
-      }
-      break
+      if (r <= 0.01) return null
+      const poly = interpEllipse(cx, cy, r, r, 0, Math.PI * 2)
+      if (ez === -1) for (const p of poly) p[0] = -p[0]
+      return poly
     }
     case 'ELLIPSE': {
       const cx = parseFloat(codes.get(10)?.[0] ?? '0')
@@ -715,9 +691,9 @@ function precomputeEntity(chunk: string): PrecomputedPoly | null {
       const rx = Math.sqrt(mjx * mjx + mjy * mjy)
       const ry = ratio * rx
       const rot = -Math.atan2(-mjy, mjx)
-      poly = interpEllipse(cx, cy, rx, ry, sp, ep, rot)
+      const poly = interpEllipse(cx, cy, rx, ry, sp, ep, rot)
       if (ez === -1) for (const p of poly) p[0] = -p[0]
-      break
+      return poly
     }
     case 'LWPOLYLINE': {
       const xs = codes.get(10) || []
@@ -726,20 +702,20 @@ function precomputeEntity(chunk: string): PrecomputedPoly | null {
       const flag = parseInt(codes.get(70)?.[0] ?? '0')
       const closed = (flag & 1) !== 0
       const n = Math.min(xs.length, ys.length)
-      if (n < 2) break
+      if (n < 2) return null
       const verts: Vertex[] = []
       for (let i = 0; i < n; i++) {
         verts.push({ x: parseFloat(xs[i]), y: parseFloat(ys[i]), bulge: parseFloat(bulges[i] || '0') })
       }
       if (closed) verts.push({ ...verts[0], bulge: 0 })
-      poly = []
+      const poly: number[][] = []
       for (let i = 0; i < verts.length - 1; i++) {
         const f = verts[i], t = verts[i + 1]
         poly.push([f.x, f.y])
         if (f.bulge) poly.push(...bulgeArc(f.x, f.y, t.x, t.y, f.bulge))
         if (i === verts.length - 2) poly.push([t.x, t.y])
       }
-      break
+      return poly.length >= 2 ? poly : null
     }
     case 'SPLINE': {
       const degree = parseInt(codes.get(71)?.[0] ?? '3')
@@ -748,44 +724,38 @@ function precomputeEntity(chunk: string): PrecomputedPoly | null {
       const knotVals = codes.get(40) || []
       const weightVals = codes.get(41) || []
       const n = Math.min(xs.length, ys.length)
-      if (n < 2) break
+      if (n < 2) return null
       const cps = []
-      for (let i = 0; i < n; i++) {
-        cps.push({ x: parseFloat(xs[i]), y: parseFloat(ys[i]) })
-      }
+      for (let i = 0; i < n; i++) cps.push({ x: parseFloat(xs[i]), y: parseFloat(ys[i]) })
       const knots = knotVals.map(v => parseFloat(v))
       const weights = weightVals.length ? weightVals.map(v => parseFloat(v)) : undefined
       if (knots.length >= n + degree + 1) {
-        poly = interpBSpline(cps, degree, knots, weights)
-      } else {
-        poly = cps.map(p => [p.x, p.y])
+        return interpBSpline(cps, degree, knots, weights)
       }
-      break
+      return cps.map(p => [p.x, p.y])
     }
     case 'SOLID':
     case '3DFACE': {
-      const x0 = parseFloat(codes.get(10)?.[0] ?? '0')
-      const y0 = parseFloat(codes.get(20)?.[0] ?? '0')
-      const x1 = parseFloat(codes.get(11)?.[0] ?? '0')
-      const y1 = parseFloat(codes.get(21)?.[0] ?? '0')
-      const x2 = parseFloat(codes.get(12)?.[0] ?? '0')
-      const y2 = parseFloat(codes.get(22)?.[0] ?? '0')
-      const x3 = parseFloat(codes.get(13)?.[0] ?? `${x2}`)
-      const y3 = parseFloat(codes.get(23)?.[0] ?? `${y2}`)
-      const dx01 = Math.abs(x0 - x1) + Math.abs(y0 - y1)
-      const dx02 = Math.abs(x0 - x2) + Math.abs(y0 - y2)
-      if (dx01 < 1e-6 && dx02 < 1e-6) break
-      if (type === 'SOLID') {
-        poly = [[x0, y0], [x1, y1], [x3, y3], [x2, y2], [x0, y0]]
-      } else {
-        poly = [[x0, y0], [x1, y1], [x2, y2], [x3, y3], [x0, y0]]
-      }
-      break
+      const x0 = parseFloat(codes.get(10)?.[0] ?? '0'), y0 = parseFloat(codes.get(20)?.[0] ?? '0')
+      const x1 = parseFloat(codes.get(11)?.[0] ?? '0'), y1 = parseFloat(codes.get(21)?.[0] ?? '0')
+      const x2 = parseFloat(codes.get(12)?.[0] ?? '0'), y2 = parseFloat(codes.get(22)?.[0] ?? '0')
+      const x3 = parseFloat(codes.get(13)?.[0] ?? `${x2}`), y3 = parseFloat(codes.get(23)?.[0] ?? `${y2}`)
+      if (Math.abs(x0 - x1) + Math.abs(y0 - y1) < 1e-6 && Math.abs(x0 - x2) + Math.abs(y0 - y2) < 1e-6) return null
+      if (type === 'SOLID') return [[x0, y0], [x1, y1], [x3, y3], [x2, y2], [x0, y0]]
+      return [[x0, y0], [x1, y1], [x2, y2], [x3, y3], [x0, y0]]
     }
     default:
       return null
   }
+}
 
+/** Pre-compute block entity into polyline. Delegates to codesToPolyline(). */
+function precomputeEntity(chunk: string): PrecomputedPoly | null {
+  const { type, codes } = parseGroupCodes(chunk)
+  const rawLayer = codes.get(8)?.[0]?.trim() ?? null
+  const colorNumber = codes.get(62)?.[0] ? parseInt(codes.get(62)![0]) : -1
+  const ez = codes.get(230)?.[0] ? parseFloat(codes.get(230)![0]) : 1
+  const poly = codesToPolyline(type, codes, ez)
   if (!poly || poly.length < 2) return null
   return { vertices: poly, rawLayer, colorNumber }
 }
@@ -820,142 +790,19 @@ function entityToPolyline(
   }
   const ez = codes.get(230)?.[0] ? parseFloat(codes.get(230)![0]) : 1
 
-  let poly: number[][] | null = null
+  // 기하 엔티티 → codesToPolyline() 통합 함수 사용
+  const poly = codesToPolyline(type, codes, ez)
 
-  switch (type) {
-    case 'LINE': {
-      const x1 = parseFloat(codes.get(10)?.[0] ?? '0')
-      const y1 = parseFloat(codes.get(20)?.[0] ?? '0')
-      const x2 = parseFloat(codes.get(11)?.[0] ?? '0')
-      const y2 = parseFloat(codes.get(21)?.[0] ?? '0')
-      poly = [[x1, y1], [x2, y2]]
-      break
-    }
+  // DIMENSION: 건너뜀 (치수선 블록 확장 시 엔티티 폭발 + 좌표 이상)
+  if (type === 'DIMENSION') return
 
-    case 'LWPOLYLINE': {
-      const xs = codes.get(10) || []
-      const ys = codes.get(20) || []
-      const bulges = codes.get(42) || []
-      const flag = parseInt(codes.get(70)?.[0] ?? '0')
-      const closed = (flag & 1) !== 0
-      const n = Math.min(xs.length, ys.length)
-      if (n < 2) break
-
-      const verts: Vertex[] = []
-      for (let i = 0; i < n; i++) {
-        verts.push({ x: parseFloat(xs[i]), y: parseFloat(ys[i]), bulge: parseFloat(bulges[i] || '0') })
-      }
-      if (closed) verts.push({ ...verts[0], bulge: 0 })
-
-      poly = []
-      for (let i = 0; i < verts.length - 1; i++) {
-        const f = verts[i], t = verts[i + 1]
-        poly.push([f.x, f.y])
-        if (f.bulge) {
-          poly.push(...bulgeArc(f.x, f.y, t.x, t.y, f.bulge))
-        }
-        if (i === verts.length - 2) poly.push([t.x, t.y])
-      }
-      break
-    }
-
-    case 'ARC': {
-      const cx = parseFloat(codes.get(10)?.[0] ?? '0')
-      const cy = parseFloat(codes.get(20)?.[0] ?? '0')
-      const r  = parseFloat(codes.get(40)?.[0] ?? '0')
-      if (r <= 0.01) break  // 극소 반지름 → 점 방지
-      const sa = parseFloat(codes.get(50)?.[0] ?? '0') * Math.PI / 180
-      const ea = parseFloat(codes.get(51)?.[0] ?? '360') * Math.PI / 180
-      poly = interpEllipse(cx, cy, r, r, sa, ea)
-      if (ez === -1) for (const p of poly) p[0] = -p[0]
-      break
-    }
-
-    case 'CIRCLE': {
-      const cx = parseFloat(codes.get(10)?.[0] ?? '0')
-      const cy = parseFloat(codes.get(20)?.[0] ?? '0')
-      const r  = parseFloat(codes.get(40)?.[0] ?? '0')
-      if (r <= 0.01) break  // 극소 반지름 → 점 방지
-      poly = interpEllipse(cx, cy, r, r, 0, Math.PI * 2)
-      if (ez === -1) for (const p of poly) p[0] = -p[0]
-      break
-    }
-
-    case 'ELLIPSE': {
-      const cx = parseFloat(codes.get(10)?.[0] ?? '0')
-      const cy = parseFloat(codes.get(20)?.[0] ?? '0')
-      const mjx = parseFloat(codes.get(11)?.[0] ?? '1')
-      const mjy = parseFloat(codes.get(21)?.[0] ?? '0')
-      const ratio = parseFloat(codes.get(40)?.[0] ?? '1')
-      const sp = parseFloat(codes.get(41)?.[0] ?? '0')
-      const ep = parseFloat(codes.get(42)?.[0] ?? `${Math.PI * 2}`)
-      const rx = Math.sqrt(mjx * mjx + mjy * mjy)
-      const ry = ratio * rx
-      const rot = -Math.atan2(-mjy, mjx)
-      poly = interpEllipse(cx, cy, rx, ry, sp, ep, rot)
-      if (ez === -1) for (const p of poly) p[0] = -p[0]
-      break
-    }
-
-    case 'SPLINE': {
-      const degree = parseInt(codes.get(71)?.[0] ?? '3')
-      const xs = codes.get(10) || []
-      const ys = codes.get(20) || []
-      const knotVals = codes.get(40) || []
-      const weightVals = codes.get(41) || []
-      const n = Math.min(xs.length, ys.length)
-      if (n < 2) break
-      const cps = []
-      for (let i = 0; i < n; i++) {
-        cps.push({ x: parseFloat(xs[i]), y: parseFloat(ys[i]) })
-      }
-      const knots = knotVals.map(v => parseFloat(v))
-      const weights = weightVals.length ? weightVals.map(v => parseFloat(v)) : undefined
-      if (knots.length >= n + degree + 1) {
-        poly = interpBSpline(cps, degree, knots, weights)
-      } else {
-        // Fallback: connect control points
-        poly = cps.map(p => [p.x, p.y])
-      }
-      break
-    }
-
-    case 'SOLID':
-    case '3DFACE': {
-      const x0 = parseFloat(codes.get(10)?.[0] ?? '0')
-      const y0 = parseFloat(codes.get(20)?.[0] ?? '0')
-      const x1 = parseFloat(codes.get(11)?.[0] ?? '0')
-      const y1 = parseFloat(codes.get(21)?.[0] ?? '0')
-      const x2 = parseFloat(codes.get(12)?.[0] ?? '0')
-      const y2 = parseFloat(codes.get(22)?.[0] ?? '0')
-      const x3 = parseFloat(codes.get(13)?.[0] ?? `${x2}`)
-      const y3 = parseFloat(codes.get(23)?.[0] ?? `${y2}`)
-      // 축퇴된 SOLID/3DFACE 건너뛰기 (모든 꼭짓점이 같은 위치 → 점처럼 보임)
-      const dx01 = Math.abs(x0 - x1) + Math.abs(y0 - y1)
-      const dx02 = Math.abs(x0 - x2) + Math.abs(y0 - y2)
-      if (dx01 < 1e-6 && dx02 < 1e-6) break  // 모두 같은 점
-      if (type === 'SOLID') {
-        // SOLID vertex order is swapped: 0→1→3→2→close
-        poly = [[x0, y0], [x1, y1], [x3, y3], [x2, y2], [x0, y0]]
-      } else {
-        poly = [[x0, y0], [x1, y1], [x2, y2], [x3, y3], [x0, y0]]
-      }
-      break
-    }
-
-    case 'DIMENSION': {
-      // DIMENSION: 익명 블록(*D0, *D1) 확장은 엔티티 폭발 + 좌표 이상 유발 → 건너뜀
-      // 치수선은 시각적 보조 요소로, 구조 도면에 필수가 아님
-      break
-    }
-
-    case 'INSERT': {
-      if (depth >= MAX_DEPTH) break
+  if (type === 'INSERT') {
+      if (depth >= MAX_DEPTH) return
       const blockName = codes.get(2)?.[0]?.trim() ?? ''
       const block = blocks.get(blockName)
-      if (!block) break
+      if (!block) return
       const totalEnts = block.entityChunks.length + block.precomputed.length
-      if (totalEnts > 2000) break  // 거대 블록 건너뛰기 (성능 보호)
+      if (totalEnts > 2000) return  // 거대 블록 건너뛰기 (성능 보호)
 
       const ix = parseFloat(codes.get(10)?.[0] ?? '0')
       const iy = parseFloat(codes.get(20)?.[0] ?? '0')
@@ -1042,8 +889,7 @@ function entityToPolyline(
           }
         }
       }
-      return  // INSERT/DIMENSION handled, don't add poly
-    }
+      return  // INSERT handled, don't add poly
   }
 
   if (poly && poly.length >= 2) {
@@ -1069,26 +915,7 @@ function entityToPolyline(
 
 // ===== Main parsing orchestrator =====
 
-/** DXF 특수문자 코드(%%X) → 유니코드 변환 */
-function decodeDxfSpecialChars(text: string): string {
-  return text
-    .replace(/%%[Pp]/g, '±')
-    .replace(/%%[Dd]/g, '°')
-    .replace(/%%[Cc]/g, '∅')
-    .replace(/%%[Uu]/g, '')
-    .replace(/%%[Oo]/g, '')
-    .replace(/%%%/g, '%')
-    .replace(/%%(\d{3})/g, (_, code) => String.fromCharCode(parseInt(code)))
-}
-
-/** MTEXT 서식 코드 제거 */
-function cleanMtextFormatting(text: string): string {
-  return text
-    .replace(/\\P/g, ' ')
-    .replace(/\{[^}]*\}/g, '')
-    .replace(/\\[a-zA-Z][^;]*;/g, '')
-    .trim()
-}
+// decodeDxfSpecialChars, cleanMtextFormatting → dxf-shared.ts에서 import
 
 /** Extract TEXT/MTEXT data from parsed group codes */
 function extractTextEntity(
@@ -1134,11 +961,9 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   progress('줄바꿈 정규화', 2)
   const dxfText = rawText.indexOf('\r') >= 0 ? rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n') : rawText
 
-  // 0-1. 패딩 감지 → 패턴 동적 생성 (186MB 파일에서 regex 정규화 대신 메모리 절약)
-  // 첫 바이트 체크 + fallback: 파일이 999(주석)으로 시작하면 첫 바이트가 숫자이므로
-  // "\n  0\nSECTION" 패턴으로 재검사
-  const padded = dxfText.charCodeAt(0) === 32 || (dxfText.charCodeAt(0) !== 32 && dxfText.indexOf('\n  0\nSECTION') >= 0)
-  const gc = padded ? (c: number) => String(c).padStart(3) : (c: number) => String(c)
+  // 0-1. 패딩 감지 → 패턴 동적 생성
+  const padded = detectPadding(dxfText)
+  const gc = makeGcFormatter(padded)
   const SEP_PAT = `\n${gc(0)}\n`   // entity/section boundary pattern
   const GC8_PAT = `\n${gc(8)}\n`   // layer group code
   console.log(`[fast-worker] 텍스트 길이: ${dxfText.length} chars, 패딩: ${padded}, SEP=${JSON.stringify(SEP_PAT)}`)

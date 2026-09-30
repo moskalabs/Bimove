@@ -5,8 +5,7 @@
  * 기존 bimove UI 스타일(cad-layer-*)에 맞춤.
  */
 import { useEffect, useState, useMemo, useCallback } from 'react'
-
-const STRUCTURAL_KEYWORDS = /wall|window|win(?!ter)|door|stair|column|beam|slab|elev|건축|벽|창문|문/i
+import { aciToHex as aciToHexFull, detectPadding, makeGcFormatter, STRUCTURAL_KEYWORDS } from '../lib/dxf-shared'
 
 /** 기본 제외 레이어: viewport/paperspace 계열만 제외.
  * DEFPOINTS, TB-* 등은 실무에서 유용한 내용(라벨, 격자선)이
@@ -205,11 +204,9 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
     ? rawDxfText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
     : rawDxfText
 
-  // 0-1. 패딩 감지 → 패턴 동적 생성 (186MB에서 regex 정규화 대신 메모리 0 복사)
-  // DXF 스펙: 그룹 코드 3자리 우측 정렬 ("  0", "  2", " 10", " 62", "100" 등)
-  // 첫 줄이 "  0\n" 이면 패딩. 999(주석)으로 시작하면 첫 바이트가 숫자이므로 fallback 검사
-  const padded = dxfText.charCodeAt(0) === 32 || dxfText.indexOf('\n  0\nSECTION') >= 0
-  const gc = padded ? (c: number) => String(c).padStart(3) : (c: number) => String(c)
+  // 0-1. 패딩 감지 → 패턴 동적 생성
+  const padded = detectPadding(dxfText)
+  const gc = makeGcFormatter(padded)
 
   // 핵심 패턴들 (패딩 유무에 따라 자동 변환)
   const SEP = `\n${gc(0)}\n`                          // 엔티티/섹션 경계
@@ -328,12 +325,7 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
   return result.sort((a, b) => b.segCount - a.segCount)
 }
 
-/** AutoCAD Color Index → hex 색상 */
+// ACI 색상 → dxf-shared.ts의 aciToHexFull (256색 테이블)
 function aciToHex(aci: number): string {
-  const map: Record<number, string> = {
-    0: '#000000', 1: '#ff0000', 2: '#ffff00', 3: '#00ff00',
-    4: '#00ffff', 5: '#0000ff', 6: '#ff00ff', 7: '#ffffff',
-    8: '#808080', 9: '#c0c0c0',
-  }
-  return map[aci] ?? `hsl(${(aci * 37) % 360}, 70%, 50%)`
+  return aciToHexFull(aci) ?? '#666666'
 }

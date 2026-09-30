@@ -373,9 +373,10 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
   // meta 변경 감지용 (재질 적용 시 re-render 트리거)
   const [meta, setMeta] = useState(() => shape.meta as Record<string, unknown>)
 
+  // 줌 + meta 변경 감지 (throttled via rAF, 'document' scope로 줌 변화만 감지)
   useEffect(() => {
     let raf = 0
-    const unsub = editor.store.listen(() => {
+    const check = () => {
       if (raf) return
       raf = requestAnimationFrame(() => {
         raf = 0
@@ -384,7 +385,6 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
           if (Math.abs(prev - z) / Math.max(prev, 0.001) > 0.1) return z
           return prev
         })
-        // shape meta 변경 감지
         const latest = editor.getShape(shape.id)
         if (latest) {
           const lm = latest.meta as Record<string, unknown>
@@ -394,8 +394,14 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
           })
         }
       })
-    })
-    return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
+    }
+    // 'document' scope: 줌/카메라 변화 시에만 트리거 (shape 개별 변경은 무시)
+    const unsub1 = editor.store.listen(check, { source: 'user', scope: 'document' })
+    // shape 자체 meta 변경도 감지 (재질 적용 등)
+    const unsub2 = editor.store.listen(({ changes }) => {
+      if (changes.updated[shape.id]) check()
+    }, { source: 'user', scope: 'document' })
+    return () => { unsub1(); unsub2(); if (raf) cancelAnimationFrame(raf) }
   }, [editor, shape.id])
 
   useEffect(() => {
@@ -423,17 +429,16 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
   const minStroke = 0.8 / Math.max(zoom, 0.001)
   const strokeW = Math.max(baseStrokeW, minStroke)
 
-  // 텍스트 데이터 파싱
-  let texts: DxfTextEntry[] = []
-  try {
-    if (shape.props.textsJson) texts = JSON.parse(shape.props.textsJson)
-  } catch { /* ignore */ }
+  // 텍스트/HATCH 데이터: useMemo로 캐싱 (리렌더 시 JSON.parse 재실행 방지)
+  const texts: DxfTextEntry[] = useMemo(() => {
+    try { return shape.props.textsJson ? JSON.parse(shape.props.textsJson) : [] }
+    catch { return [] }
+  }, [shape.props.textsJson])
 
-  // HATCH 데이터 파싱
-  let hatches: DxfHatchEntry[] = []
-  try {
-    if (shape.props.hatchesJson) hatches = JSON.parse(shape.props.hatchesJson)
-  } catch { /* ignore */ }
+  const hatches: DxfHatchEntry[] = useMemo(() => {
+    try { return shape.props.hatchesJson ? JSON.parse(shape.props.hatchesJson) : [] }
+    catch { return [] }
+  }, [shape.props.hatchesJson])
 
   // HATCH SVG 패턴 defs + fill 준비
   const hatchDefs: Array<{ id: string; def: React.ReactElement | null; isSolid: boolean; color: string }> = hatches.map((h, i) => {
