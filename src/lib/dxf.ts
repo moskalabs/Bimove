@@ -1208,26 +1208,50 @@ function parseRawHatches(
       const isPolyline = (pathTypeFlag & 2) !== 0
 
       if (isPolyline) {
-        // Polyline boundary
+        // Polyline boundary (with bulge → arc interpolation)
         const hasBulge = (i < pairs.length && pairs[i].code === 72) ? (parseInt(pairs[i++].value) || 0) : 0
         const isClosed = (i < pairs.length && pairs[i].code === 73) ? (parseInt(pairs[i++].value) || 0) : 1
         const numVerts = (i < pairs.length && pairs[i].code === 93) ? (parseInt(pairs[i++].value) || 0) : 0
 
-        const verts: Array<{ x: number; y: number }> = []
+        const verts: Array<{ x: number; y: number; bulge: number }> = []
         for (let v = 0; v < numVerts && i < pairs.length; v++) {
-          let vx = 0, vy = 0
+          let vx = 0, vy = 0, bulge = 0
           if (pairs[i].code === 10) { vx = parseFloat(pairs[i].value) || 0; i++ }
           if (i < pairs.length && pairs[i].code === 20) { vy = parseFloat(pairs[i].value) || 0; i++ }
-          // skip bulge (42) if present
-          if (hasBulge && i < pairs.length && pairs[i].code === 42) i++
-          verts.push({ x: vx, y: vy })
+          if (hasBulge && i < pairs.length && pairs[i].code === 42) { bulge = parseFloat(pairs[i].value) || 0; i++ }
+          verts.push({ x: vx, y: vy, bulge })
           sumX += vx; sumY += vy; ptCount++
         }
 
         if (verts.length >= 2) {
           const parts = [`M${verts[0].x},${verts[0].y}`]
-          for (let v = 1; v < verts.length; v++) {
-            parts.push(`L${verts[v].x},${verts[v].y}`)
+          const count = isClosed ? verts.length : verts.length - 1
+          for (let v = 0; v < count; v++) {
+            const p1 = verts[v], p2 = verts[(v + 1) % verts.length]
+            if (Math.abs(p1.bulge) > 1e-6) {
+              const dx = p2.x - p1.x, dy = p2.y - p1.y
+              const chord = Math.hypot(dx, dy)
+              if (chord < 1e-9) { parts.push(`L${p2.x},${p2.y}`); continue }
+              const sagitta = Math.abs(p1.bulge) * chord / 2
+              const r = (chord * chord / 4 + sagitta * sagitta) / (2 * sagitta)
+              const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2
+              const d = Math.sqrt(Math.max(0, r * r - chord * chord / 4))
+              const sign = p1.bulge > 0 ? 1 : -1
+              const cx = mx - sign * d * dy / chord
+              const cy = my + sign * d * dx / chord
+              let sa = Math.atan2(p1.y - cy, p1.x - cx)
+              let ea = Math.atan2(p2.y - cy, p2.x - cx)
+              if (p1.bulge > 0) { if (ea <= sa) ea += 2 * Math.PI }
+              else { if (sa <= ea) sa += 2 * Math.PI }
+              const steps = Math.max(4, Math.ceil(Math.abs(ea - sa) * r / 5))
+              const dt = (ea - sa) / steps
+              for (let s = 1; s <= steps; s++) {
+                const t = sa + dt * s
+                parts.push(`L${(cx + r * Math.cos(t))},${(cy + r * Math.sin(t))}`)
+              }
+            } else if (v < verts.length - 1 || isClosed) {
+              parts.push(`L${p2.x},${p2.y}`)
+            }
           }
           if (isClosed) parts.push('Z')
           svgParts.push(parts.join(''))

@@ -546,4 +546,49 @@ describe('DXF Performance Benchmark', () => {
     expect(h3.color).toBeDefined()  // trueColor orange
     expect(h3.pathData).toContain('L')  // arc → line approximation
   })
+
+  // HATCH: polyline boundary with bulge (곡선 경계)
+  it('HATCH: polyline bulge → arc interpolation', async () => {
+    const parts: string[] = [makeDxfHeader()]
+    parts.push(`${g(0)}\nSECTION\n${g(2)}\nBLOCKS\n${g(0)}\nENDSEC\n`)
+    parts.push(`${g(0)}\nSECTION\n${g(2)}\nENTITIES\n`)
+
+    // HATCH with bulge=1 (semicircle) between two vertices
+    parts.push([
+      `${g(0)}`, 'HATCH',
+      `${g(8)}`, 'WALL',
+      `${g(2)}`, 'SOLID',
+      `${g(70)}`, '1',
+      `${g(71)}`, '0',
+      `${g(91)}`, '1',     // 1 boundary path
+      `${g(92)}`, '7',     // polyline boundary
+      `${g(72)}`, '1',     // has bulge
+      `${g(73)}`, '1',     // closed
+      `${g(93)}`, '4',     // 4 vertices
+      `${g(10)}`, '0',  `${g(20)}`, '0',   `${g(42)}`, '1',     // bulge=1 (semicircle)
+      `${g(10)}`, '100',`${g(20)}`, '0',   `${g(42)}`, '0',     // straight
+      `${g(10)}`, '100',`${g(20)}`, '50',  `${g(42)}`, '-0.5',  // negative bulge
+      `${g(10)}`, '0',  `${g(20)}`, '50',  `${g(42)}`, '0',     // straight
+      `${g(75)}`, '0',
+      `${g(76)}`, '1',
+    ].join('\n'))
+
+    parts.push(`${g(0)}\nENDSEC\n${g(0)}\nEOF\n`)
+    const dxf = parts.join('\n')
+    const result = await callWorkerSync(dxf, ['WALL'])
+
+    expect(result.hatches.length).toBe(1)
+    const h = result.hatches[0]
+    expect(h.patternName).toBe('SOLID')
+
+    // With bulge, path should have MORE points than just 4 vertices (arc interpolation)
+    const moveCount = (h.pathData.match(/M/g) || []).length
+    const lineCount = (h.pathData.match(/L/g) || []).length
+    expect(moveCount).toBe(1)       // single M at start
+    expect(lineCount).toBeGreaterThan(5)  // arc adds extra L points (not just 3 L for a quad)
+
+    console.log(`\n[BENCH] HATCH bulge test:`)
+    console.log(`  L commands: ${lineCount} (>5 = arc interpolation working)`)
+    console.log(`  pathData (first 120): ${h.pathData.substring(0, 120)}...`)
+  })
 })
