@@ -59,6 +59,7 @@ interface PrecomputedPoly {
   vertices: number[][]     // pre-computed polyline points (entity EZ applied)
   rawLayer: string | null  // null = gc8 absent, inherit from INSERT's layer
   colorNumber: number
+  isHatchBoundary?: boolean  // true = old-style POLYLINE in block with SOLID hatch (skip rendering)
 }
 
 interface BlockDef {
@@ -67,6 +68,7 @@ interface BlockDef {
   baseY: number
   entityChunks: string[]          // raw text chunks for complex entities (INSERT, TEXT, ATTRIB...)
   precomputed: PrecomputedPoly[]  // pre-parsed geometry (LINE, ARC, CIRCLE, ELLIPSE, LWPOLYLINE, SPLINE, SOLID, 3DFACE, POLYLINE)
+  hasSolidHatch?: boolean         // block contains HATCH with SOLID pattern
 }
 
 interface Transform {
@@ -327,7 +329,7 @@ function parseBlocks(dxf: string, gc: (c: number) => string): Map<string, BlockD
                 if (j === verts.length - 2) poly.push([t.x, t.y])
               }
               if (poly.length >= 2) {
-                cur.precomputed.push({ vertices: poly, rawLayer: polyState.rawLayer, colorNumber: polyState.colorNumber })
+                cur.precomputed.push({ vertices: poly, rawLayer: polyState.rawLayer, colorNumber: polyState.colorNumber, isHatchBoundary: true })
               }
             }
             polyState = null
@@ -350,6 +352,20 @@ function parseBlocks(dxf: string, gc: (c: number) => string): Map<string, BlockD
           }
         }
         cur.entityChunks = remaining
+
+        // ── Phase 3: SOLID HATCH 감지 → Phase 1 POLYLINE을 hatch boundary로 마킹 ──
+        // SOLID HATCH가 있으면 old-style POLYLINE은 채움 경계 구성용이므로 렌더링 제외
+        cur.hasSolidHatch = cur.entityChunks.some(ec => {
+          const t = ec.split('\n', 1)[0].trim()
+          if (t !== 'HATCH') return false
+          // Check for pattern name "SOLID" (group code 2)
+          const idx = ec.indexOf(`\n${gc(2)}\n`)
+          if (idx < 0) return false
+          const valEnd = ec.indexOf('\n', idx + gc(2).length + 2)
+          const val = ec.substring(idx + gc(2).length + 2, valEnd > 0 ? valEnd : undefined).trim()
+          return val.toUpperCase() === 'SOLID'
+        })
+
         blocks.set(cur.name, cur)
         cur = null
       }
@@ -852,6 +868,9 @@ function entityToPolyline(
             if (output.length >= MAX_POLYLINES) break
             globalEntityEvals++
             if (globalEntityEvals > MAX_ENTITY_EVALS) break
+
+            // SOLID HATCH 경계용 POLYLINE 건너뛰기 (채움이 이미 렌더링됨)
+            if (pe.isHatchBoundary && block.hasSolidHatch) continue
 
             // DXF layer "0" inheritance: null(gc8 없음) 또는 "0" → INSERT 레이어 상속
             const entityLayer = (!pe.rawLayer || pe.rawLayer === '0') ? layer : pe.rawLayer
