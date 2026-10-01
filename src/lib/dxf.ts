@@ -2758,7 +2758,7 @@ export async function commitCadImportV2(
 
         // 그리드 기반 텍스트 수집 (O(1) 셀 조회, O(n²) → O(k))
         const margin = 20
-        const localTexts: Array<{ x: number; y: number; t: string; h: number; r?: number; c?: string }> = []
+        const localTexts: Array<{ x: number; y: number; t: string; h: number; r?: number; c?: string; ap?: number; mw?: number }> = []
         const cxMin = Math.floor((gMinX - margin) / TEXT_CELL)
         const cxMax = Math.floor((gMaxX + margin) / TEXT_CELL)
         const cyMin = Math.floor((gMinY - margin) / TEXT_CELL)

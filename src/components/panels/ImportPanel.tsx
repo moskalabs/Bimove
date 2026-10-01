@@ -6,7 +6,7 @@ import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2 } from '.
 import type { ViewportClip } from '../../lib/dxf-shared'
 import { importPdf } from '../../lib/pdfImport'
 
-const CadPreview = lazy(() => import('../CadPreview'))
+const CadPreview = lazy(() => import('../CadViewerPreview'))
 
 interface PreviewData {
   dxfText: string

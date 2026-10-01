@@ -494,9 +494,8 @@ function extractLayoutsAndViewports(rawDxfText: string): {
       }
 
       const GC2 = `\n${gc(2)}\n`
-      const GC10 = `\n${gc(10)}\n`
+      // GC10, GC20 reserved for future entity position parsing
       const GC12 = `\n${gc(12)}\n`
-      const GC20 = `\n${gc(20)}\n`
       const GC22 = `\n${gc(22)}\n`
       const GC40 = `\n${gc(40)}\n`
       const GC41 = `\n${gc(41)}\n`

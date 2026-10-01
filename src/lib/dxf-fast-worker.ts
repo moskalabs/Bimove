@@ -1221,7 +1221,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   const GC51 = `\n${gc(51)}\n`
   const GC62 = `\n${gc(62)}\n`
   const GC70 = `\n${gc(70)}\n`
-  const GC71 = `\n${gc(71)}\n`
+  // GC71 reserved for ATTRIB generation number
   const GC72 = `\n${gc(72)}\n`
   const GC73 = `\n${gc(73)}\n`
   const GC230 = `\n${gc(230)}\n`

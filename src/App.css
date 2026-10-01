@@ -2672,6 +2672,51 @@ html[data-dark="true"] .cad-layout-selector select {
   background: #2a2a2a; border-color: #444; color: #e0e0e0;
 }
 
+/* ── CadViewerPreview: WebGL 프리뷰 + 레이어 선택 ── */
+.cad-viewer-dialog {
+  background: #fff; border-radius: 12px;
+  width: min(960px, 95vw); height: min(680px, 85vh);
+  display: flex; flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+  overflow: hidden;
+}
+.cad-viewer-body {
+  display: flex; flex: 1; min-height: 0;
+}
+.cad-viewer-canvas-wrap {
+  flex: 1; position: relative; min-width: 0;
+  background: #1a1a2e; border-right: 1px solid #eee;
+}
+.cad-viewer-canvas {
+  width: 100%; height: 100%;
+}
+.cad-viewer-loading {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: rgba(26,26,46,0.85);
+  color: #ccc; font-size: 13px;
+}
+.cad-viewer-sidebar {
+  width: 280px; flex-shrink: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.cad-viewer-sidebar .cad-layer-actions {
+  padding: 8px 12px;
+}
+.cad-viewer-sidebar .cad-layer-list {
+  flex: 1; max-height: none; overflow-y: auto;
+}
+.cad-viewer-dialog .cad-layer-footer {
+  justify-content: space-between; align-items: center;
+}
+
+/* dark mode */
+html[data-dark="true"] .cad-viewer-dialog { background: #1e1e1e; }
+html[data-dark="true"] .cad-viewer-canvas-wrap { border-color: #333; }
+html[data-dark="true"] .cad-viewer-sidebar { background: #1e1e1e; }
+
 /* ── 터치 디바이스 버튼 크기 보장 ── */
 @media (pointer: coarse) {
   .topbar-btn { min-width: 36px; min-height: 36px; }
