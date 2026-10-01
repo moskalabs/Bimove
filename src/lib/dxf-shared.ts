@@ -103,9 +103,11 @@ export function decodeDxfSpecialChars(text: string): string {
 /** MTEXT 서식 코드 제거 */
 export function cleanMtextFormatting(text: string): string {
   return text
-    .replace(/\\P/g, ' ')
-    .replace(/\{[^}]*\}/g, '')
-    .replace(/\\[a-zA-Z][^;]*;/g, '')
+    .replace(/\\P/g, ' ')                      // 문단 구분 → 공백
+    .replace(/\\[a-zA-Z][^;]*;/g, '')           // 서식 코드 제거: \H..; \f..; \p..; 등
+    .replace(/\\[OoLlKk]/g, '')                 // 단문자 서식: 취소선/밑줄/윗줄
+    .replace(/\\~/g, ' ')                        // 줄바꿈 방지 공백
+    .replace(/[{}]/g, '')                        // 그룹핑 괄호만 제거 (내용 보존!)
     .trim()
 }
 

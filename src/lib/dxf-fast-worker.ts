@@ -896,7 +896,8 @@ function entityToPolyline(
             if (eType === 'INSERT') {
               const subOutput: PolylineData[] = []
               const subHatches: HatchData[] = []
-              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput, hatchesOutput ? subHatches : undefined)
+              const subTexts: TextData[] = []
+              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput ? subTexts : undefined, hatchesOutput ? subHatches : undefined)
               for (const pl of subOutput) {
                 if (selectedLayers.size > 0 && !selectedLayers.has(pl.layer)) continue
                 for (const p of pl.vertices) { p[0] -= block.baseX; p[1] -= block.baseY }
@@ -907,6 +908,15 @@ function entityToPolyline(
               if (hatchesOutput) {
                 for (const sh of subHatches) {
                   hatchesOutput.push(transformHatchForInsert(sh, block.baseX, block.baseY, nextTransforms))
+                }
+              }
+              // Transform nested texts: subtract base + apply outer transforms
+              if (textsOutput) {
+                for (const td of subTexts) {
+                  const pt = [[td.x - block.baseX, td.y - block.baseY]]
+                  for (const tr of nextTransforms) applyTransform(pt, tr)
+                  td.x = pt[0][0]; td.y = pt[0][1]
+                  textsOutput.push(td)
                 }
               }
             } else if (eType === 'HATCH' && hatchesOutput) {
@@ -935,7 +945,8 @@ function entityToPolyline(
               if (selectedLayers.size > 0 && !selectedLayers.has(eLayer)) continue
               const subOutput: PolylineData[] = []
               const subHatches2: HatchData[] = []
-              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput, hatchesOutput ? subHatches2 : undefined)
+              const subTexts2: TextData[] = []
+              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput ? subTexts2 : undefined, hatchesOutput ? subHatches2 : undefined)
               for (const pl of subOutput) {
                 for (const p of pl.vertices) { p[0] -= block.baseX; p[1] -= block.baseY }
                 for (const tr of nextTransforms) applyTransform(pl.vertices, tr)
@@ -944,6 +955,14 @@ function entityToPolyline(
               if (hatchesOutput) {
                 for (const sh of subHatches2) {
                   hatchesOutput.push(transformHatchForInsert(sh, block.baseX, block.baseY, nextTransforms))
+                }
+              }
+              if (textsOutput) {
+                for (const td of subTexts2) {
+                  const pt = [[td.x - block.baseX, td.y - block.baseY]]
+                  for (const tr of nextTransforms) applyTransform(pt, tr)
+                  td.x = pt[0][0]; td.y = pt[0][1]
+                  textsOutput.push(td)
                 }
               }
             }
