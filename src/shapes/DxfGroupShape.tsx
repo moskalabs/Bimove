@@ -2,7 +2,7 @@
  * DxfGroupShape: DXF 레이어의 모든 라인 세그먼트를 하나의 shape로 묶어
  * 단일 SVG <path>로 렌더링. 500개 개별 wall → 5-10개 그룹으로 축소.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, memo } from 'react'
 import {
   Polygon2d,
   ShapeUtil,
@@ -53,7 +53,7 @@ export type DxfGroupShapeProps = {
   hatchesJson: string // JSON: Array<{ d, p, s, a, c? }> (pathData, pattern, scale, angle, color)
 }
 
-type DxfTextEntry = { x: number; y: number; t: string; h: number; r?: number; c?: string }
+type DxfTextEntry = { x: number; y: number; t: string; h: number; r?: number; c?: string; ap?: number; mw?: number }
 type DxfHatchEntry = { d: string; p: string; s: number; a: number; c?: string; dim?: number }
 
 /** DXF 패턴명 → SVG pattern 생성 */
@@ -364,45 +364,43 @@ function dxfHatchPatternDef(
 
 export type DxfGroupShape = TLBaseShape<'dxfgroup', DxfGroupShapeProps>
 
-/** 줌 변화에 반응하여 strokeWidth를 조정하는 컴포넌트 */
-function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
+// ── DOM 기반 텍스트 컬링 (React 재렌더 없이 SVG visibility 직접 조작) ──
+// 줌/팬 중 React 재렌더 = 0. 텍스트 표시/숨김만 DOM API로 처리.
+let _cullEditor: ReturnType<typeof useEditor> | null = null
+let _cullRaf = 0
+
+function _ensureTextCulling(editor: ReturnType<typeof useEditor>) {
+  if (_cullEditor === editor) return
+  _cullEditor = editor
+  let lastZ = editor.getZoomLevel()
+
+  editor.store.listen(() => {
+    if (_cullRaf) return
+    _cullRaf = requestAnimationFrame(() => {
+      _cullRaf = 0
+      const z = editor.getZoomLevel()
+      // 20% 이상 줌 변화 시에만 텍스트 컬링 업데이트
+      if (Math.abs(lastZ - z) / Math.max(lastZ, 0.001) < 0.2) return
+      lastZ = z
+      const minH = 3 / z // DXF 좌표 기준 최소 표시 높이
+      document.querySelectorAll<SVGTextElement>('[data-dxf-h]').forEach(el => {
+        const h = +(el.getAttribute('data-dxf-h') || '0')
+        if (h < minH) el.setAttribute('visibility', 'hidden')
+        else el.removeAttribute('visibility')
+      })
+    })
+  }, { source: 'user', scope: 'document' })
+}
+
+/** DXF 그룹 렌더링 컴포넌트 — 줌/팬 시 React 재렌더 0회 */
+const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
   const editor = useEditor()
-  const [zoom, setZoom] = useState(() => editor.getZoomLevel())
   const [grayscale, setGrayscale] = useState(getGrayscaleMode)
   const [darkMode, setDarkModeState] = useState(getDarkMode)
-  // meta 변경 감지용 (재질 적용 시 re-render 트리거)
-  const [meta, setMeta] = useState(() => shape.meta as Record<string, unknown>)
+  const meta = shape.meta as Record<string, unknown>
 
-  // 줌 + meta 변경 감지 (throttled via rAF, 'document' scope로 줌 변화만 감지)
-  useEffect(() => {
-    let raf = 0
-    const check = () => {
-      if (raf) return
-      raf = requestAnimationFrame(() => {
-        raf = 0
-        const z = editor.getZoomLevel()
-        setZoom(prev => {
-          if (Math.abs(prev - z) / Math.max(prev, 0.001) > 0.1) return z
-          return prev
-        })
-        const latest = editor.getShape(shape.id)
-        if (latest) {
-          const lm = latest.meta as Record<string, unknown>
-          setMeta(prev => {
-            if (prev.fill !== lm.fill || prev.stroke !== lm.stroke) return lm
-            return prev
-          })
-        }
-      })
-    }
-    // 'document' scope: 줌/카메라 변화 시에만 트리거 (shape 개별 변경은 무시)
-    const unsub1 = editor.store.listen(check, { source: 'user', scope: 'document' })
-    // shape 자체 meta 변경도 감지 (재질 적용 등)
-    const unsub2 = editor.store.listen(({ changes }) => {
-      if (changes.updated[shape.id]) check()
-    }, { source: 'user', scope: 'document' })
-    return () => { unsub1(); unsub2(); if (raf) cancelAnimationFrame(raf) }
-  }, [editor, shape.id])
+  // 텍스트 컬링 셋업: editor당 1회 (store.listen 1개)
+  useEffect(() => { _ensureTextCulling(editor) }, [editor])
 
   useEffect(() => {
     const onSettings = () => {
@@ -417,7 +415,7 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
   const matFill = (meta.fill as string) || ''
   const matStroke = (meta.stroke as string) || ''
 
-  // 배경 대비 색상 보정: 라이트 배경에서 밝은 색, 다크 배경에서 어두운 색 보정
+  // 배경 대비 색상 보정
   const rawColor = matStroke || (meta.dxfColor as string) || (darkMode ? '#ccc' : '#333')
   const stroke = grayscale
     ? (darkMode ? '#ccc' : '#333')
@@ -425,8 +423,7 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
       ? (isNearBlack(rawColor) ? '#ccc' : rawColor)
       : darkenForLightBg(rawColor)
   const dxfLw = (meta.dxfLineweight as number) ?? 0
-  // non-scaling-stroke: 브라우저가 줌과 무관하게 화면 픽셀 기준으로 렌더링
-  // → 수동 zoom 보정 불필요, 항상 선명한 선
+  // non-scaling-stroke: 브라우저 네이티브 처리. React 재렌더 불필요.
   const strokeW = dxfLw > 0 ? Math.max(1.0, Math.min(dxfLw / 100, 3)) : 1.5
 
   // 텍스트/HATCH 데이터: useMemo로 캐싱 (리렌더 시 JSON.parse 재실행 방지)
@@ -440,8 +437,8 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
     catch { return [] }
   }, [shape.props.hatchesJson])
 
-  // HATCH SVG 패턴 defs + fill 준비
-  const hatchDefs: Array<{ id: string; def: React.ReactElement | null; isSolid: boolean; color: string }> = hatches.map((h, i) => {
+  // HATCH SVG 패턴 defs + fill 준비 (캐싱)
+  const hatchDefs = useMemo(() => hatches.map((h, i) => {
     const hColor = grayscale
       ? (darkMode ? '#aaa' : '#666')
       : h.c
@@ -455,7 +452,7 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
       isSolid,
       color: hColor,
     }
-  })
+  }), [hatches, grayscale, darkMode, shape.id, shape.props.w, shape.props.h])
 
   return (
     <SVGContainer style={{ overflow: 'visible' }}>
@@ -501,31 +498,44 @@ function DxfGroupComponent({ shape }: { shape: DxfGroupShape }) {
         />
       )}
       {texts.map((t, i) => {
-        const fontSize = Math.max(t.h, 2 / Math.max(zoom, 0.001))
         const defaultTextColor = darkMode ? '#bbb' : '#555'
         const textColor = grayscale
           ? defaultTextColor
           : t.c
             ? (darkMode ? (isNearBlack(t.c) ? '#bbb' : t.c) : darkenForLightBg(t.c))
             : defaultTextColor
+        // MTEXT attachment point → SVG textAnchor + dominantBaseline
+        // 1=TL 2=TC 3=TR 4=ML 5=MC 6=MR 7=BL 8=BC 9=BR
+        const ap = t.ap || 1
+        const textAnchor = (ap % 3 === 0) ? 'end' : (ap % 3 === 2) ? 'middle' : 'start'
+        const baseline = ap <= 3 ? 'hanging' : ap <= 6 ? 'central' : 'auto'
+        const lines = t.t.split('\n')
         return (
           <text
             key={i}
             x={t.x}
             y={t.y}
-            fontSize={fontSize}
+            fontSize={t.h}
+            data-dxf-h={t.h}
             fill={textColor}
             fontFamily="sans-serif"
-            dominantBaseline="auto"
+            textAnchor={textAnchor}
+            dominantBaseline={baseline}
             transform={t.r ? `rotate(${-t.r},${t.x},${t.y})` : undefined}
           >
-            {t.t}
+            {lines.length <= 1
+              ? t.t
+              : lines.map((line, li) => (
+                  <tspan key={li} x={t.x} dy={li === 0 ? 0 : t.h * 1.2}>
+                    {line}
+                  </tspan>
+                ))}
           </text>
         )
       })}
     </SVGContainer>
   )
-}
+})
 
 /** pathData("M0,0L100,0 M0,50L100,50 ...")에서 개별 선분 추출 후 point 근접 여부 판단 */
 export function isPointNearPath(pathData: string, pt: VecLike, margin: number): boolean {
@@ -644,20 +654,33 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
             strokeLinecap="round"
           />
         )}
-        {texts.map((t, i) => (
-          <text
-            key={i}
-            x={t.x}
-            y={t.y}
-            fontSize={t.h}
-            fill={t.c ? darkenForLightBg(t.c) : '#555'}
-            fontFamily="sans-serif"
-            dominantBaseline="auto"
-            transform={t.r ? `rotate(${-t.r},${t.x},${t.y})` : undefined}
-          >
-            {t.t}
-          </text>
-        ))}
+        {texts.map((t, i) => {
+          const ap = t.ap || 1
+          const textAnchor = (ap % 3 === 0) ? 'end' : (ap % 3 === 2) ? 'middle' : 'start'
+          const baseline = ap <= 3 ? 'hanging' : ap <= 6 ? 'central' : 'auto'
+          const lines = t.t.split('\n')
+          return (
+            <text
+              key={i}
+              x={t.x}
+              y={t.y}
+              fontSize={t.h}
+              fill={t.c ? darkenForLightBg(t.c) : '#555'}
+              fontFamily="sans-serif"
+              textAnchor={textAnchor}
+              dominantBaseline={baseline}
+              transform={t.r ? `rotate(${-t.r},${t.x},${t.y})` : undefined}
+            >
+              {lines.length <= 1
+                ? t.t
+                : lines.map((line, li) => (
+                    <tspan key={li} x={t.x} dy={li === 0 ? 0 : t.h * 1.2}>
+                      {line}
+                    </tspan>
+                  ))}
+            </text>
+          )
+        })}
       </g>
     )
   }

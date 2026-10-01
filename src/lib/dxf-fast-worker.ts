@@ -34,6 +34,10 @@ export interface TextData {
   rotation?: number
   layer: string
   colorNumber: number
+  /** MTEXT attachment point (1-9): 1=TL 2=TC 3=TR 4=ML 5=MC 6=MR 7=BL 8=BC 9=BR */
+  attachPt?: number
+  /** MTEXT defined width (group code 41) for text wrapping */
+  width?: number
 }
 
 export interface HatchData {
@@ -81,7 +85,7 @@ interface Transform {
 const MAX_DEPTH = 8
 const ARC_STEP  = 5       // degrees
 const MAX_POLYLINES = 200_000  // 폴리라인 수 제한 (성능 보호)
-const MAX_TEXTS = 5_000        // 텍스트 수 제한
+const MAX_TEXTS = 20_000       // 텍스트 수 제한 (건축도면 표 포함)
 const MAX_HATCHES = 10_000     // 해치 수 제한 (블록 내부 해치 포함)
 
 // ===== Geometry helpers =====
@@ -756,14 +760,65 @@ function codesToPolyline(type: string, codes: Map<number, string[]>, ez: number)
       return cps.map(p => [p.x, p.y])
     }
     case 'SOLID':
+    case 'TRACE':
     case '3DFACE': {
       const x0 = parseFloat(codes.get(10)?.[0] ?? '0'), y0 = parseFloat(codes.get(20)?.[0] ?? '0')
       const x1 = parseFloat(codes.get(11)?.[0] ?? '0'), y1 = parseFloat(codes.get(21)?.[0] ?? '0')
       const x2 = parseFloat(codes.get(12)?.[0] ?? '0'), y2 = parseFloat(codes.get(22)?.[0] ?? '0')
       const x3 = parseFloat(codes.get(13)?.[0] ?? `${x2}`), y3 = parseFloat(codes.get(23)?.[0] ?? `${y2}`)
       if (Math.abs(x0 - x1) + Math.abs(y0 - y1) < 1e-6 && Math.abs(x0 - x2) + Math.abs(y0 - y2) < 1e-6) return null
-      if (type === 'SOLID') return [[x0, y0], [x1, y1], [x3, y3], [x2, y2], [x0, y0]]
+      if (type === 'SOLID' || type === 'TRACE') return [[x0, y0], [x1, y1], [x3, y3], [x2, y2], [x0, y0]]
       return [[x0, y0], [x1, y1], [x2, y2], [x3, y3], [x0, y0]]
+    }
+    case 'LEADER': {
+      // LEADER: 다중 꼭짓점 폴리라인 (치수/주석 화살표)
+      const xs = codes.get(10) || []
+      const ys = codes.get(20) || []
+      const n = Math.min(xs.length, ys.length)
+      if (n < 2) return null
+      const poly: number[][] = []
+      for (let i = 0; i < n; i++) {
+        poly.push([parseFloat(xs[i]), parseFloat(ys[i])])
+      }
+      return poly
+    }
+    case 'MULTILEADER': {
+      // MULTILEADER: 리더선 꼭짓점 추출 (code 10/20, 마지막 direction 벡터 제외)
+      const xs = codes.get(10) || []
+      const ys = codes.get(20) || []
+      const n = Math.min(xs.length, ys.length)
+      if (n < 2) return null
+      // 마지막 좌표가 방향벡터(~1.0, ~1.0)면 제외
+      let count = n
+      if (count > 2) {
+        const lx = Math.abs(parseFloat(xs[count - 1]))
+        const ly = Math.abs(parseFloat(ys[count - 1]))
+        if (lx <= 1.01 && ly <= 1.01) count--
+      }
+      if (count < 2) return null
+      const poly: number[][] = []
+      for (let i = 0; i < count; i++) {
+        poly.push([parseFloat(xs[i]), parseFloat(ys[i])])
+      }
+      return poly
+    }
+    case 'IMAGE': {
+      // IMAGE: 바운딩박스 사각형 (래스터 이미지 위치 표시)
+      const ix = parseFloat(codes.get(10)?.[0] ?? '0')
+      const iy = parseFloat(codes.get(20)?.[0] ?? '0')
+      const ux = parseFloat(codes.get(11)?.[0] ?? '0') // U-vector (width direction per pixel)
+      const uy = parseFloat(codes.get(21)?.[0] ?? '0')
+      const vx = parseFloat(codes.get(12)?.[0] ?? '0') // V-vector (height direction per pixel)
+      const vy = parseFloat(codes.get(22)?.[0] ?? '0')
+      const pw = parseFloat(codes.get(13)?.[0] ?? '1') // pixel width
+      const ph = parseFloat(codes.get(23)?.[0] ?? '1') // pixel height
+      const w_x = ux * pw, w_y = uy * pw  // width vector
+      const h_x = vx * ph, h_y = vy * ph  // height vector
+      return [
+        [ix, iy], [ix + w_x, iy + w_y],
+        [ix + w_x + h_x, iy + w_y + h_y], [ix + h_x, iy + h_y],
+        [ix, iy]
+      ]
     }
     default:
       return null
@@ -834,8 +889,38 @@ function entityToPolyline(
   // 기하 엔티티 → codesToPolyline() 통합 함수 사용
   const poly = codesToPolyline(type, codes, ez)
 
-  // DIMENSION: 건너뜀 (치수선 블록 확장 시 엔티티 폭발 + 좌표 이상)
-  if (type === 'DIMENSION') return
+  // DIMENSION: 치수 블록 확장 (블록 내 좌표가 WCS, base point = 0,0)
+  if (type === 'DIMENSION') {
+    if (depth >= MAX_DEPTH) return
+    const dimBlockName = codes.get(2)?.[0]?.trim() ?? ''
+    const dimBlock = blocks.get(dimBlockName)
+    if (!dimBlock) return
+
+    // precomputed entities (LINE, ARC 등 — 치수선/연장선)
+    for (const pe of dimBlock.precomputed) {
+      if (output.length >= MAX_POLYLINES) break
+      globalEntityEvals++
+      if (globalEntityEvals > MAX_ENTITY_EVALS) break
+      if (pe.isHatchBoundary && dimBlock.hasSolidHatch) continue
+      const entityLayer = (!pe.rawLayer || pe.rawLayer === '0') ? layer : pe.rawLayer
+      if (selectedLayers.size > 0 && !selectedLayers.has(entityLayer)) continue
+      const verts: number[][] = pe.vertices.map(v => [v[0], v[1]])
+      for (const tr of transforms) applyTransform(verts, tr)
+      output.push({ vertices: verts, layer: entityLayer, colorNumber: pe.colorNumber })
+    }
+
+    // entity chunks (MTEXT 치수텍스트, INSERT 화살표 등)
+    for (const chunk of dimBlock.entityChunks) {
+      if (output.length >= MAX_POLYLINES) break
+      if (textsOutput && textsOutput.length >= MAX_TEXTS) break
+      const { type: eType, codes: eCodes } = parseGroupCodes(chunk)
+      const eOwnLayer = eCodes.get(8)?.[0]?.trim() || '0'
+      const eLayer = (eOwnLayer === '0' && layer) ? layer : eOwnLayer
+      if (selectedLayers.size > 0 && !selectedLayers.has(eLayer)) continue
+      entityToPolyline(eType, eCodes, blocks, eLayer, transforms, depth + 1, selectedLayers, output, textsOutput, hatchesOutput)
+    }
+    return
+  }
 
   if (type === 'INSERT') {
       if (depth >= MAX_DEPTH) return
@@ -941,6 +1026,11 @@ function entityToPolyline(
               }
             } else if ((eType === 'TEXT' || eType === 'MTEXT' || eType === 'ATTRIB') && textsOutput) {
               // ATTRIB: INSERT에 부착된 속성 텍스트 (이름표, 번호 등)
+              // ATTRIB invisible flag (code 70, bit 1): AutoCAD에서 숨김 처리된 속성 건너뛰기
+              if (eType === 'ATTRIB') {
+                const attrFlags = parseInt(eCodes.get(70)?.[0] ?? '0') || 0
+                if (attrFlags & 1) continue  // invisible ATTRIB
+              }
               if (selectedLayers.size > 0 && !selectedLayers.has(eLayer)) continue
               const blockColor = eCodes.get(62)?.[0] ? parseInt(eCodes.get(62)![0]) : -1
               const td = extractTextEntity(eType === 'ATTRIB' ? 'TEXT' : eType, eCodes, eLayer, blockColor, nextTransforms)
@@ -1036,12 +1126,30 @@ function extractTextEntity(
   const rotation = parseFloat(codes.get(50)?.[0] ?? '0') || undefined
 
   let text: string
+  let attachPt: number | undefined
+  let mtextWidth: number | undefined
   if (type === 'TEXT') {
     text = decodeDxfSpecialChars((codes.get(1)?.[0] ?? '').trim())
+    // TEXT alignment: group 72 (horizontal) + 73 (vertical)
+    const hAlign = parseInt(codes.get(72)?.[0] ?? '0') || 0
+    const vAlign = parseInt(codes.get(73)?.[0] ?? '0') || 0
+    if (hAlign === 1) attachPt = 8       // Center → BC
+    else if (hAlign === 2) attachPt = 9  // Right → BR
+    else if (hAlign === 4) attachPt = 5  // Middle → MC
+    // TEXT with alignment uses group 11/21 as actual position
+    if ((hAlign > 0 || vAlign > 0) && codes.get(11) && codes.get(21)) {
+      x = parseFloat(codes.get(11)![0])
+      y = parseFloat(codes.get(21)![0])
+    }
   } else {
     // MTEXT: group code 3 (앞쪽 250자 단위 청크들) + group code 1 (마지막 청크)
     const parts = [...(codes.get(3) || []), codes.get(1)?.[0] ?? '']
     text = cleanMtextFormatting(decodeDxfSpecialChars(parts.join('').trim()))
+    // MTEXT attachment point (group 71): 1=TL 2=TC 3=TR 4=ML 5=MC 6=MR 7=BL 8=BC 9=BR
+    attachPt = parseInt(codes.get(71)?.[0] ?? '0') || undefined
+    // MTEXT defined width (group 41)
+    const w = parseFloat(codes.get(41)?.[0] ?? '0')
+    if (w > 0) mtextWidth = w
   }
   if (!text) return null
 
@@ -1052,7 +1160,7 @@ function extractTextEntity(
     x = pt[0][0]; y = pt[0][1]
   }
 
-  return { x, y, text, height, rotation, layer, colorNumber: colorNum }
+  return { x, y, text, height, rotation, layer, colorNumber: colorNum, attachPt, width: mtextWidth }
 }
 
 function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[] } {
@@ -1113,6 +1221,9 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   const GC51 = `\n${gc(51)}\n`
   const GC62 = `\n${gc(62)}\n`
   const GC70 = `\n${gc(70)}\n`
+  const GC71 = `\n${gc(71)}\n`
+  const GC72 = `\n${gc(72)}\n`
+  const GC73 = `\n${gc(73)}\n`
   const GC230 = `\n${gc(230)}\n`
 
   // Estimate total entities from section size (skip expensive pre-count scan)
@@ -1295,6 +1406,13 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
 
       // ── Fast-path: TEXT / ATTRIB ──
       if (type === 'TEXT' || type === 'ATTRIB') {
+        // ATTRIB invisible flag (code 70, bit 1): AutoCAD에서 숨김 처리된 속성 건너뛰기
+        if (type === 'ATTRIB') {
+          const f70i = idxIn(dxfText, GC70, eStart, eEnd)
+          if (f70i >= 0 && (parseInt(valAt(dxfText, f70i + GC70.length, eEnd)) & 1)) {
+            sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
+          }
+        }
         if (texts.length < MAX_TEXTS) {
           const xi = idxIn(dxfText, GC10, eStart, eEnd)
           const yi = idxIn(dxfText, GC20, eStart, eEnd)
@@ -1305,14 +1423,34 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
               const hi = idxIn(dxfText, GC40, eStart, eEnd)
               const ri = idxIn(dxfText, GC50, eStart, eEnd)
               const c62i = idxIn(dxfText, GC62, eStart, eEnd)
+              // TEXT alignment: code 72 (horizontal) + 73 (vertical)
+              // When aligned, actual position is in 11/21 (not 10/20)
+              const h72i = idxIn(dxfText, GC72, eStart, eEnd)
+              const v73i = idxIn(dxfText, GC73, eStart, eEnd)
+              const hAlign = h72i >= 0 ? parseInt(valAt(dxfText, h72i + GC72.length, eEnd)) || 0 : 0
+              const vAlign = v73i >= 0 ? parseInt(valAt(dxfText, v73i + GC73.length, eEnd)) || 0 : 0
+              let tx = floatAt(dxfText, xi + GC10.length, eEnd)
+              let ty = floatAt(dxfText, yi + GC20.length, eEnd)
+              let attachPt: number | undefined
+              // Use alignment point (11/21) when any alignment is set
+              if (hAlign > 0 || vAlign > 0) {
+                const x11i = idxIn(dxfText, GC11, eStart, eEnd)
+                const y21i = idxIn(dxfText, GC21, eStart, eEnd)
+                if (x11i >= 0 && y21i >= 0) {
+                  tx = floatAt(dxfText, x11i + GC11.length, eEnd)
+                  ty = floatAt(dxfText, y21i + GC21.length, eEnd)
+                }
+                if (hAlign === 1) attachPt = 8       // Center → BC
+                else if (hAlign === 2) attachPt = 9  // Right → BR
+                else if (hAlign === 4) attachPt = 5  // Middle → MC
+              }
               texts.push({
-                x: floatAt(dxfText, xi + GC10.length, eEnd),
-                y: floatAt(dxfText, yi + GC20.length, eEnd),
-                text,
+                x: tx, y: ty, text,
                 height: hi >= 0 ? floatAt(dxfText, hi + GC40.length, eEnd) : 2.5,
                 rotation: ri >= 0 ? (floatAt(dxfText, ri + GC50.length, eEnd) || undefined) : undefined,
                 layer: entityLayer,
                 colorNumber: c62i >= 0 ? parseInt(valAt(dxfText, c62i + GC62.length, eEnd)) : -1,
+                attachPt,
               })
             }
           }

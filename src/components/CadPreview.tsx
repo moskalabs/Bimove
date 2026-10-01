@@ -5,7 +5,7 @@
  * 기존 bimove UI 스타일(cad-layer-*)에 맞춤.
  */
 import { useEffect, useState, useMemo, useCallback } from 'react'
-import { aciToHex as aciToHexFull, detectPadding, makeGcFormatter, STRUCTURAL_KEYWORDS } from '../lib/dxf-shared'
+import { aciToHex as aciToHexFull, detectPadding, makeGcFormatter, STRUCTURAL_KEYWORDS, type DxfLayout, type DxfViewport, type ViewportClip } from '../lib/dxf-shared'
 
 /** 기본 제외 레이어: viewport/paperspace 계열만 제외.
  * DEFPOINTS, TB-* 등은 실무에서 유용한 내용(라벨, 격자선)이
@@ -26,7 +26,7 @@ export interface CadPreviewProps {
   fileName: string
   fileSize: number
   isDwg: boolean
-  onImport: (selectedLayers: Set<string>, dxfText: string) => void
+  onImport: (selectedLayers: Set<string>, dxfText: string, viewportClip?: ViewportClip | null) => void
   onClose: () => void
 }
 
@@ -41,6 +41,9 @@ export default function CadPreview({
   const [layers, setLayers] = useState<LayerInfo[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [parsing, setParsing] = useState(true)
+  const [layouts, setLayouts] = useState<DxfLayout[]>([])
+  const [viewportsByLayout, setViewportsByLayout] = useState<Map<string, DxfViewport[]>>(new Map())
+  const [selectedLayout, setSelectedLayout] = useState<string>('Model')
 
   // 모달 열릴 때 body data attr 추가
   useEffect(() => {
@@ -62,6 +65,14 @@ export default function CadPreview({
           ? new Set(result.filter((l) => l.likelyStructural && !EXCLUDE_LAYER_PATTERNS.test(l.name)).map((l) => l.name))
           : new Set(result.filter((l) => !EXCLUDE_LAYER_PATTERNS.test(l.name)).map((l) => l.name))
         setSelected(initialSelected)
+
+        // 레이아웃/뷰포트 파싱
+        const { layouts: parsedLayouts, viewportsByLayout: parsedVP } = extractLayoutsAndViewports(dxfText)
+        setLayouts(parsedLayouts)
+        setViewportsByLayout(parsedVP)
+        if (parsedLayouts.length > 1) {
+          console.log(`[CadPreview] ${parsedLayouts.length}개 레이아웃: ${parsedLayouts.map(l => l.name).join(', ')}`)
+        }
 
         console.log(`[CadPreview] ${result.length}개 레이어 추출 (${(performance.now() - t0).toFixed(0)}ms)`)
       } catch (err) {
@@ -107,8 +118,21 @@ export default function CadPreview({
 
   const handleImport = useCallback(() => {
     if (selected.size === 0) return
-    onImport(selected, dxfText)
-  }, [selected, dxfText, onImport])
+    let clip: ViewportClip | null = null
+    if (selectedLayout !== 'Model') {
+      const vps = viewportsByLayout.get(selectedLayout)
+      if (vps && vps.length > 0) {
+        clip = {
+          minX: Math.min(...vps.map(v => v.clipMinX)),
+          minY: Math.min(...vps.map(v => v.clipMinY)),
+          maxX: Math.max(...vps.map(v => v.clipMaxX)),
+          maxY: Math.max(...vps.map(v => v.clipMaxY)),
+        }
+        console.log(`[CadPreview] Layout "${selectedLayout}" viewport clip: (${clip.minX.toFixed(0)},${clip.minY.toFixed(0)})~(${clip.maxX.toFixed(0)},${clip.maxY.toFixed(0)})`)
+      }
+    }
+    onImport(selected, dxfText, clip)
+  }, [selected, dxfText, selectedLayout, viewportsByLayout, onImport])
 
   // ESC 키로 닫기
   useEffect(() => {
@@ -127,6 +151,21 @@ export default function CadPreview({
           <strong>{fileName}</strong>{' '}
           <span style={{ fontSize: 12, color: '#888' }}>({fmt}, {sizeMB}MB)</span>
         </div>
+
+        {layouts.length > 1 && (
+          <div className="cad-layout-selector">
+            <label>레이아웃:</label>
+            <select value={selectedLayout} onChange={e => setSelectedLayout(e.target.value)}>
+              {layouts
+                .sort((a, b) => a.tabOrder - b.tabOrder)
+                .map(l => (
+                  <option key={l.name} value={l.name}>
+                    {l.name}{l.isModelSpace ? ' (전체)' : ''}
+                  </option>
+                ))}
+            </select>
+          </div>
+        )}
 
         <div className="cad-layer-actions">
           <button className="cad-layer-action-btn" onClick={selectAll}>전체</button>
@@ -328,4 +367,178 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
 // ACI 색상 → dxf-shared.ts의 aciToHexFull (256색 테이블)
 function aciToHex(aci: number): string {
   return aciToHexFull(aci) ?? '#666666'
+}
+
+/**
+ * DXF에서 Layout + Viewport 정보 경량 추출.
+ * OBJECTS 섹션의 LAYOUT 엔티티 + BLOCKS 섹션의 *Paper_Space 내 VIEWPORT 엔티티.
+ */
+function extractLayoutsAndViewports(rawDxfText: string): {
+  layouts: DxfLayout[]
+  viewportsByLayout: Map<string, DxfViewport[]>
+} {
+  const dxfText = rawDxfText.indexOf('\r') >= 0
+    ? rawDxfText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    : rawDxfText
+  const padded = detectPadding(dxfText)
+  const gc = makeGcFormatter(padded)
+  const SEP = `\n${gc(0)}\n`
+
+  // ── 1. OBJECTS 섹션에서 LAYOUT 파싱 ──
+  const layouts: DxfLayout[] = []
+  const SEC_OBJECTS = `\n${gc(0)}\nSECTION\n${gc(2)}\nOBJECTS\n`
+  const ENDSEC = `\n${gc(0)}\nENDSEC`
+  const objIdx = dxfText.indexOf(SEC_OBJECTS)
+  if (objIdx >= 0) {
+    const objBody = objIdx + SEC_OBJECTS.length
+    const objEnd = dxfText.indexOf(ENDSEC, objBody)
+    if (objEnd > objBody) {
+      const GC1 = `\n${gc(1)}\n`
+      const GC70 = `\n${gc(70)}\n`
+      const GC71 = `\n${gc(71)}\n`
+      const GC44 = `\n${gc(44)}\n`
+      const GC45 = `\n${gc(45)}\n`
+      const LAYOUT_MARKER = `${SEP.slice(0, -1)}\nLAYOUT\n`
+
+      // AcDbLayout 서브클래스 뒤의 코드만 읽어야 안전
+      let pos = objBody
+      while (true) {
+        pos = dxfText.indexOf(LAYOUT_MARKER, pos)
+        if (pos < 0 || pos >= objEnd) break
+        const lStart = pos
+        const nextEntity = dxfText.indexOf(SEP, pos + LAYOUT_MARKER.length)
+        const lEnd = (nextEntity >= 0 && nextEntity < objEnd) ? nextEntity : objEnd
+
+        // AcDbLayout 서브클래스 확인
+        const acDbIdx = dxfText.indexOf('AcDbLayout', lStart)
+        if (acDbIdx < 0 || acDbIdx >= lEnd) { pos = lStart + 10; continue }
+
+        // AcDbLayout 뒤에서 group code 파싱
+        const afterAcDb = acDbIdx
+        const nameIdx = dxfText.indexOf(GC1, afterAcDb)
+        if (nameIdx < 0 || nameIdx >= lEnd) { pos = lStart + 10; continue }
+        const name = dxfText.substring(nameIdx + GC1.length).split('\n', 1)[0].trim()
+
+        const flagIdx = dxfText.indexOf(GC70, afterAcDb)
+        const flags = (flagIdx >= 0 && flagIdx < lEnd)
+          ? parseInt(dxfText.substring(flagIdx + GC70.length).split('\n', 1)[0]) || 0
+          : 0
+
+        const tabIdx = dxfText.indexOf(GC71, afterAcDb)
+        const tabOrder = (tabIdx >= 0 && tabIdx < lEnd)
+          ? parseInt(dxfText.substring(tabIdx + GC71.length).split('\n', 1)[0]) || 0
+          : 0
+
+        const pwIdx = dxfText.indexOf(GC44, afterAcDb)
+        const paperW = (pwIdx >= 0 && pwIdx < lEnd)
+          ? parseFloat(dxfText.substring(pwIdx + GC44.length).split('\n', 1)[0]) || 0
+          : 0
+
+        const phIdx = dxfText.indexOf(GC45, afterAcDb)
+        const paperH = (phIdx >= 0 && phIdx < lEnd)
+          ? parseFloat(dxfText.substring(phIdx + GC45.length).split('\n', 1)[0]) || 0
+          : 0
+
+        layouts.push({
+          name,
+          isModelSpace: (flags & 1) !== 0,
+          tabOrder,
+          paperWidth: paperW,
+          paperHeight: paperH,
+        })
+
+        pos = lEnd
+      }
+    }
+  }
+
+  // 레이아웃이 없으면 빈 결과 반환
+  if (layouts.length <= 1) {
+    return { layouts: [], viewportsByLayout: new Map() }
+  }
+  layouts.sort((a, b) => a.tabOrder - b.tabOrder)
+
+  // ── 2. BLOCKS 섹션에서 *Paper_Space 블록 내 VIEWPORT 파싱 ──
+  const viewportsByLayout = new Map<string, DxfViewport[]>()
+  const SEC_BLOCKS = `\n${gc(0)}\nSECTION\n${gc(2)}\nBLOCKS\n`
+  const blkIdx = dxfText.indexOf(SEC_BLOCKS)
+  if (blkIdx >= 0) {
+    const blkBody = blkIdx + SEC_BLOCKS.length
+    const blkEnd = dxfText.indexOf(ENDSEC, blkBody)
+    if (blkEnd > blkBody) {
+      // *Paper_Space → 첫 번째 paper layout, *Paper_Space0 → 두 번째... (DXF 표준)
+      const paperLayouts = layouts.filter(l => !l.isModelSpace).sort((a, b) => a.tabOrder - b.tabOrder)
+      const blockToLayout = new Map<string, string>()
+      if (paperLayouts.length > 0) {
+        blockToLayout.set('*Paper_Space', paperLayouts[0].name)
+        for (let i = 1; i < paperLayouts.length; i++) {
+          blockToLayout.set(`*Paper_Space${i - 1}`, paperLayouts[i].name)
+        }
+      }
+
+      const GC2 = `\n${gc(2)}\n`
+      const GC10 = `\n${gc(10)}\n`
+      const GC12 = `\n${gc(12)}\n`
+      const GC20 = `\n${gc(20)}\n`
+      const GC22 = `\n${gc(22)}\n`
+      const GC40 = `\n${gc(40)}\n`
+      const GC41 = `\n${gc(41)}\n`
+      const GC45 = `\n${gc(45)}\n`
+
+      const chunks = ('\n' + dxfText.substring(blkBody, blkEnd)).split(SEP)
+      let currentLayoutName = ''
+
+      for (const chunk of chunks) {
+        const type = chunk.split('\n', 1)[0].trim()
+
+        if (type === 'BLOCK') {
+          const ni = chunk.indexOf(GC2)
+          const blockName = ni >= 0 ? chunk.substring(ni + GC2.length).split('\n', 1)[0].trim() : ''
+          currentLayoutName = blockToLayout.get(blockName) || ''
+        } else if (type === 'ENDBLK') {
+          currentLayoutName = ''
+        } else if (type === 'VIEWPORT' && currentLayoutName) {
+          // VIEWPORT 파싱: model space view window
+          const floatVal = (pat: string): number => {
+            const i = chunk.indexOf(pat)
+            return i >= 0 ? parseFloat(chunk.substring(i + pat.length).split('\n', 1)[0]) || 0 : 0
+          }
+
+          const vpWidth = floatVal(GC40)
+          const vpHeight = floatVal(GC41)
+          const centerX = floatVal(GC12)   // model space center
+          const centerY = floatVal(GC22)   // model space center
+          const viewHeight = floatVal(GC45)  // model space view height
+
+          // 유효한 뷰포트만 (viewHeight > 0, paper border 뷰포트 제외)
+          if (viewHeight > 0 && vpHeight > 0) {
+            const viewWidth = viewHeight * (vpWidth / vpHeight)
+            const vp: DxfViewport = {
+              layoutName: currentLayoutName,
+              centerX, centerY,
+              viewWidth, viewHeight,
+              clipMinX: centerX - viewWidth / 2,
+              clipMinY: centerY - viewHeight / 2,
+              clipMaxX: centerX + viewWidth / 2,
+              clipMaxY: centerY + viewHeight / 2,
+            }
+
+            let arr = viewportsByLayout.get(currentLayoutName)
+            if (!arr) { arr = []; viewportsByLayout.set(currentLayoutName, arr) }
+            arr.push(vp)
+          }
+        }
+      }
+
+      // 각 레이아웃에서 paper border 뷰포트 제거 (가장 큰 viewHeight)
+      for (const [name, vps] of viewportsByLayout) {
+        if (vps.length > 1) {
+          const maxVH = Math.max(...vps.map(v => v.viewHeight))
+          viewportsByLayout.set(name, vps.filter(v => v.viewHeight < maxVH * 0.99))
+        }
+      }
+    }
+  }
+
+  return { layouts, viewportsByLayout }
 }

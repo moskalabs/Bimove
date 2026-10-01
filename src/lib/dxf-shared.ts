@@ -103,7 +103,7 @@ export function decodeDxfSpecialChars(text: string): string {
 /** MTEXT 서식 코드 제거 */
 export function cleanMtextFormatting(text: string): string {
   return text
-    .replace(/\\P/g, ' ')                         // 문단 구분 → 공백
+    .replace(/\\P/g, '\n')                        // 문단 구분 → 줄바꿈 (SVG tspan으로 렌더링)
     .replace(/\\S([^;]*);/g, (_, s) =>             // 적층/분수: \S1/2; → 1/2 (내용 보존)
       s.replace(/[#^]/g, '/'))
     .replace(/\\[a-zA-Z][^;]*;/g, '')              // 서식 코드 제거: \H..; \f..; \p..; 등
@@ -112,6 +112,33 @@ export function cleanMtextFormatting(text: string): string {
     .replace(/[{}]/g, '')                           // 그룹핑 괄호만 제거 (내용 보존!)
     .trim()
 }
+
+// ── DXF Layout / Viewport 타입 ──
+
+/** AutoCAD Layout 정의 (OBJECTS 섹션의 LAYOUT 엔티티) */
+export interface DxfLayout {
+  name: string           // "Model", "A4", "plan", "elv (01)" 등
+  isModelSpace: boolean  // code 70 flag & 1
+  tabOrder: number       // code 71
+  paperWidth: number     // code 44 (mm)
+  paperHeight: number    // code 45 (mm)
+}
+
+/** VIEWPORT의 Model Space 클리핑 영역 */
+export interface DxfViewport {
+  layoutName: string
+  centerX: number        // model space view center (code 12)
+  centerY: number        // model space view center (code 22)
+  viewWidth: number      // computed: viewHeight * (vpWidth / vpHeight)
+  viewHeight: number     // model space view height (code 45)
+  clipMinX: number       // centerX - viewWidth/2
+  clipMinY: number       // centerY - viewHeight/2
+  clipMaxX: number       // centerX + viewWidth/2
+  clipMaxY: number       // centerY + viewHeight/2
+}
+
+/** Viewport 기반 클리핑 영역 */
+export type ViewportClip = { minX: number; minY: number; maxX: number; maxY: number }
 
 // ── Structural layer detection ──
 

@@ -4,7 +4,7 @@ import { convertDwgToDxf, CDN_WASM_BASE } from 'dwgdxf'
 import { createShapeId, type Editor } from 'tldraw'
 import { getScaleConfig } from './scaleConfig'
 import { getDefaultWallThicknessMm } from './settings'
-import { ACI_TO_HEX as ACI_TABLE, trueColorToHex as trueColorToHexShared, decodeDxfSpecialChars as decodeSpecialCharsShared, STRUCTURAL_KEYWORDS } from './dxf-shared'
+import { ACI_TO_HEX as ACI_TABLE, trueColorToHex as trueColorToHexShared, decodeDxfSpecialChars as decodeSpecialCharsShared, STRUCTURAL_KEYWORDS, type ViewportClip } from './dxf-shared'
 
 const MAX_SEGMENTS = 100_000
 
@@ -1859,7 +1859,7 @@ export function commitCadImport(
 
   // ── 텍스트 좌표 변환 (DXF → px, Y flip) + 자동 스케일 ──
   const textScale = scale * autoScale
-  type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string }
+  type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string; attachPt?: number; width?: number }
   const pxTexts: PxText[] = result._texts
     .filter(t => selectedLayers.has(t.layer || '0') &&
       Math.abs(t.x) < COORD_LIMIT && Math.abs(t.y) < COORD_LIMIT &&
@@ -1960,7 +1960,7 @@ export function commitCadImport(
 
         // 이 클러스터 바운딩박스 내의 텍스트 수집 (여유 margin 포함)
         const margin = 20
-        const localTexts: Array<{ x: number; y: number; t: string; h: number; r?: number; c?: string }> = []
+        const localTexts: Array<{ x: number; y: number; t: string; h: number; r?: number; c?: string; ap?: number; mw?: number }> = []
         pxTexts.forEach((t, idx) => {
           if (assignedTextIdx.has(idx)) return
           if ((t.layer || '0') !== layer) return
@@ -1973,6 +1973,8 @@ export function commitCadImport(
               h: +t.height.toFixed(1),
               r: t.rotation,
               c: t.color,
+              ap: t.attachPt,
+              mw: t.width ? +t.width.toFixed(1) : undefined,
             })
             assignedTextIdx.add(idx)
           }
@@ -2077,6 +2079,8 @@ export function commitCadImport(
           h: +t.height.toFixed(1),
           r: t.rotation,
           c: t.color,
+          ap: t.attachPt,
+          mw: t.width ? +t.width.toFixed(1) : undefined,
         }))
         groupShapes.push({
           id: createShapeId(),
@@ -2226,7 +2230,7 @@ function runFastWorker(
 // ── commitCadImportV2 파이프라인 헬퍼 함수들 ──
 
 /** 좌표 변환된 텍스트 */
-type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string }
+type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string; attachPt?: number; width?: number }
 /** 좌표 변환된 해치 */
 type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; color?: string; layer: string; cx: number; cy: number }
 
@@ -2439,6 +2443,8 @@ function transformWorkerTexts(workerTexts: TextData[], textScale: number): PxTex
       rotation: t.rotation,
       color: t.colorNumber >= 0 ? aciToHex(t.colorNumber) : undefined,
       layer: t.layer,
+      attachPt: t.attachPt,
+      width: t.width ? t.width * textScale : undefined,
     }))
 }
 
@@ -2508,6 +2514,7 @@ function buildOrphanTextShapes(
     const localTexts = tg.map(t => ({
       x: +(t.x - tMinX).toFixed(1), y: +(t.y - tMinY).toFixed(1),
       t: t.text, h: +t.height.toFixed(1), r: t.rotation, c: t.color,
+      ap: t.attachPt, mw: t.width ? +t.width.toFixed(1) : undefined,
     }))
     shapes.push({
       id: createShapeId(),
@@ -2529,6 +2536,7 @@ export async function commitCadImportV2(
   fileSize: number,
   _isDwg: boolean,
   onProgress?: (msg: string) => void,
+  viewportClip?: ViewportClip | null,
 ): Promise<number> {
   const t0 = performance.now()
   const layerArr = [...selectedLayers]
@@ -2578,8 +2586,25 @@ export async function commitCadImportV2(
   onProgress?.('세그먼트 병합 중...')
   let finalSegs = filterAndCleanSegments(rawSegsAll)
 
-  // 4. 아웃라이어 제거 (3-pass: percentile + IQR)
-  finalSegs = removeOutlierSegments(finalSegs)
+  // 4. 아웃라이어 제거: Viewport 클리핑 또는 IQR fallback
+  if (viewportClip) {
+    // Viewport AABB 클리핑 (정확한 레이아웃 기반)
+    const cMinX = viewportClip.minX * scale
+    const cMinY = -viewportClip.maxY * scale  // Y-flip (DXF Y+ → screen Y-)
+    const cMaxX = viewportClip.maxX * scale
+    const cMaxY = -viewportClip.minY * scale  // Y-flip
+    const beforeVp = finalSegs.length
+    finalSegs = finalSegs.filter(s => {
+      const x2 = s.x1 + s.dx, y2 = s.y1 + s.dy
+      // 세그먼트 AABB가 viewport와 교차하면 통과
+      return Math.max(s.x1, x2) >= cMinX && Math.min(s.x1, x2) <= cMaxX &&
+             Math.max(s.y1, y2) >= cMinY && Math.min(s.y1, y2) <= cMaxY
+    })
+    console.log(`[CAD V2] Viewport 클리핑: ${beforeVp} → ${finalSegs.length} (${beforeVp - finalSegs.length}개 제거)`)
+  } else {
+    // 폴백: IQR 아웃라이어 필터 (레이아웃 없는 파일)
+    finalSegs = removeOutlierSegments(finalSegs)
+  }
 
   // 5. 최종 bbox
   const { minX: _minX, maxX: _maxX, minY: _minY, maxY: _maxY } = computeBBox(finalSegs, 0, 1)
@@ -2612,11 +2637,26 @@ export async function commitCadImportV2(
   const entityCount = polylines.length
   const fingerprint = dxfFingerprint(fileName, fileSize, entityCount)
 
-  // 10-1. 텍스트 + 해치 좌표 변환
+  // 10-1. 텍스트 + 해치 좌표 변환 (viewport 또는 세그먼트 bbox 기반 필터)
   const textScale = scale * autoScale
+  let txLoX: number, txHiX: number, txLoY: number, txHiY: number
+  if (viewportClip) {
+    // Viewport 기반 텍스트/해치 필터 경계 (세그먼트와 동일 좌표계)
+    txLoX = viewportClip.minX * scale * autoScale
+    txLoY = -viewportClip.maxY * scale * autoScale  // Y-flip
+    txHiX = viewportClip.maxX * scale * autoScale
+    txHiY = -viewportClip.minY * scale * autoScale  // Y-flip
+  } else {
+    // 폴백: 세그먼트 bbox + 10% 패딩
+    const bboxPad = Math.max(maxX - minX, maxY - minY) * 0.1
+    txLoX = minX - bboxPad; txHiX = maxX + bboxPad
+    txLoY = minY - bboxPad; txHiY = maxY + bboxPad
+  }
   const pxTexts = transformWorkerTexts(workerTexts, textScale)
-  console.log(`[CAD V2] ${pxTexts.length}개 텍스트 변환`)
+    .filter(t => t.x >= txLoX && t.x <= txHiX && t.y >= txLoY && t.y <= txHiY)
+  console.log(`[CAD V2] ${pxTexts.length}개 텍스트 변환 (${viewportClip ? 'viewport' : 'bbox'} 필터)`)
   const pxHatches = transformWorkerHatches(workerHatches, textScale)
+    .filter(h => h.cx >= txLoX && h.cx <= txHiX && h.cy >= txLoY && h.cy <= txHiY)
   console.log(`[CAD V2] ${pxHatches.length}개 해치 변환`)
 
   // ── 100+ segs: DxfGroup 모드 ──
@@ -2740,6 +2780,8 @@ export async function commitCadImportV2(
                   h: +t.height.toFixed(1),
                   r: t.rotation,
                   c: t.color,
+                  ap: t.attachPt,
+                  mw: t.width ? +t.width.toFixed(1) : undefined,
                 })
                 assignedTextIdx.add(idx)
               }
