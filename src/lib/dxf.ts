@@ -1670,7 +1670,7 @@ function clusterConnectedSegs(segs: RawSeg[]): RawSeg[][] {
 }
 
 /** 동일선상(collinear) 세그먼트를 병합하여 shape 수를 줄임 */
-type RawSeg = { x1: number; y1: number; dx: number; dy: number; layer?: string; lineweight?: number; color?: string }
+type RawSeg = { x1: number; y1: number; dx: number; dy: number; layer?: string; lineweight?: number; color?: string; linetypeName?: string }
 
 function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
   // 각도(3°) + 수직거리(10px) + 색상 기준으로 버킷팅
@@ -2182,13 +2182,13 @@ export function commitCadImport(
  * - UI 스레드 블로킹 없음 (Worker)
  * - 진행률 콜백 지원
  */
-import type { PolylineData, TextData, HatchData, WorkerOut } from './dxf-fast-worker'
+import type { PolylineData, TextData, HatchData, LinetypeDef, WorkerOut } from './dxf-fast-worker'
 
 function runFastWorker(
   dxfText: string,
   selectedLayers: string[],
   onProgress?: (msg: string) => void,
-): Promise<{ polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[] }> {
+): Promise<{ polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number }> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(
       new URL('./dxf-fast-worker.ts', import.meta.url),
@@ -2210,7 +2210,11 @@ function runFastWorker(
       } else if (msg.type === 'result') {
         clearTimeout(timeout)
         worker.terminate()
-        resolve({ polylines: msg.polylines, insUnits: msg.insUnits, texts: msg.texts || [], hatches: msg.hatches || [] })
+        resolve({
+          polylines: msg.polylines, insUnits: msg.insUnits,
+          texts: msg.texts || [], hatches: msg.hatches || [],
+          linetypes: msg.linetypes || [], ltscale: msg.ltscale ?? 1,
+        })
       } else if (msg.type === 'error') {
         clearTimeout(timeout)
         worker.terminate()
@@ -2300,7 +2304,7 @@ function filterOutliersPass(segs: RawSeg[], pLo: number, pHi: number, padMul: nu
   return filtered.length >= segs.length * 0.5 ? filtered : segs
 }
 
-/** 폴리라인 → RawSeg 변환 (Y-flip, 스케일, DEFPOINTS 제외, ACI 색상) */
+/** 폴리라인 → RawSeg 변환 (Y-flip, 스케일, DEFPOINTS 제외, ACI 색상, 선종류) */
 function polylinesToSegments(polylines: PolylineData[], scale: number): RawSeg[] {
   const segs: RawSeg[] = []
   for (const pl of polylines) {
@@ -2313,7 +2317,12 @@ function polylinesToSegments(polylines: PolylineData[], scale: number): RawSeg[]
       const y1 = -verts[i][1] * scale
       const x2 = verts[i + 1][0] * scale
       const y2 = -verts[i + 1][1] * scale
-      segs.push({ x1, y1, dx: x2 - x1, dy: y2 - y1, layer: pl.layer, color })
+      segs.push({
+        x1, y1, dx: x2 - x1, dy: y2 - y1,
+        layer: pl.layer, color,
+        linetypeName: pl.linetypeName,
+        lineweight: pl.lineweight,
+      })
     }
   }
   return segs
@@ -2548,12 +2557,16 @@ export async function commitCadImportV2(
   let insUnits: number
   let workerTexts: TextData[] = []
   let workerHatches: HatchData[] = []
+  let workerLinetypes: LinetypeDef[] = []
+  let workerLtscale = 1
   try {
     const result = await runFastWorker(dxfText, layerArr, onProgress)
     polylines = result.polylines
     insUnits = result.insUnits
     workerTexts = result.texts || []
     workerHatches = result.hatches || []
+    workerLinetypes = result.linetypes || []
+    workerLtscale = result.ltscale ?? 1
   } catch (workerErr) {
     console.error(`[CAD V2] Worker 실패:`, workerErr)
     // 동기 fallback 제거 — 메인 스레드에서 100MB+ 파일 파싱 시 브라우저 완전 멈춤
@@ -2668,13 +2681,36 @@ export async function commitCadImportV2(
       console.log(`[CAD V2] DEFPOINTS 필터: ${preFilterCount} → ${finalSegs.length} (${preFilterCount - finalSegs.length}개 제거)`)
     }
 
-    // 레이어+색상별 그루핑 (같은 색상끼리 묶어야 렌더링 시 색 적용 가능)
-    const layerGroups = new Map<string, { layer: string; color?: string; segs: RawSeg[] }>()
+    // Linetype 패턴 → dasharray 변환 맵 구축
+    const linetypeDashMap = new Map<string, string>()
+    for (const lt of workerLinetypes) {
+      // DXF 패턴: 양수=dash, 음수=gap, 0=dot → SVG stroke-dasharray (절대값, dot→0.5)
+      const scaledPattern = lt.pattern.map(v => {
+        const abs = Math.abs(v) * workerLtscale * scale
+        return abs < 0.1 ? 0.5 * workerLtscale * scale : abs  // dot 최소 크기
+      })
+      if (scaledPattern.length > 0) {
+        linetypeDashMap.set(lt.name.toUpperCase(), scaledPattern.map(v => v.toFixed(1)).join(' '))
+      }
+    }
+    console.log(`[CAD V2] ${linetypeDashMap.size}개 linetype dasharray 맵`)
+
+    // 레이어+색상+선종류별 그루핑
+    const layerGroups = new Map<string, { layer: string; color?: string; linetypeName?: string; dashArray?: string; segs: RawSeg[] }>()
     for (const s of finalSegs) {
       const layer = s.layer || '0'
-      const key = `${layer}\0${s.color || ''}`
+      const ltKey = s.linetypeName || ''
+      const key = `${layer}\0${s.color || ''}\0${ltKey}`
       let g = layerGroups.get(key)
-      if (!g) { g = { layer, color: s.color, segs: [] }; layerGroups.set(key, g) }
+      if (!g) {
+        g = {
+          layer, color: s.color,
+          linetypeName: s.linetypeName,
+          dashArray: s.linetypeName ? linetypeDashMap.get(s.linetypeName.toUpperCase()) : undefined,
+          segs: [],
+        }
+        layerGroups.set(key, g)
+      }
       g.segs.push(s)
     }
 
@@ -2701,7 +2737,7 @@ export async function commitCadImportV2(
     })
 
     const groupShapes: unknown[] = []
-    for (const [, { layer, color: groupColor, segs }] of layerGroups) {
+    for (const [, { layer, color: groupColor, dashArray: groupDashArray, segs }] of layerGroups) {
       // 대형 레이어: 공간 분할로 서브클러스터 생성 (O(n²) 클러스터링 대신)
       let clusters: RawSeg[][]
       if (segs.length > 2000) {
@@ -2841,6 +2877,8 @@ export async function commitCadImportV2(
             return `M${x1.toFixed(1)},${y1.toFixed(1)}L${x2.toFixed(1)},${y2.toFixed(1)}`
           }).join('')
 
+          // Lineweight: per-segment → group 대표값 (첫 번째 세그먼트)
+          const segLw = sliceSegs[0]?.lineweight
           groupShapes.push({
             id: createShapeId(),
             type: 'dxfgroup',
@@ -2855,6 +2893,8 @@ export async function commitCadImportV2(
               dxfFingerprint: fingerprint,
               dxfLayer: layer,
               ...(groupColor ? { dxfColor: groupColor } : {}),
+              ...(groupDashArray ? { dxfDashArray: groupDashArray } : {}),
+              ...(segLw !== undefined && segLw > 0 ? { dxfLineweight: segLw } : {}),
             },
           })
         }

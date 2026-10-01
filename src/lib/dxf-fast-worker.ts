@@ -24,6 +24,8 @@ export interface PolylineData {
   vertices: number[][]   // [x,y][]
   layer: string
   colorNumber: number
+  linetypeName?: string    // entity linetype name (gc 6); undefined = ByLayer
+  lineweight?: number      // entity lineweight in 0.01mm (gc 370); undefined = ByLayer
 }
 
 export interface TextData {
@@ -50,9 +52,16 @@ export interface HatchData {
   cx: number; cy: number // centroid
 }
 
+/** Linetype 패턴 정의 (DXF TABLES → LTYPE) */
+export interface LinetypeDef {
+  name: string
+  pattern: number[]   // 양수=dash, 음수=gap, 0=dot
+  totalLen: number    // 패턴 총 길이 (gc 40)
+}
+
 export type WorkerOut =
   | { type: 'progress'; phase: string; percent: number }
-  | { type: 'result'; polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[] }
+  | { type: 'result'; polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number }
   | { type: 'error'; message: string }
 
 // ===== Internal types =====
@@ -263,6 +272,112 @@ function parseInsUnits(dxf: string, gc: (c: number) => string): number {
   if (!hdr) return 4  // default mm
   const m = hdr.match(/\$INSUNITS\n\s*70\n\s*(\d+)/)
   return m ? parseInt(m[1]) : 4
+}
+
+/** Parse $LTSCALE from HEADER section (global linetype scale) */
+function parseLtscale(dxf: string, gc: (c: number) => string): number {
+  const hdr = extractSection(dxf, 'HEADER', gc)
+  if (!hdr) return 1
+  const m = hdr.match(/\$LTSCALE\n\s*40\n\s*([\d.eE+-]+)/)
+  return m ? parseFloat(m[1]) || 1 : 1
+}
+
+/** Parse LTYPE table → Map<name, LinetypeDef> */
+function parseLinetypes(dxf: string, gc: (c: number) => string): Map<string, LinetypeDef> {
+  const result = new Map<string, LinetypeDef>()
+  const tables = extractSection(dxf, 'TABLES', gc)
+  if (!tables) return result
+
+  const sep = `\n${gc(0)}\n`
+  const gc2 = `\n${gc(2)}\n`
+  const gc40 = `\n${gc(40)}\n`
+  const gc49 = `\n${gc(49)}\n`
+  const gc73 = `\n${gc(73)}\n`
+
+  // find LTYPE entries
+  const ltypeMarker = `${sep.slice(0, -1)}\nLTYPE\n`
+  let pos = 0
+  while (true) {
+    pos = tables.indexOf(ltypeMarker, pos)
+    if (pos < 0) break
+    const lStart = pos + ltypeMarker.length
+    const nextEntity = tables.indexOf(sep, lStart)
+    const lEnd = nextEntity >= 0 ? nextEntity : tables.length
+
+    const chunk = tables.substring(pos, lEnd)
+
+    // name (gc 2)
+    const ni = chunk.indexOf(gc2)
+    if (ni < 0) { pos = lStart; continue }
+    const name = chunk.substring(ni + gc2.length).split('\n', 1)[0].trim()
+
+    // number of elements (gc 73)
+    const n73i = chunk.indexOf(gc73)
+    const numElements = n73i >= 0 ? parseInt(chunk.substring(n73i + gc73.length).split('\n', 1)[0]) || 0 : 0
+
+    // total pattern length (gc 40)
+    const t40i = chunk.indexOf(gc40)
+    const totalLen = t40i >= 0 ? parseFloat(chunk.substring(t40i + gc40.length).split('\n', 1)[0]) || 0 : 0
+
+    if (numElements > 0 && totalLen > 0) {
+      // extract all gc 49 values (pattern elements)
+      const pattern: number[] = []
+      let searchPos = 0
+      while (pattern.length < numElements) {
+        const p49i = chunk.indexOf(gc49, searchPos)
+        if (p49i < 0) break
+        const val = parseFloat(chunk.substring(p49i + gc49.length).split('\n', 1)[0])
+        if (isFinite(val)) pattern.push(val)
+        searchPos = p49i + gc49.length
+      }
+
+      if (pattern.length > 0) {
+        result.set(name.toUpperCase(), { name, pattern, totalLen })
+      }
+    }
+
+    pos = lEnd
+  }
+
+  return result
+}
+
+/** Parse LAYER table → Map<layerName, linetypeName> (for ByLayer linetype resolution) */
+function parseLayerLinetypes(dxf: string, gc: (c: number) => string): Map<string, string> {
+  const result = new Map<string, string>()
+  const tables = extractSection(dxf, 'TABLES', gc)
+  if (!tables) return result
+
+  const sep = `\n${gc(0)}\n`
+  const gc2 = `\n${gc(2)}\n`
+  const gc6 = `\n${gc(6)}\n`
+
+  const layerMarker = `${sep.slice(0, -1)}\nLAYER\n`
+  let pos = 0
+  while (true) {
+    pos = tables.indexOf(layerMarker, pos)
+    if (pos < 0) break
+    const lStart = pos + layerMarker.length
+    const nextEntity = tables.indexOf(sep, lStart)
+    const lEnd = nextEntity >= 0 ? nextEntity : tables.length
+
+    const chunk = tables.substring(pos, lEnd)
+
+    const ni = chunk.indexOf(gc2)
+    if (ni < 0) { pos = lStart; continue }
+    const name = chunk.substring(ni + gc2.length).split('\n', 1)[0].trim()
+
+    const li = chunk.indexOf(gc6)
+    if (li >= 0) {
+      const ltName = chunk.substring(li + gc6.length).split('\n', 1)[0].trim()
+      if (ltName && ltName.toUpperCase() !== 'CONTINUOUS') {
+        result.set(name, ltName.toUpperCase())
+      }
+    }
+
+    pos = lEnd
+  }
+  return result
 }
 
 /** Parse BLOCKS section → Map<name, BlockDef> (padding-aware) */
@@ -1163,7 +1278,7 @@ function extractTextEntity(
   return { x, y, text, height, rotation, layer, colorNumber: colorNum, attachPt, width: mtextWidth }
 }
 
-function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[] } {
+function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number } {
   const t0 = performance.now()
   globalEntityEvals = 0  // 글로벌 카운터 리셋
   const layerSet = new Set(selectedLayers)
@@ -1179,9 +1294,15 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   const GC8_PAT = `\n${gc(8)}\n`   // layer group code
   console.log(`[fast-worker] 텍스트 길이: ${dxfText.length} chars, 패딩: ${padded}, SEP=${JSON.stringify(SEP_PAT)}`)
 
-  // 1. Header → units
+  // 1. Header → units + ltscale
   progress('헤더 분석', 5)
   const insUnits = parseInsUnits(dxfText, gc)
+  const ltscale = parseLtscale(dxfText, gc)
+
+  // 1-1. LTYPE table → linetype 패턴 정의
+  const linetypeMap = parseLinetypes(dxfText, gc)
+  const layerLtMap = parseLayerLinetypes(dxfText, gc)
+  console.log(`[fast-worker] ${linetypeMap.size}개 LTYPE 정의, $LTSCALE=${ltscale}`)
 
   // 2. Blocks
   progress('블록 정의 파싱', 10)
@@ -1200,17 +1321,18 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   }
   if (entIdx < 0) {
     console.warn('[fast-worker] ENTITIES 섹션 없음')
-    return { polylines: [], insUnits, texts: [], hatches: [] }
+    return { polylines: [], insUnits, texts: [], hatches: [], linetypes: [...linetypeMap.values()], ltscale }
   }
   const entStart = entIdx + entHdr.length
   const entEnd = dxfText.indexOf(ENDSEC_PAT, entStart)
-  if (entEnd <= entStart) return { polylines: [], insUnits, texts: [], hatches: [] }
+  if (entEnd <= entStart) return { polylines: [], insUnits, texts: [], hatches: [], linetypes: [...linetypeMap.values()], ltscale }
 
   // 4. indexOf-based entity scanning (padding-aware SEP_PAT / GC8_PAT)
   //    Peak memory: O(selected entities) instead of O(all entities)
 
   // Additional padded group code patterns for entity parsing
   const GC1  = `\n${gc(1)}\n`
+  const GC6  = `\n${gc(6)}\n`   // linetype name
   const GC10 = `\n${gc(10)}\n`
   const GC11 = `\n${gc(11)}\n`
   const GC20 = `\n${gc(20)}\n`
@@ -1222,6 +1344,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   const GC62 = `\n${gc(62)}\n`
   const GC70 = `\n${gc(70)}\n`
   // GC71 reserved for ATTRIB generation number
+  const GC370 = `\n${gc(370)}\n` // lineweight
   const GC72 = `\n${gc(72)}\n`
   const GC73 = `\n${gc(73)}\n`
   const GC230 = `\n${gc(230)}\n`
@@ -1326,6 +1449,23 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
+      // ── Helper: per-entity linetype + lineweight 추출 ──
+      const extractLtLw = (eS: number, eE: number): { lt?: string; lw?: number } => {
+        const lt6 = idxIn(dxfText, GC6, eS, eE)
+        const lw370 = idxIn(dxfText, GC370, eS, eE)
+        const lt = lt6 >= 0 ? valAt(dxfText, lt6 + GC6.length, eE).toUpperCase() : undefined
+        const lw = lw370 >= 0 ? parseInt(valAt(dxfText, lw370 + GC370.length, eE)) : undefined
+        return {
+          lt: lt && lt !== 'BYLAYER' && lt !== 'CONTINUOUS' ? lt : undefined,
+          lw: lw !== undefined && lw >= 0 ? lw : undefined,
+        }
+      }
+      /** Resolve entity linetype: entity gc6 → ByLayer → layer's linetype → undefined */
+      const resolveLinetype = (entityLt: string | undefined, layer: string): string | undefined => {
+        if (entityLt) return entityLt
+        return layerLtMap.get(layer) || undefined
+      }
+
       // ── Fast-path: LINE (가장 흔한 엔티티, parseGroupCodes 건너뛰기) ──
       if (type === 'LINE') {
         const x1i = idxIn(dxfText, GC10, eStart, eEnd)
@@ -1340,10 +1480,13 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
           // 길이 0인 LINE 건너뛰기 (점처럼 보임)
           if (Math.abs(lx1 - lx2) > 1e-6 || Math.abs(ly1 - ly2) > 1e-6) {
             const c62 = idxIn(dxfText, GC62, eStart, eEnd)
+            const { lt, lw } = extractLtLw(eStart, eEnd)
             output.push({
               vertices: [[lx1, ly1], [lx2, ly2]],
               layer: entityLayer,
               colorNumber: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
+              linetypeName: resolveLinetype(lt, entityLayer),
+              lineweight: lw,
             })
           }
         }
@@ -1359,7 +1502,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
           const cx = floatAt(dxfText, cxi + GC10.length, eEnd)
           const cy = floatAt(dxfText, cyi + GC20.length, eEnd)
           const r  = floatAt(dxfText, ri + GC40.length, eEnd)
-          if (r > 0.01) {  // 극소 반지름 ARC 건너뛰기 (점처럼 보임)
+          if (r > 0.01) {
             const sai = idxIn(dxfText, GC50, eStart, eEnd)
             const eai = idxIn(dxfText, GC51, eStart, eEnd)
             const sa = (sai >= 0 ? floatAt(dxfText, sai + GC50.length, eEnd) : 0) * Math.PI / 180
@@ -1370,9 +1513,12 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
               for (const p of poly) p[0] = -p[0]
             }
             const c62 = idxIn(dxfText, GC62, eStart, eEnd)
+            const { lt, lw } = extractLtLw(eStart, eEnd)
             output.push({
               vertices: poly, layer: entityLayer,
               colorNumber: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
+              linetypeName: resolveLinetype(lt, entityLayer),
+              lineweight: lw,
             })
           }
         }
@@ -1388,16 +1534,19 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
           const cx = floatAt(dxfText, cxi + GC10.length, eEnd)
           const cy = floatAt(dxfText, cyi + GC20.length, eEnd)
           const r  = floatAt(dxfText, ri + GC40.length, eEnd)
-          if (r > 0.01) {  // 극소 반지름 CIRCLE 건너뛰기 (점처럼 보임)
+          if (r > 0.01) {
             const poly = interpEllipse(cx, cy, r, r, 0, Math.PI * 2)
             const ezi = idxIn(dxfText, GC230, eStart, eEnd)
             if (ezi >= 0 && floatAt(dxfText, ezi + GC230.length, eEnd) === -1) {
               for (const p of poly) p[0] = -p[0]
             }
             const c62 = idxIn(dxfText, GC62, eStart, eEnd)
+            const { lt, lw } = extractLtLw(eStart, eEnd)
             output.push({
               vertices: poly, layer: entityLayer,
               colorNumber: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
+              linetypeName: resolveLinetype(lt, entityLayer),
+              lineweight: lw,
             })
           }
         }
@@ -1480,7 +1629,18 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
           if (td) texts.push(td)
         }
       } else {
+        // Extract entity-level linetype + lineweight for non-fast-path entities
+        const { lt, lw } = extractLtLw(eStart, eEnd)
+        const entityLt = resolveLinetype(lt, entityLayer)
+        const prevLen = output.length
         entityToPolyline(type, codes, blocks, '', [], 0, layerSet, output, texts, hatches)
+        // Tag newly added polylines with linetype/lineweight
+        if (entityLt || lw !== undefined) {
+          for (let pi = prevLen; pi < output.length; pi++) {
+            if (entityLt && !output[pi].linetypeName) output[pi].linetypeName = entityLt
+            if (lw !== undefined && output[pi].lineweight === undefined) output[pi].lineweight = lw
+          }
+        }
       }
 
     } catch (err) {
@@ -1495,7 +1655,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   const elapsed = (performance.now() - t0).toFixed(0)
   console.log(`[fast-worker] 파싱 완료: ${output.length}개 폴리라인, ${texts.length}개 텍스트, ${hatches.length}개 해치, ${errCount}개 에러 (${elapsed}ms)`)
 
-  return { polylines: output, insUnits, texts, hatches }
+  return { polylines: output, insUnits, texts, hatches, linetypes: [...linetypeMap.values()], ltscale }
 }
 
 // ===== Worker message handler =====
@@ -1508,7 +1668,15 @@ self.onmessage = (e: MessageEvent<ParseRequest>) => {
 
   try {
     const result = parseDxfFast(e.data.dxfText, e.data.selectedLayers, progress)
-    post({ type: 'result', polylines: result.polylines, insUnits: result.insUnits, texts: result.texts, hatches: result.hatches })
+    post({
+      type: 'result',
+      polylines: result.polylines,
+      insUnits: result.insUnits,
+      texts: result.texts,
+      hatches: result.hatches,
+      linetypes: result.linetypes,
+      ltscale: result.ltscale,
+    })
   } catch (err) {
     post({ type: 'error', message: err instanceof Error ? err.message : String(err) })
   }

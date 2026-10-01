@@ -425,6 +425,8 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
   const dxfLw = (meta.dxfLineweight as number) ?? 0
   // non-scaling-stroke: 브라우저 네이티브 처리. React 재렌더 불필요.
   const strokeW = dxfLw > 0 ? Math.max(1.0, Math.min(dxfLw / 100, 3)) : 1.5
+  // Linetype dash pattern (from DXF LTYPE table)
+  const dxfDash = (meta.dxfDashArray as string) || ''
 
   // 텍스트/HATCH 데이터: useMemo로 캐싱 (리렌더 시 JSON.parse 재실행 방지)
   const texts: DxfTextEntry[] = useMemo(() => {
@@ -495,6 +497,7 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
           strokeWidth={strokeW}
           strokeLinecap="round"
           vectorEffect="non-scaling-stroke"
+          {...(dxfDash ? { strokeDasharray: dxfDash } : {})}
         />
       )}
       {texts.map((t, i) => {
@@ -508,7 +511,7 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
         // 1=TL 2=TC 3=TR 4=ML 5=MC 6=MR 7=BL 8=BC 9=BR
         const ap = t.ap || 1
         const textAnchor = (ap % 3 === 0) ? 'end' : (ap % 3 === 2) ? 'middle' : 'start'
-        const baseline = ap <= 3 ? 'hanging' : ap <= 6 ? 'central' : 'auto'
+        const baseline = ap <= 3 ? 'hanging' : ap <= 6 ? 'central' : 'alphabetic'
         const lines = t.t.split('\n')
         return (
           <text
@@ -657,7 +660,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
         {texts.map((t, i) => {
           const ap = t.ap || 1
           const textAnchor = (ap % 3 === 0) ? 'end' : (ap % 3 === 2) ? 'middle' : 'start'
-          const baseline = ap <= 3 ? 'hanging' : ap <= 6 ? 'central' : 'auto'
+          const baseline = ap <= 3 ? 'hanging' : ap <= 6 ? 'central' : 'alphabetic'
           const lines = t.t.split('\n')
           return (
             <text
