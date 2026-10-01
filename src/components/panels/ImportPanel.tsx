@@ -3,6 +3,7 @@ import { useEditor } from '../../context/EditorContext'
 import { useToast } from '../../context/ToastContext'
 import { uploadImage } from '../../lib/project'
 import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2 } from '../../lib/dxf'
+import type { ViewportClip } from '../../lib/dxf-shared'
 import { importPdf } from '../../lib/pdfImport'
 
 const CadPreview = lazy(() => import('../CadPreview'))
@@ -75,7 +76,7 @@ export function ImportPanel() {
     }
   }
 
-  const handlePreviewImport = async (selectedLayers: Set<string>, dxfText: string) => {
+  const handlePreviewImport = async (selectedLayers: Set<string>, dxfText: string, viewportClip?: ViewportClip | null) => {
     if (!editor || !previewData) return
 
     const prev = previewData
@@ -94,6 +95,7 @@ export function ImportPanel() {
         prev.fileSize,
         prev.isDwg,
         (progress: string) => setLoading(progress),
+        viewportClip,
       )
 
       const fmt = prev.isDwg ? 'DWG' : 'DXF'

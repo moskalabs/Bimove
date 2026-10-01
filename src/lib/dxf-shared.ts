@@ -122,6 +122,10 @@ export interface DxfLayout {
   tabOrder: number       // code 71
   paperWidth: number     // code 44 (mm)
   paperHeight: number    // code 45 (mm)
+  extMinX?: number       // code 14 — Model Space EXTMIN X
+  extMinY?: number       // code 24 — Model Space EXTMIN Y
+  extMaxX?: number       // code 15 — Model Space EXTMAX X
+  extMaxY?: number       // code 25 — Model Space EXTMAX Y
 }
 
 /** VIEWPORT의 Model Space 클리핑 영역 */

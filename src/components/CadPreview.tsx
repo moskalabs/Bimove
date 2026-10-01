@@ -394,6 +394,10 @@ function extractLayoutsAndViewports(rawDxfText: string): {
     const objEnd = dxfText.indexOf(ENDSEC, objBody)
     if (objEnd > objBody) {
       const GC1 = `\n${gc(1)}\n`
+      const GC14 = `\n${gc(14)}\n`
+      const GC15 = `\n${gc(15)}\n`
+      const GC24 = `\n${gc(24)}\n`
+      const GC25 = `\n${gc(25)}\n`
       const GC70 = `\n${gc(70)}\n`
       const GC71 = `\n${gc(71)}\n`
       const GC44 = `\n${gc(44)}\n`
@@ -439,12 +443,25 @@ function extractLayoutsAndViewports(rawDxfText: string): {
           ? parseFloat(dxfText.substring(phIdx + GC45.length).split('\n', 1)[0]) || 0
           : 0
 
+        // EXTMIN/EXTMAX (Model Space 범위): code 14/24, 15/25
+        const readGC = (pat: string): number | undefined => {
+          const idx = dxfText.indexOf(pat, afterAcDb)
+          if (idx < 0 || idx >= lEnd) return undefined
+          const val = parseFloat(dxfText.substring(idx + pat.length).split('\n', 1)[0])
+          return isFinite(val) ? val : undefined
+        }
+        const extMinX = readGC(GC14)
+        const extMinY = readGC(GC24)
+        const extMaxX = readGC(GC15)
+        const extMaxY = readGC(GC25)
+
         layouts.push({
           name,
           isModelSpace: (flags & 1) !== 0,
           tabOrder,
           paperWidth: paperW,
           paperHeight: paperH,
+          extMinX, extMinY, extMaxX, extMaxY,
         })
 
         pos = lEnd
@@ -537,6 +554,32 @@ function extractLayoutsAndViewports(rawDxfText: string): {
           viewportsByLayout.set(name, vps.filter(v => v.viewHeight < maxVH * 0.99))
         }
       }
+    }
+  }
+
+  // ── 3. Fallback: VIEWPORT 없는 레이아웃 → LAYOUT EXTMIN/EXTMAX로 합성 ──
+  for (const layout of layouts) {
+    if (layout.isModelSpace) continue
+    if (viewportsByLayout.has(layout.name) && viewportsByLayout.get(layout.name)!.length > 0) continue
+
+    const extW = (layout.extMaxX ?? 0) - (layout.extMinX ?? 0)
+    const extH = (layout.extMaxY ?? 0) - (layout.extMinY ?? 0)
+    if (extW > 1 && extH > 1) {
+      const minX = layout.extMinX ?? 0
+      const minY = layout.extMinY ?? 0
+      const maxX = layout.extMaxX ?? 0
+      const maxY = layout.extMaxY ?? 0
+      viewportsByLayout.set(layout.name, [{
+        layoutName: layout.name,
+        centerX: (minX + maxX) / 2,
+        centerY: (minY + maxY) / 2,
+        viewWidth: extW,
+        viewHeight: extH,
+        clipMinX: minX,
+        clipMinY: minY,
+        clipMaxX: maxX,
+        clipMaxY: maxY,
+      }])
     }
   }
 
