@@ -2429,6 +2429,7 @@ function removeOutlierSegments(segs: RawSeg[]): RawSeg[] {
 /** Worker 텍스트 → px 좌표 변환 (Y-flip + scale) */
 function transformWorkerTexts(workerTexts: TextData[], textScale: number): PxText[] {
   return workerTexts
+    .filter(t => (t.layer || '0').toUpperCase() !== 'DEFPOINTS')  // AutoCAD 비출력 레이어
     .filter(t => Math.abs(t.x) < COORD_LIMIT && Math.abs(t.y) < COORD_LIMIT && isFinite(t.x) && isFinite(t.y))
     .map(t => ({
       x: t.x * textScale,

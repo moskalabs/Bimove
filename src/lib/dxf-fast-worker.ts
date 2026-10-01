@@ -329,7 +329,7 @@ function parseBlocks(dxf: string, gc: (c: number) => string): Map<string, BlockD
                 if (j === verts.length - 2) poly.push([t.x, t.y])
               }
               if (poly.length >= 2) {
-                cur.precomputed.push({ vertices: poly, rawLayer: polyState.rawLayer, colorNumber: polyState.colorNumber, isHatchBoundary: true })
+                cur.precomputed.push({ vertices: poly, rawLayer: polyState.rawLayer, colorNumber: polyState.colorNumber, isHatchBoundary: false })
               }
             }
             polyState = null
@@ -353,18 +353,23 @@ function parseBlocks(dxf: string, gc: (c: number) => string): Map<string, BlockD
         }
         cur.entityChunks = remaining
 
-        // ── Phase 3: SOLID HATCH 감지 → Phase 1 POLYLINE을 hatch boundary로 마킹 ──
-        // SOLID HATCH가 있으면 old-style POLYLINE은 채움 경계 구성용이므로 렌더링 제외
+        // ── Phase 3: SOLID HATCH 감지 → Phase 1 old-style POLYLINE만 hatch boundary 마킹 ──
+        // SOLID HATCH가 있을 때만 old-style POLYLINE을 경계 구성용으로 판단하여 렌더링 제외
+        // Phase 2 엔티티(LWPOLYLINE/LINE/ARC 등)는 isHatchBoundary 속성이 없으므로 영향 없음
         cur.hasSolidHatch = cur.entityChunks.some(ec => {
           const t = ec.split('\n', 1)[0].trim()
           if (t !== 'HATCH') return false
-          // Check for pattern name "SOLID" (group code 2)
           const idx = ec.indexOf(`\n${gc(2)}\n`)
           if (idx < 0) return false
           const valEnd = ec.indexOf('\n', idx + gc(2).length + 2)
           const val = ec.substring(idx + gc(2).length + 2, valEnd > 0 ? valEnd : undefined).trim()
           return val.toUpperCase() === 'SOLID'
         })
+        if (cur.hasSolidHatch) {
+          for (const pe of cur.precomputed) {
+            if ('isHatchBoundary' in pe) pe.isHatchBoundary = true
+          }
+        }
 
         blocks.set(cur.name, cur)
         cur = null
@@ -907,15 +912,21 @@ function entityToPolyline(
               // Transform nested hatches: subtract base + apply outer transforms
               if (hatchesOutput) {
                 for (const sh of subHatches) {
+                  if (hatchesOutput.length >= MAX_HATCHES) break
                   hatchesOutput.push(transformHatchForInsert(sh, block.baseX, block.baseY, nextTransforms))
                 }
               }
-              // Transform nested texts: subtract base + apply outer transforms
+              // Transform nested texts: subtract base + apply outer transforms + scale height/rotation
               if (textsOutput) {
                 for (const td of subTexts) {
                   const pt = [[td.x - block.baseX, td.y - block.baseY]]
                   for (const tr of nextTransforms) applyTransform(pt, tr)
                   td.x = pt[0][0]; td.y = pt[0][1]
+                  for (const tr of nextTransforms) {
+                    const avgScale = (Math.abs(tr.sx) + Math.abs(tr.sy)) / 2
+                    td.height *= avgScale
+                    if (tr.rot) td.rotation = (td.rotation || 0) + tr.rot
+                  }
                   textsOutput.push(td)
                 }
               }
@@ -939,6 +950,12 @@ function entityToPolyline(
                 const pt = [[rawX, rawY]]
                 for (const tr of nextTransforms) applyTransform(pt, tr)
                 td.x = pt[0][0]; td.y = pt[0][1]
+                // INSERT 스케일/회전을 텍스트 height/rotation에 반영
+                for (const tr of nextTransforms) {
+                  const avgScale = (Math.abs(tr.sx) + Math.abs(tr.sy)) / 2
+                  td.height *= avgScale
+                  if (tr.rot) td.rotation = (td.rotation || 0) + tr.rot
+                }
                 textsOutput.push(td)
               }
             } else {
@@ -954,6 +971,7 @@ function entityToPolyline(
               }
               if (hatchesOutput) {
                 for (const sh of subHatches2) {
+                  if (hatchesOutput.length >= MAX_HATCHES) break
                   hatchesOutput.push(transformHatchForInsert(sh, block.baseX, block.baseY, nextTransforms))
                 }
               }
@@ -962,6 +980,11 @@ function entityToPolyline(
                   const pt = [[td.x - block.baseX, td.y - block.baseY]]
                   for (const tr of nextTransforms) applyTransform(pt, tr)
                   td.x = pt[0][0]; td.y = pt[0][1]
+                  for (const tr of nextTransforms) {
+                    const avgScale = (Math.abs(tr.sx) + Math.abs(tr.sy)) / 2
+                    td.height *= avgScale
+                    if (tr.rot) td.rotation = (td.rotation || 0) + tr.rot
+                  }
                   textsOutput.push(td)
                 }
               }
@@ -1016,8 +1039,8 @@ function extractTextEntity(
   if (type === 'TEXT') {
     text = decodeDxfSpecialChars((codes.get(1)?.[0] ?? '').trim())
   } else {
-    // MTEXT: group code 1 + additional content in group code 3
-    const parts = [codes.get(1)?.[0] ?? '', ...(codes.get(3) || [])]
+    // MTEXT: group code 3 (앞쪽 250자 단위 청크들) + group code 1 (마지막 청크)
+    const parts = [...(codes.get(3) || []), codes.get(1)?.[0] ?? '']
     text = cleanMtextFormatting(decodeDxfSpecialChars(parts.join('').trim()))
   }
   if (!text) return null
