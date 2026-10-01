@@ -382,7 +382,7 @@ function parseLayerLinetypes(dxf: string, gc: (c: number) => string): Map<string
   return result
 }
 
-/** Parse STYLE table → Map<styleName, fontFileName> */
+/** Parse STYLE table → Map<styleName, fontFamilyName> */
 function parseTextStyles(dxf: string, gc: (c: number) => string): Map<string, string> {
   const result = new Map<string, string>()
   const tables = extractSection(dxf, 'TABLES', gc)
@@ -391,6 +391,7 @@ function parseTextStyles(dxf: string, gc: (c: number) => string): Map<string, st
   const sep = `\n${gc(0)}\n`
   const gc2 = `\n${gc(2)}\n`
   const gc3 = `\n${gc(3)}\n`  // primary font file name
+  const gc4 = `\n${gc(4)}\n`  // bigfont file name (Korean/CJK SHX)
 
   const styleMarker = `${sep.slice(0, -1)}\nSTYLE\n`
   let pos = 0
@@ -408,15 +409,21 @@ function parseTextStyles(dxf: string, gc: (c: number) => string): Map<string, st
     if (ni < 0) { pos = lStart; continue }
     const name = chunk.substring(ni + gc2.length).split('\n', 1)[0].trim()
 
-    // font file name (gc 3): "gulim.ttc", "dotum.ttf", "malgun.ttf", etc.
+    // primary font file (gc 3)
     const fi = chunk.indexOf(gc3)
-    if (fi >= 0) {
-      const fontFile = chunk.substring(fi + gc3.length).split('\n', 1)[0].trim()
-      if (fontFile) {
-        // font file → font family name mapping
-        const fontFamily = fontFileToFamily(fontFile)
-        if (fontFamily) result.set(name.toUpperCase(), fontFamily)
-      }
+    const fontFile = fi >= 0 ? chunk.substring(fi + gc3.length).split('\n', 1)[0].trim() : ''
+
+    // bigfont file (gc 4): "whgtxt.shx", "kssm.shx" etc. - Korean/CJK
+    const bi = chunk.indexOf(gc4)
+    const bigfontFile = bi >= 0 ? chunk.substring(bi + gc4.length).split('\n', 1)[0].trim() : ''
+
+    // Try primary font first, then bigfont for Korean detection
+    let fontFamily: string | undefined
+    if (fontFile) fontFamily = fontFileToFamily(fontFile)
+    if (!fontFamily && bigfontFile) fontFamily = fontFileToFamily(bigfontFile)
+
+    if (fontFamily) {
+      result.set(name.toUpperCase(), fontFamily)
     }
 
     pos = lEnd
@@ -424,27 +431,56 @@ function parseTextStyles(dxf: string, gc: (c: number) => string): Map<string, st
   return result
 }
 
-/** Common DXF font file names → CSS font-family */
+/** Common DXF font file names → CSS font-family.
+ *  Unknown TTF/OTF → cleaned basename 반환 (브라우저가 시스템에서 시도).
+ *  Unknown SHX → undefined (기본 fallback 폰트 사용). */
 function fontFileToFamily(fontFile: string): string | undefined {
-  const lower = fontFile.toLowerCase().replace(/\.(ttf|ttc|otf|shx)$/i, '')
-  // Korean fonts
+  // Strip path prefix (e.g. "C:\Windows\Fonts\gulim.ttc" → "gulim")
+  const basename = fontFile.replace(/^.*[/\\]/, '')
+  const lower = basename.toLowerCase().replace(/\.(ttf|ttc|otf|shx)$/i, '')
+  if (!lower) return undefined
+
+  // ── Korean system fonts ──
   if (lower === 'gulim' || lower === 'gulimche') return 'Gulim'
   if (lower === 'dotum' || lower === 'dotumche') return 'Dotum'
   if (lower === 'batang' || lower === 'batangche') return 'Batang'
   if (lower === 'gungsuh' || lower === 'gungsuhche') return 'Gungsuh'
-  if (lower === 'malgun' || lower === 'malgunbd') return 'Malgun Gothic'
-  if (lower === 'nanumgothic' || lower.startsWith('nanum')) return 'Nanum Gothic'
-  // CJK general
-  if (lower === 'simsun' || lower === 'simhei' || lower === 'simkai') return lower === 'simsun' ? 'SimSun' : lower === 'simhei' ? 'SimHei' : 'KaiTi'
-  if (lower === 'msgothic' || lower === 'msmincho') return lower === 'msgothic' ? 'MS Gothic' : 'MS Mincho'
-  // Western
-  if (lower === 'arial' || lower === 'arialbd') return 'Arial'
-  if (lower === 'times' || lower === 'timesbd') return 'Times New Roman'
-  if (lower === 'romans' || lower === 'simplex' || lower === 'txt' || lower === 'monotxt') return undefined  // SHX fonts → use default
-  if (lower === 'isocp' || lower === 'isocpeur') return undefined
-  // Expo (Korean design font)
-  if (lower.startsWith('expo')) return 'Expo'
-  return undefined
+  if (lower === 'malgun' || lower === 'malgunbd' || lower === 'malgunsl') return 'Malgun Gothic'
+
+  // ── Korean design fonts (Nanum, HY, Expo, etc.) ──
+  if (lower.startsWith('nanum')) return 'Nanum Gothic'
+  if (lower.startsWith('expo')) return 'Noto Sans KR'  // Expo 계열은 웹에 없음 → fallback
+  if (lower.startsWith('hy') && lower.length > 2) return 'Noto Sans KR'  // HY중고딕 등 → fallback
+
+  // ── Korean bigfont SHX (gc 4 bigfont용) ──
+  if (lower === 'whgtxt' || lower === 'whgdtxt' || lower === 'whtgtxt' ||
+      lower === 'whgano' || lower === 'whgstxt') return 'Noto Sans KR'
+  if (lower === 'kssm' || lower === 'kssb' || lower === 'kstl') return 'Noto Sans KR'
+  if (lower === 'hstyle' || lower === 'hstyleb') return 'Noto Sans KR'
+  if (lower === 'chineset' || lower === 'extfont' || lower === 'bigfont') return 'Noto Sans KR'
+
+  // ── CJK system fonts ──
+  if (lower === 'simsun' || lower === 'nsimsun') return 'SimSun'
+  if (lower === 'simhei') return 'SimHei'
+  if (lower === 'simkai') return 'KaiTi'
+  if (lower === 'msgothic' || lower === 'mspgothic') return 'MS Gothic'
+  if (lower === 'msmincho' || lower === 'mspmincho') return 'MS Mincho'
+
+  // ── Western system fonts ──
+  if (lower === 'arial' || lower === 'arialbd' || lower === 'ariali') return 'Arial'
+  if (lower === 'times' || lower === 'timesbd' || lower === 'timesnr') return 'Times New Roman'
+  if (lower === 'verdana' || lower === 'tahoma' || lower === 'calibri') return lower.charAt(0).toUpperCase() + lower.slice(1)
+  if (lower === 'cour' || lower === 'courbd' || lower === 'courier') return 'Courier New'
+
+  // ── SHX (AutoCAD shape fonts) → use default fallback ──
+  if (basename.toLowerCase().endsWith('.shx')) return undefined
+  if (lower === 'romans' || lower === 'simplex' || lower === 'txt' || lower === 'monotxt' ||
+      lower === 'isocp' || lower === 'isocpeur' || lower === 'isoct' || lower === 'gothic' ||
+      lower === 'syastro' || lower === 'symath' || lower === 'symap') return undefined
+
+  // ── Unknown TTF/OTF → pass through as font-family name ──
+  // 브라우저가 시스템에 설치된 폰트를 찾아봄. 없으면 CSS fallback chain으로 내려감.
+  return basename.replace(/\.(ttf|ttc|otf)$/i, '')
 }
 
 /** Parse BLOCKS section → Map<name, BlockDef> (padding-aware) */
