@@ -53,7 +53,7 @@ export type DxfGroupShapeProps = {
   hatchesJson: string // JSON: Array<{ d, p, s, a, c? }> (pathData, pattern, scale, angle, color)
 }
 
-type DxfTextEntry = { x: number; y: number; t: string; h: number; r?: number; c?: string; ap?: number; mw?: number }
+type DxfTextEntry = { x: number; y: number; t: string; h: number; r?: number; c?: string; ap?: number; mw?: number; f?: string }
 type DxfHatchEntry = { d: string; p: string; s: number; a: number; c?: string; dim?: number }
 
 /** DXF 패턴명 → SVG pattern 생성 */
@@ -512,6 +512,9 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
         const ap = t.ap || 1
         const textAnchor = (ap % 3 === 0) ? 'end' : (ap % 3 === 2) ? 'middle' : 'start'
         const baseline = ap <= 3 ? 'hanging' : ap <= 6 ? 'central' : 'alphabetic'
+        const fontFamily = t.f
+          ? `'${t.f}', 'Noto Sans KR', 'Malgun Gothic', sans-serif`
+          : "'Noto Sans KR', 'Malgun Gothic', sans-serif"
         const lines = t.t.split('\n')
         return (
           <text
@@ -521,7 +524,7 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
             fontSize={t.h}
             data-dxf-h={t.h}
             fill={textColor}
-            fontFamily="sans-serif"
+            fontFamily={fontFamily}
             textAnchor={textAnchor}
             dominantBaseline={baseline}
             transform={t.r ? `rotate(${-t.r},${t.x},${t.y})` : undefined}
@@ -661,6 +664,9 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
           const ap = t.ap || 1
           const textAnchor = (ap % 3 === 0) ? 'end' : (ap % 3 === 2) ? 'middle' : 'start'
           const baseline = ap <= 3 ? 'hanging' : ap <= 6 ? 'central' : 'alphabetic'
+          const fontFamily = t.f
+            ? `'${t.f}', 'Noto Sans KR', 'Malgun Gothic', sans-serif`
+            : "'Noto Sans KR', 'Malgun Gothic', sans-serif"
           const lines = t.t.split('\n')
           return (
             <text
@@ -669,7 +675,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
               y={t.y}
               fontSize={t.h}
               fill={t.c ? darkenForLightBg(t.c) : '#555'}
-              fontFamily="sans-serif"
+              fontFamily={fontFamily}
               textAnchor={textAnchor}
               dominantBaseline={baseline}
               transform={t.r ? `rotate(${-t.r},${t.x},${t.y})` : undefined}

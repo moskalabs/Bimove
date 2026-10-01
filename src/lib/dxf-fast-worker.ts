@@ -40,6 +40,8 @@ export interface TextData {
   attachPt?: number
   /** MTEXT defined width (group code 41) for text wrapping */
   width?: number
+  /** Font family name from STYLE table (gc 7 → style → font) */
+  fontName?: string
 }
 
 export interface HatchData {
@@ -378,6 +380,71 @@ function parseLayerLinetypes(dxf: string, gc: (c: number) => string): Map<string
     pos = lEnd
   }
   return result
+}
+
+/** Parse STYLE table → Map<styleName, fontFileName> */
+function parseTextStyles(dxf: string, gc: (c: number) => string): Map<string, string> {
+  const result = new Map<string, string>()
+  const tables = extractSection(dxf, 'TABLES', gc)
+  if (!tables) return result
+
+  const sep = `\n${gc(0)}\n`
+  const gc2 = `\n${gc(2)}\n`
+  const gc3 = `\n${gc(3)}\n`  // primary font file name
+
+  const styleMarker = `${sep.slice(0, -1)}\nSTYLE\n`
+  let pos = 0
+  while (true) {
+    pos = tables.indexOf(styleMarker, pos)
+    if (pos < 0) break
+    const lStart = pos + styleMarker.length
+    const nextEntity = tables.indexOf(sep, lStart)
+    const lEnd = nextEntity >= 0 ? nextEntity : tables.length
+
+    const chunk = tables.substring(pos, lEnd)
+
+    // style name (gc 2)
+    const ni = chunk.indexOf(gc2)
+    if (ni < 0) { pos = lStart; continue }
+    const name = chunk.substring(ni + gc2.length).split('\n', 1)[0].trim()
+
+    // font file name (gc 3): "gulim.ttc", "dotum.ttf", "malgun.ttf", etc.
+    const fi = chunk.indexOf(gc3)
+    if (fi >= 0) {
+      const fontFile = chunk.substring(fi + gc3.length).split('\n', 1)[0].trim()
+      if (fontFile) {
+        // font file → font family name mapping
+        const fontFamily = fontFileToFamily(fontFile)
+        if (fontFamily) result.set(name.toUpperCase(), fontFamily)
+      }
+    }
+
+    pos = lEnd
+  }
+  return result
+}
+
+/** Common DXF font file names → CSS font-family */
+function fontFileToFamily(fontFile: string): string | undefined {
+  const lower = fontFile.toLowerCase().replace(/\.(ttf|ttc|otf|shx)$/i, '')
+  // Korean fonts
+  if (lower === 'gulim' || lower === 'gulimche') return 'Gulim'
+  if (lower === 'dotum' || lower === 'dotumche') return 'Dotum'
+  if (lower === 'batang' || lower === 'batangche') return 'Batang'
+  if (lower === 'gungsuh' || lower === 'gungsuhche') return 'Gungsuh'
+  if (lower === 'malgun' || lower === 'malgunbd') return 'Malgun Gothic'
+  if (lower === 'nanumgothic' || lower.startsWith('nanum')) return 'Nanum Gothic'
+  // CJK general
+  if (lower === 'simsun' || lower === 'simhei' || lower === 'simkai') return lower === 'simsun' ? 'SimSun' : lower === 'simhei' ? 'SimHei' : 'KaiTi'
+  if (lower === 'msgothic' || lower === 'msmincho') return lower === 'msgothic' ? 'MS Gothic' : 'MS Mincho'
+  // Western
+  if (lower === 'arial' || lower === 'arialbd') return 'Arial'
+  if (lower === 'times' || lower === 'timesbd') return 'Times New Roman'
+  if (lower === 'romans' || lower === 'simplex' || lower === 'txt' || lower === 'monotxt') return undefined  // SHX fonts → use default
+  if (lower === 'isocp' || lower === 'isocpeur') return undefined
+  // Expo (Korean design font)
+  if (lower.startsWith('expo')) return 'Expo'
+  return undefined
 }
 
 /** Parse BLOCKS section → Map<name, BlockDef> (padding-aware) */
@@ -953,6 +1020,7 @@ function precomputeEntity(chunk: string): PrecomputedPoly | null {
 
 /** 글로벌 엔티티 평가 카운터 (INSERT 재귀 폭발 방지) */
 let globalEntityEvals = 0
+let globalTextStyleMap: Map<string, string> = new Map()
 const MAX_ENTITY_EVALS = 500_000
 
 /** Transform HatchData SVG path coordinates: subtract base point, apply transforms */
@@ -995,7 +1063,7 @@ function entityToPolyline(
 
   // TEXT/MTEXT → texts output (if provided)
   if ((type === 'TEXT' || type === 'MTEXT') && textsOutput) {
-    const td = extractTextEntity(type, codes, layer, colorNum, transforms)
+    const td = extractTextEntity(type, codes, layer, colorNum, transforms, globalTextStyleMap)
     if (td) textsOutput.push(td)
     return
   }
@@ -1148,7 +1216,7 @@ function entityToPolyline(
               }
               if (selectedLayers.size > 0 && !selectedLayers.has(eLayer)) continue
               const blockColor = eCodes.get(62)?.[0] ? parseInt(eCodes.get(62)![0]) : -1
-              const td = extractTextEntity(eType === 'ATTRIB' ? 'TEXT' : eType, eCodes, eLayer, blockColor, nextTransforms)
+              const td = extractTextEntity(eType === 'ATTRIB' ? 'TEXT' : eType, eCodes, eLayer, blockColor, nextTransforms, globalTextStyleMap)
               if (td) {
                 const rawX = parseFloat(eCodes.get(10)?.[0] ?? '0') - block.baseX
                 const rawY = parseFloat(eCodes.get(20)?.[0] ?? '0') - block.baseY
@@ -1232,6 +1300,7 @@ function extractTextEntity(
   layer: string,
   colorNum: number,
   transforms: Transform[],
+  styleMap?: Map<string, string>,
 ): TextData | null {
   if (type !== 'TEXT' && type !== 'MTEXT') return null
 
@@ -1275,7 +1344,19 @@ function extractTextEntity(
     x = pt[0][0]; y = pt[0][1]
   }
 
-  return { x, y, text, height, rotation, layer, colorNumber: colorNum, attachPt, width: mtextWidth }
+  // Resolve font name from style (gc 7 → STYLE table → font family)
+  let fontName: string | undefined
+  if (styleMap) {
+    const styleName = (codes.get(7)?.[0] ?? '').trim().toUpperCase()
+    if (styleName) fontName = styleMap.get(styleName)
+    // MTEXT inline font override: \f코딩체; → extract font name
+    if (!fontName && type === 'MTEXT') {
+      const fMatch = text.match(/\\[fF]([^;|]+)/)
+      if (fMatch) fontName = fMatch[1].trim()
+    }
+  }
+
+  return { x, y, text, height, rotation, layer, colorNumber: colorNum, attachPt, width: mtextWidth, fontName }
 }
 
 function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number } {
@@ -1302,7 +1383,9 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   // 1-1. LTYPE table → linetype 패턴 정의
   const linetypeMap = parseLinetypes(dxfText, gc)
   const layerLtMap = parseLayerLinetypes(dxfText, gc)
-  console.log(`[fast-worker] ${linetypeMap.size}개 LTYPE 정의, $LTSCALE=${ltscale}`)
+  const textStyleMap = parseTextStyles(dxfText, gc)
+  globalTextStyleMap = textStyleMap  // module-level for extractTextEntity access
+  console.log(`[fast-worker] ${linetypeMap.size}개 LTYPE, ${textStyleMap.size}개 STYLE, $LTSCALE=${ltscale}`)
 
   // 2. Blocks
   progress('블록 정의 파싱', 10)
@@ -1344,6 +1427,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   const GC62 = `\n${gc(62)}\n`
   const GC70 = `\n${gc(70)}\n`
   // GC71 reserved for ATTRIB generation number
+  const GC7  = `\n${gc(7)}\n`   // text style name
   const GC370 = `\n${gc(370)}\n` // lineweight
   const GC72 = `\n${gc(72)}\n`
   const GC73 = `\n${gc(73)}\n`
@@ -1593,6 +1677,10 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
                 else if (hAlign === 2) attachPt = 9  // Right → BR
                 else if (hAlign === 4) attachPt = 5  // Middle → MC
               }
+              // Resolve font from style (gc 7)
+              const s7i = idxIn(dxfText, GC7, eStart, eEnd)
+              const styleName = s7i >= 0 ? valAt(dxfText, s7i + GC7.length, eEnd).toUpperCase() : ''
+              const fontName = styleName ? textStyleMap.get(styleName) : undefined
               texts.push({
                 x: tx, y: ty, text,
                 height: hi >= 0 ? floatAt(dxfText, hi + GC40.length, eEnd) : 2.5,
@@ -1600,6 +1688,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
                 layer: entityLayer,
                 colorNumber: c62i >= 0 ? parseInt(valAt(dxfText, c62i + GC62.length, eEnd)) : -1,
                 attachPt,
+                fontName,
               })
             }
           }
@@ -1625,7 +1714,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
       if (type === 'MTEXT') {
         if (texts.length < MAX_TEXTS) {
           const colorNum = codes.get(62)?.[0] ? parseInt(codes.get(62)![0]) : -1
-          const td = extractTextEntity(type, codes, entityLayer, colorNum, [])
+          const td = extractTextEntity(type, codes, entityLayer, colorNum, [], textStyleMap)
           if (td) texts.push(td)
         }
       } else {

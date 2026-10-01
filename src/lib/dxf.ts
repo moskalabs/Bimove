@@ -1859,7 +1859,7 @@ export function commitCadImport(
 
   // ── 텍스트 좌표 변환 (DXF → px, Y flip) + 자동 스케일 ──
   const textScale = scale * autoScale
-  type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string; attachPt?: number; width?: number }
+  type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string; attachPt?: number; width?: number; fontName?: string }
   const pxTexts: PxText[] = result._texts
     .filter(t => selectedLayers.has(t.layer || '0') &&
       Math.abs(t.x) < COORD_LIMIT && Math.abs(t.y) < COORD_LIMIT &&
@@ -1960,7 +1960,7 @@ export function commitCadImport(
 
         // 이 클러스터 바운딩박스 내의 텍스트 수집 (여유 margin 포함)
         const margin = 20
-        const localTexts: Array<{ x: number; y: number; t: string; h: number; r?: number; c?: string; ap?: number; mw?: number }> = []
+        const localTexts: Array<{ x: number; y: number; t: string; h: number; r?: number; c?: string; ap?: number; mw?: number; f?: string }> = []
         pxTexts.forEach((t, idx) => {
           if (assignedTextIdx.has(idx)) return
           if ((t.layer || '0') !== layer) return
@@ -1975,6 +1975,7 @@ export function commitCadImport(
               c: t.color,
               ap: t.attachPt,
               mw: t.width ? +t.width.toFixed(1) : undefined,
+              f: t.fontName,
             })
             assignedTextIdx.add(idx)
           }
@@ -2081,6 +2082,7 @@ export function commitCadImport(
           c: t.color,
           ap: t.attachPt,
           mw: t.width ? +t.width.toFixed(1) : undefined,
+          f: t.fontName,
         }))
         groupShapes.push({
           id: createShapeId(),
@@ -2234,7 +2236,7 @@ function runFastWorker(
 // ── commitCadImportV2 파이프라인 헬퍼 함수들 ──
 
 /** 좌표 변환된 텍스트 */
-type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string; attachPt?: number; width?: number }
+type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string; attachPt?: number; width?: number; fontName?: string }
 /** 좌표 변환된 해치 */
 type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; color?: string; layer: string; cx: number; cy: number }
 
@@ -2454,6 +2456,7 @@ function transformWorkerTexts(workerTexts: TextData[], textScale: number): PxTex
       layer: t.layer,
       attachPt: t.attachPt,
       width: t.width ? t.width * textScale : undefined,
+      fontName: t.fontName,
     }))
 }
 
@@ -2524,6 +2527,7 @@ function buildOrphanTextShapes(
       x: +(t.x - tMinX).toFixed(1), y: +(t.y - tMinY).toFixed(1),
       t: t.text, h: +t.height.toFixed(1), r: t.rotation, c: t.color,
       ap: t.attachPt, mw: t.width ? +t.width.toFixed(1) : undefined,
+      f: t.fontName,
     }))
     shapes.push({
       id: createShapeId(),
@@ -2794,7 +2798,7 @@ export async function commitCadImportV2(
 
         // 그리드 기반 텍스트 수집 (O(1) 셀 조회, O(n²) → O(k))
         const margin = 20
-        const localTexts: Array<{ x: number; y: number; t: string; h: number; r?: number; c?: string; ap?: number; mw?: number }> = []
+        const localTexts: Array<{ x: number; y: number; t: string; h: number; r?: number; c?: string; ap?: number; mw?: number; f?: string }> = []
         const cxMin = Math.floor((gMinX - margin) / TEXT_CELL)
         const cxMax = Math.floor((gMaxX + margin) / TEXT_CELL)
         const cyMin = Math.floor((gMinY - margin) / TEXT_CELL)
@@ -2818,6 +2822,7 @@ export async function commitCadImportV2(
                   c: t.color,
                   ap: t.attachPt,
                   mw: t.width ? +t.width.toFixed(1) : undefined,
+                  f: t.fontName,
                 })
                 assignedTextIdx.add(idx)
               }
