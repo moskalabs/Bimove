@@ -76,7 +76,10 @@ export default function CadViewerPreview({
         const encoder = new TextEncoder()
         const buf = encoder.encode(dxfText).buffer as ArrayBuffer
 
-        const ok = await mgr.openDocument(fileName, buf, {})
+        // 내용은 항상 DXF 텍스트 (DWG는 ImportPanel에서 이미 변환됨)
+        // 확장자를 .dxf로 강제해야 cad-viewer가 DXF 파서를 사용함
+        const dxfFileName = fileName.replace(/\.dwg$/i, '.dxf')
+        const ok = await mgr.openDocument(dxfFileName, buf, {})
         if (destroyed) return
 
         if (!ok) {
