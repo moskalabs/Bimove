@@ -102,7 +102,7 @@ export function ImportPanel() {
       if (count === 0) {
         toast('선택한 레이어에 표시할 도형이 없습니다.', 'info')
       } else {
-        toast(`"${prev.fileName}" ${fmt} 가져옴 (${count.toLocaleString()}개 선분, ${selectedLayers.size}개 레이어)`, 'success')
+        toast(`"${prev.fileName}" ${fmt} 가져옴 (${count.toLocaleString()}개 요소, ${selectedLayers.size}개 레이어)`, 'success')
       }
     } catch (err) {
       console.error('[Import] commitCadImportV2 에러:', err)

@@ -2272,6 +2272,62 @@ function nthElement(arr: Float64Array, k: number): number {
   return arr[k]
 }
 
+/**
+ * 텍스트/해치 좌표만으로 바운딩박스를 계산한다 (autoScale 적용 전 px).
+ *
+ * 세그먼트가 하나도 없는 DXF — 범례 시트, 주기(note) 시트, 표제란만 있는
+ * 파일 — 는 bbox 를 뽑을 선이 없다. 예전엔 그래서 commitCadImportV2 가
+ * 세그먼트 0개를 보고 바로 return 0 했고, 글자가 448개 있어도 캔버스는
+ * 비어 있었다.
+ *
+ * 좌표 변환은 transformWorkerTexts/transformWorkerHatches 와 같아야 한다
+ * (x * scale, y 는 Y-flip 해서 -y * scale). 같은 COORD_LIMIT 필터와
+ * DEFPOINTS 제외도 그대로 따른다 — 여기서 걸러질 엔티티가 bbox 를 늘려놓으면
+ * 쓸데없이 넓은 캔버스가 나온다.
+ *
+ * 글자는 앵커 점만 쓰면 박스가 글리프를 못 덮으므로 높이/폭만큼 넓힌다.
+ * 폭이 DXF 에 없으면 글자 수 x 높이 x 0.6 으로 어림한다.
+ *
+ * @returns 쓸 만한 좌표가 하나도 없으면 null
+ */
+function computeTextHatchBBox(
+  workerTexts: TextData[], workerHatches: HatchData[], scale: number,
+): { minX: number; maxX: number; minY: number; maxY: number } | null {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+  let n = 0
+
+  const add = (x: number, y: number) => {
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+    n++
+  }
+
+  for (const t of workerTexts) {
+    if (!isFinite(t.x) || !isFinite(t.y)) continue
+    if (Math.abs(t.x) >= COORD_LIMIT || Math.abs(t.y) >= COORD_LIMIT) continue
+    const x = t.x * scale, y = -t.y * scale
+    const h = isFinite(t.height) ? Math.abs(t.height * scale) : 0
+    const w = t.width && isFinite(t.width)
+      ? Math.abs(t.width * scale)
+      : (t.text?.length ?? 0) * h * 0.6
+    add(x, y)
+    // Y-flip 뒤 baseline 이 y 이므로 글리프는 위쪽(y - h)으로 올라간다
+    add(x + w, y - h)
+  }
+
+  for (const h of workerHatches) {
+    if (h.layer?.toUpperCase() === 'DEFPOINTS') continue
+    if (!isFinite(h.cx) || !isFinite(h.cy)) continue
+    if (Math.abs(h.cx) >= COORD_LIMIT || Math.abs(h.cy) >= COORD_LIMIT) continue
+    add(h.cx * scale, -h.cy * scale)
+  }
+
+  if (n === 0) return null
+  return { minX, maxX, minY, maxY }
+}
+
 /** 퍼센타일 기반 바운딩박스 계산 (O(N) quickselect) */
 function computeBBox(segs: RawSeg[], pLoPct: number, pHiPct: number) {
   const cnt = segs.length * 2
@@ -2737,8 +2793,11 @@ export async function commitCadImportV2(
   const rawSegsAll = polylinesToSegments(polylines, scale)
   console.log(`[CAD V2] rawSegsAll: ${rawSegsAll.length}개 세그먼트`)
 
-  if (rawSegsAll.length === 0) {
-    console.warn('[CAD V2] 세그먼트 0개 → 종료')
+  // 세그먼트가 0개여도 글자나 해치가 있으면 계속 간다.
+  // 범례/주기 시트처럼 선이 하나도 없는 DXF 가 실제로 있고,
+  // 예전엔 여기서 그냥 돌아가 캔버스가 비어 있었다.
+  if (rawSegsAll.length === 0 && workerTexts.length === 0 && workerHatches.length === 0) {
+    console.warn('[CAD V2] 세그먼트/텍스트/해치 모두 0개 → 종료')
     return 0
   }
 
@@ -2765,9 +2824,23 @@ export async function commitCadImportV2(
     finalSegs = removeOutlierSegments(finalSegs)
   }
 
-  // 5. 최종 bbox
-  const { minX: _minX, maxX: _maxX, minY: _minY, maxY: _maxY } = computeBBox(finalSegs, 0, 1)
-  let minX = _minX, maxX = _maxX, minY = _minY, maxY = _maxY
+  // 5. 최종 bbox.
+  // 세그먼트가 남지 않은 경우(애초에 없었거나, viewport 클리핑/IQR 로 다 걸러진
+  // 경우)에는 텍스트/해치 좌표에서 뽑는다. computeBBox 는 빈 배열에 NaN 을
+  // 돌려주므로 그대로 쓰면 autoScale 과 offset 이 전부 NaN 이 된다.
+  let minX: number, maxX: number, minY: number, maxY: number
+  if (finalSegs.length > 0) {
+    const b = computeBBox(finalSegs, 0, 1)
+    minX = b.minX; maxX = b.maxX; minY = b.minY; maxY = b.maxY
+  } else {
+    const b = computeTextHatchBBox(workerTexts, workerHatches, scale)
+    if (!b) {
+      console.warn('[CAD V2] 세그먼트도 쓸 만한 텍스트/해치 좌표도 없음 → 종료')
+      return 0
+    }
+    minX = b.minX; maxX = b.maxX; minY = b.minY; maxY = b.maxY
+    console.log(`[CAD V2] 세그먼트 0개 — 텍스트/해치 기준 bbox 사용 (${workerTexts.length}개 텍스트, ${workerHatches.length}개 해치)`)
+  }
 
   // 8. autoScale
   const spanX = maxX - minX || 1
@@ -3116,7 +3189,11 @@ export async function commitCadImportV2(
 
   const totalMs = ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0).toFixed(0)
   console.log(`[CAD V2] ✅ 완료: ${shapes.length}개 wall shape + ${extraShapes.length}개 텍스트/해치 shape (${totalMs}ms)`)
-  return shapes.length
+  // 선이 있으면 선 개수를 돌려준다 (예전과 동일). 선이 하나도 없는
+  // 텍스트/해치 전용 도면은 대신 만든 shape 수를 돌려준다 — 0 을 주면
+  // 호출한 쪽이 "표시할 도형이 없습니다" 를 띄워서, 글자가 캔버스에
+  // 올라갔는데도 실패한 것처럼 보인다.
+  return shapes.length || extraShapes.length
 }
 
 // importDxf() 레거시 함수 제거됨 — ImportPanel + CadPreview(V2) 플로우로 대체
