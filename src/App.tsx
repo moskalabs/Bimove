@@ -35,7 +35,8 @@ import { CommentTool } from './tools/CommentTool'
 import { DimensionTool } from './tools/DimensionTool'
 import { EditorContext } from './context/EditorContext'
 import { ProjectContext } from './context/ProjectContext'
-import { loadSnapshot, saveSnapshot, saveThumbnail, touchProject } from './lib/projectStore'
+import { loadSnapshot, saveSnapshot, saveThumbnail, touchProject, resolveSnapshot } from './lib/projectStore'
+import { createDebouncedSaver } from './lib/debouncedSave'
 import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase } from './lib/supabaseSync'
 import { saveVersion, getVersion } from './lib/versions'
 import { backupServerSnapshot } from './lib/conflictBackup'
@@ -123,17 +124,17 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
       ed.setCameraOptions({ ...ed.getCameraOptions(), wheelBehavior: getWheelBehavior() })
     }
     window.addEventListener('bimova:settings', onSettingsChange)
-    // Supabase에서 먼저 로드, 실패하면 localStorage 폴백
+    // Supabase와 localStorage 중 더 최근 쪽을 쓴다 (resolveSnapshot 참고)
     ;(async () => {
-      let saved: object | null = null
+      let server: { snapshot: object; updatedAt?: string } | null = null
       try {
         const result = await loadSnapshotFromSupabase(projectId)
         if (result) {
-          saved = result.snapshot as object
+          server = { snapshot: result.snapshot as object, updatedAt: result.updatedAt }
           serverUpdatedAtRef.current = result.updatedAt
         }
       } catch { /* Supabase 실패 */ }
-      if (!saved) saved = loadSnapshot(projectId)
+      const saved = resolveSnapshot(projectId, server, loadSnapshot(projectId))
       if (saved) {
         try { ed.loadSnapshot(saved as TLEditorSnapshot) } catch { /* ignore corrupt */ }
       }
@@ -188,33 +189,47 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
 
   useEffect(() => {
     if (!editor) return
-    let timer = 0
     let supabaseTimer = 0
     let dirtySinceAuto = false
     let latestSnapshot: object | null = null
+    let quotaWarned = false        // 용량 초과 토스트는 한 번만
+
+    // 썸네일 (200+ shapes일 때 스킵 — getSvgString이 너무 무거움)
+    const updateThumbnail = async () => {
+      const shapes = editor.getCurrentPageShapes()
+      if (shapes.length === 0 || shapes.length > 200) return
+      try {
+        const result = await (editor as unknown as { getSvgString: (shapes: unknown[], opts: unknown) => Promise<{ svg: string; width: number; height: number } | undefined> })
+          .getSvgString(shapes, { padding: 16, background: true })
+        if (result?.svg) {
+          const dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(result.svg)))
+          saveThumbnail(projectId, dataUrl)
+        }
+      } catch { /* ignore thumbnail errors */ }
+    }
+
+    const saver = createDebouncedSaver(reason => {
+      // localStorage 저장. updatedAt 은 성공했을 때만 올린다 — 실패했는데
+      // 올리면 resolveSnapshot() 이 낡은 로컬을 "최신"으로 착각한다.
+      const snapshot = editor.getSnapshot()
+      latestSnapshot = snapshot
+      if (saveSnapshot(projectId, snapshot)) {
+        touchProject(projectId)
+      } else if (!quotaWarned) {
+        quotaWarned = true
+        toast('이 기기의 저장 공간이 부족해 로컬 저장에 실패했습니다. 오래된 프로젝트를 정리해주세요.', 'error')
+      }
+      // flush 는 언마운트/탭 종료 직전이다 — 무거운 썸네일은 건너뛴다
+      if (reason === 'timer') void updateThumbnail()
+    }, 1500)
+
+    // 탭 닫기/새로고침도 같은 손실 경로다 — 여기서도 대기 중인 저장을 흘려보낸다
+    const flushOnHide = () => saver.flush()
+    window.addEventListener('pagehide', flushOnHide)
 
     const unsub = editor.store.listen(() => {
       dirtySinceAuto = true
-      clearTimeout(timer)
-      timer = window.setTimeout(async () => {
-        const snapshot = editor.getSnapshot()
-        latestSnapshot = snapshot
-        // localStorage 즉시 저장
-        saveSnapshot(projectId, snapshot)
-        touchProject(projectId)
-        // 썸네일 (200+ shapes일 때 스킵 — getSvgString이 너무 무거움)
-        const shapes = editor.getCurrentPageShapes()
-        if (shapes.length > 0 && shapes.length <= 200) {
-          try {
-            const result = await (editor as unknown as { getSvgString: (shapes: unknown[], opts: unknown) => Promise<{ svg: string; width: number; height: number } | undefined> })
-              .getSvgString(shapes, { padding: 16, background: true })
-            if (result?.svg) {
-              const dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(result.svg)))
-              saveThumbnail(projectId, dataUrl)
-            }
-          } catch { /* ignore thumbnail errors */ }
-        }
-      }, 1500)
+      saver.schedule()
     })
 
     // Supabase 동기화 (5초 디바운스, optimistic locking)
@@ -282,11 +297,26 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
 
     return () => {
       unsub()
-      clearTimeout(timer)
+      window.removeEventListener('pagehide', flushOnHide)
       clearInterval(supabaseTimer)
       clearInterval(autoVersionTimer)
+
+      // 대기 중이던 저장을 버리지 않고 여기서 쓴다.
+      // 예전엔 clearTimeout/clearInterval 로 그냥 날렸다 — CAD 를 불러오고
+      // 로컬 1.5초 / 서버 5초가 지나기 전에 대시보드로 나가면 불러온 도면이
+      // 어디에도 저장되지 않았고, 다시 들어오면 사라져 있었다.
+      saver.flush()
+
+      const snap = latestSnapshot
+      latestSnapshot = null
+      if (snap && !syncPaused) {
+        // 언마운트 뒤에도 fetch 는 계속 진행된다. 충돌이면 서버를 건드리지 않고
+        // 넘어간다 — 로컬에는 이미 남아 있고, 다음 진입 때 isLocalNewer 가 집어낸다.
+        void saveSnapshotToSupabase(projectId, snap, undefined, lastServerUpdatedAt)
+          .catch(err => console.warn('[supabase-sync] 언마운트 flush 실패', err))
+      }
     }
-  }, [editor, projectId])
+  }, [editor, projectId, toast])
 
   // 휠(중간) 버튼 더블클릭 → 화면 맞춤(zoomToFit)
   useEffect(() => {

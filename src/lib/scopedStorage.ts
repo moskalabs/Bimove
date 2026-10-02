@@ -24,9 +24,20 @@ export function scopedGet(key: string): string | null {
   return localStorage.getItem(scopedKey(key))
 }
 
-/** 스코프된 localStorage.setItem */
-export function scopedSet(key: string, value: string): void {
-  try { localStorage.setItem(scopedKey(key), value) } catch { /* storage full */ }
+/**
+ * 스코프된 localStorage.setItem. 저장 성공 여부를 돌려준다.
+ *
+ * 예전엔 실패를 조용히 삼켰다 — 호출한 쪽에서 "저장됐다"와 구분이 안 된다.
+ * 대형 CAD 스냅샷은 수 MB 라 용량 초과가 실제로 터지고, 그대로 작업이 사라졌다.
+ */
+export function scopedSet(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(scopedKey(key), value)
+    return true
+  } catch (err) {
+    console.warn('[storage] 저장 실패 (용량 초과?)', key, err)
+    return false
+  }
 }
 
 /** 스코프된 localStorage.removeItem */
