@@ -375,30 +375,56 @@ export type DxfGroupShape = TLBaseShape<'dxfgroup', DxfGroupShapeProps>
 
 // ── DOM 기반 텍스트 컬링 (React 재렌더 없이 SVG visibility 직접 조작) ──
 // 줌/팬 중 React 재렌더 = 0. 텍스트 표시/숨김만 DOM API로 처리.
+
+/** 화면상 이 높이(CSS px) 미만의 텍스트를 숨긴다.
+ *
+ *  1px 미만은 서브픽셀이라 어차피 글자로 안 보이므로 걷어내도 잃는 게 없다.
+ *  예전엔 3px 이었는데, 그건 "읽을 수 없다" 기준이지 "안 보인다" 기준이 아니다.
+ *  CAD 뷰어에서 축소했을 때 주석이 흐릿한 얼룩으로라도 보이는 건 정상이고
+ *  (AutoCAD 도 그렇게 보여준다), 거기까지 지워버리면 글자가 있다는 사실
+ *  자체를 알 수 없다. 이 도면들은 autoScale 때문에 텍스트가 대부분 4px 라서
+ *  3px 기준이면 z<0.75 구간 전체에서 글자가 하나도 안 보였다. */
+const MIN_TEXT_SCREEN_PX = 1
+
+/** `[data-dxf-h]` 텍스트들의 visibility 를 현재 줌에 맞춰 갱신. 숨긴/보인 개수 반환. */
+export function cullTextElements(root: ParentNode, zoom: number): { hidden: number; shown: number } {
+  const minH = MIN_TEXT_SCREEN_PX / Math.max(zoom, 1e-6)
+  let hidden = 0, shown = 0
+  root.querySelectorAll<SVGTextElement>('[data-dxf-h]').forEach(el => {
+    if (+(el.getAttribute('data-dxf-h') || '0') < minH) {
+      el.setAttribute('visibility', 'hidden'); hidden++
+    } else {
+      el.removeAttribute('visibility'); shown++
+    }
+  })
+  return { hidden, shown }
+}
+
 let _cullEditor: ReturnType<typeof useEditor> | null = null
+let _cullUnsub: (() => void) | null = null
 let _cullRaf = 0
 
 function _ensureTextCulling(editor: ReturnType<typeof useEditor>) {
   if (_cullEditor === editor) return
+  _cullUnsub?.()   // 에디터가 바뀌면 죽은 store 의 리스너를 떼어낸다
   _cullEditor = editor
-  let lastZ = editor.getZoomLevel()
+  let culledAtZ = editor.getZoomLevel()
 
-  editor.store.listen(() => {
+  // scope: 'all' — 카메라 레코드는 session scope 다. 예전처럼 'document' 로
+  // 받으면 줌 변화가 아예 들어오지 않아서, 축소한 상태에서 도형을 하나
+  // 건드린 순간 그 줌 기준으로 전 텍스트가 hidden 으로 박히고 다시 확대해도
+  // 풀리지 않았다 (래치). 컬링은 줌에 따라가야 의미가 있다.
+  _cullUnsub = editor.store.listen(() => {
     if (_cullRaf) return
     _cullRaf = requestAnimationFrame(() => {
       _cullRaf = 0
       const z = editor.getZoomLevel()
       // 20% 이상 줌 변화 시에만 텍스트 컬링 업데이트
-      if (Math.abs(lastZ - z) / Math.max(lastZ, 0.001) < 0.2) return
-      lastZ = z
-      const minH = 3 / z // DXF 좌표 기준 최소 표시 높이
-      document.querySelectorAll<SVGTextElement>('[data-dxf-h]').forEach(el => {
-        const h = +(el.getAttribute('data-dxf-h') || '0')
-        if (h < minH) el.setAttribute('visibility', 'hidden')
-        else el.removeAttribute('visibility')
-      })
+      if (Math.abs(culledAtZ - z) / Math.max(culledAtZ, 0.001) < 0.2) return
+      culledAtZ = z
+      cullTextElements(document, z)
     })
-  }, { source: 'user', scope: 'document' })
+  }, { source: 'user', scope: 'all' })
 }
 
 /** DXF 그룹 렌더링 컴포넌트 — 줌/팬 시 React 재렌더 0회 */
