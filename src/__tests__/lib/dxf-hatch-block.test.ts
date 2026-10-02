@@ -29,8 +29,10 @@ describe('HATCH inside blocks', () => {
   })
 
   it('should pass hatches to entityToPolyline in main scan loop', () => {
-    expect(workerSrc).toContain(
-      "entityToPolyline(type, codes, blocks, '', [], 0, layerSet, output, texts, hatches)",
+    // 인자 목록을 닫는 괄호까지 못 박으면 뒤에 인자가 하나 늘 때마다 깨진다
+    // (styleMap 추가 때 실제로 깨졌다) → hatches 가 전달되는지만 확인한다
+    expect(workerSrc).toMatch(
+      /entityToPolyline\(type, codes, blocks, '', \[\], 0, layerSet, output, texts, hatches[,)]/,
     )
   })
 

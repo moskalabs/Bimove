@@ -238,10 +238,65 @@ function applyTransform(poly: number[][], t: Transform): void {
 
 // ===== indexOf-based helpers (zero-alloc scanning) =====
 
-/** Find needle in text within [start, end). Returns -1 if not found. */
+/** 엔티티 범위 [start, end) 안에서 group code 줄만 골라 needle(`\n<code>\n`) 과
+ *  맞춰본다. 반환값은 코드 줄 앞의 개행 위치 — 호출부는 그대로
+ *  `valAt(text, i + needle.length, end)` 로 값을 읽는다.
+ *
+ *  단순 indexOf 로는 두 가지가 깨진다.
+ *   1. indexOf 는 end 를 받지 못해, 엔티티에 없는 코드를 찾을 때 파일 끝까지
+ *      훑고 나서야 범위를 벗어난 걸 안다. 엔티티 수에 비례해 O(n²) 가 된다.
+ *      엔티티 대부분에 없는 6(linetype)/370(lineweight)/7(style)/230(extrusion)
+ *      을 찾기 시작하면서 2만 엔티티 도면 파싱이 2배 느려졌다.
+ *   2. 값 줄도 매칭 대상이 되어 오탐한다. padding 없는 DXF 에서 `62\n7\n` 의
+ *      값 `7` 이 GC7 로 걸리는 식이다. 62 는 DXF 엔티티 순서상 7 보다 먼저
+ *      오고 ACI 7 은 기본 색이라, 거의 모든 도면에서 스타일 이름 대신
+ *      다음 group code 를 읽게 된다.
+ *
+ *  start 는 group code 0 의 값(엔티티 타입) 을 가리키므로 거기서부터
+ *  코드/값 줄이 번갈아 나온다. 코드 줄 자리에서만 비교하면 둘 다 막힌다. */
 function idxIn(text: string, needle: string, start: number, end: number): number {
-  const i = text.indexOf(needle, start)
-  return (i >= 0 && i < end) ? i : -1
+  // 타입(값) 줄의 끝 = 첫 코드 줄 앞의 개행
+  return gcIdxFrom(text, needle, text.indexOf('\n', start), end)
+}
+
+/** idxIn 의 일반형. `codeNl` 은 첫 코드 줄 **앞** 개행의 위치.
+ *  테이블 엔트리 청크는 `\n0\nLAYER\n...` 로 시작하므로 codeNl = 0 이다. */
+function gcIdxFrom(text: string, needle: string, codeNl: number, end: number): number {
+  let nl = codeNl
+  while (nl >= 0 && nl < end) {
+    // 빈 줄은 짝을 못 이뤄 parity 를 영구적으로 끊는다 → 건너뛰어 재동기화.
+    // (값이 빈 문자열인 줄은 아래 값 줄 점프가 알아서 맞춘다. 코드 줄은 비어 있을 수 없다)
+    if (text.charCodeAt(nl + 1) === 10) { nl += 1; continue }
+    if (text.startsWith(needle, nl)) return nl
+    const codeEnd = text.indexOf('\n', nl + 1)   // 코드 줄 끝
+    if (codeEnd < 0 || codeEnd >= end) return -1
+    nl = text.indexOf('\n', codeEnd + 1)         // 값 줄 끝 = 다음 코드 줄 앞
+  }
+  return -1
+}
+
+/** 테이블 엔트리 청크에서 group code 의 값 한 줄을 읽는다. 없으면 ''. */
+function gcValIn(chunk: string, needle: string): string {
+  const i = gcIdxFrom(chunk, needle, 0, chunk.length)
+  return i >= 0 ? chunk.substring(i + needle.length).split('\n', 1)[0].trim() : ''
+}
+
+/** group code 0 줄 자리에서만 끊어 엔티티 청크로 나눈다.
+ *  `text.split(sep)` 는 패딩 없는 DXF 에서 값이 `0` 인 줄(z=0, flags=0 …) 에서도
+ *  끊겨서 엔티티가 두 토막 난다. `text[0]` 은 sep 의 첫 개행이어야 한다. */
+function splitAtGc0(text: string, sep: string): string[] {
+  const out: string[] = []
+  let start = 0        // 청크 시작(= 타입 값 줄 시작)
+  let nl = 0           // 다음 코드 줄 앞 개행
+  while (nl >= 0) {
+    const i = gcIdxFrom(text, sep, nl, text.length)
+    if (i < 0) break
+    out.push(text.substring(start, i))
+    start = i + sep.length
+    nl = text.indexOf('\n', start)   // 타입 값 줄 끝
+  }
+  out.push(text.substring(start))
+  return out
 }
 
 /** Extract value string: from `start` to next newline (or `end`). Trims. */
@@ -303,34 +358,35 @@ function parseLinetypes(dxf: string, gc: (c: number) => string): Map<string, Lin
     pos = tables.indexOf(ltypeMarker, pos)
     if (pos < 0) break
     const lStart = pos + ltypeMarker.length
-    const nextEntity = tables.indexOf(sep, lStart)
+    // 패딩 없는 DXF 는 `70\n0` 같은 값 줄이 sep(`\n0\n`) 과 같은 모양이라
+    // 단순 indexOf 로는 엔트리가 이름 바로 뒤에서 잘린다 → 코드 줄 자리에서만 끊는다.
+    const nextEntity = gcIdxFrom(tables, sep, lStart - 1, tables.length)
     const lEnd = nextEntity >= 0 ? nextEntity : tables.length
 
     const chunk = tables.substring(pos, lEnd)
 
     // name (gc 2)
-    const ni = chunk.indexOf(gc2)
-    if (ni < 0) { pos = lStart; continue }
-    const name = chunk.substring(ni + gc2.length).split('\n', 1)[0].trim()
+    const name = gcValIn(chunk, gc2)
+    if (!name) { pos = lStart; continue }
 
     // number of elements (gc 73)
-    const n73i = chunk.indexOf(gc73)
-    const numElements = n73i >= 0 ? parseInt(chunk.substring(n73i + gc73.length).split('\n', 1)[0]) || 0 : 0
+    const numElements = parseInt(gcValIn(chunk, gc73)) || 0
 
     // total pattern length (gc 40)
-    const t40i = chunk.indexOf(gc40)
-    const totalLen = t40i >= 0 ? parseFloat(chunk.substring(t40i + gc40.length).split('\n', 1)[0]) || 0 : 0
+    const totalLen = parseFloat(gcValIn(chunk, gc40)) || 0
 
     if (numElements > 0 && totalLen > 0) {
       // extract all gc 49 values (pattern elements)
       const pattern: number[] = []
       let searchPos = 0
       while (pattern.length < numElements) {
-        const p49i = chunk.indexOf(gc49, searchPos)
+        const p49i = gcIdxFrom(chunk, gc49, searchPos, chunk.length)
         if (p49i < 0) break
         const val = parseFloat(chunk.substring(p49i + gc49.length).split('\n', 1)[0])
         if (isFinite(val)) pattern.push(val)
-        searchPos = p49i + gc49.length
+        // 다음 코드 줄 앞 개행으로 이동 (값 줄 중간에서 재개하면 parity 가 깨진다)
+        searchPos = chunk.indexOf('\n', p49i + gc49.length)
+        if (searchPos < 0) break
       }
 
       if (pattern.length > 0) {
@@ -360,21 +416,19 @@ function parseLayerLinetypes(dxf: string, gc: (c: number) => string): Map<string
     pos = tables.indexOf(layerMarker, pos)
     if (pos < 0) break
     const lStart = pos + layerMarker.length
-    const nextEntity = tables.indexOf(sep, lStart)
+    const nextEntity = gcIdxFrom(tables, sep, lStart - 1, tables.length)
     const lEnd = nextEntity >= 0 ? nextEntity : tables.length
 
     const chunk = tables.substring(pos, lEnd)
 
-    const ni = chunk.indexOf(gc2)
-    if (ni < 0) { pos = lStart; continue }
-    const name = chunk.substring(ni + gc2.length).split('\n', 1)[0].trim()
+    const name = gcValIn(chunk, gc2)
+    if (!name) { pos = lStart; continue }
 
-    const li = chunk.indexOf(gc6)
-    if (li >= 0) {
-      const ltName = chunk.substring(li + gc6.length).split('\n', 1)[0].trim()
-      if (ltName && ltName.toUpperCase() !== 'CONTINUOUS') {
-        result.set(name, ltName.toUpperCase())
-      }
+    // LAYER 는 62(색) 가 6(linetype) 보다 먼저 온다. 문자열 매칭이면
+    // 마젠타(62=6) 레이어에서 `\n62\n6\n` 이 먼저 걸린다 → gcValIn 사용.
+    const ltName = gcValIn(chunk, gc6)
+    if (ltName && ltName.toUpperCase() !== 'CONTINUOUS') {
+      result.set(name, ltName.toUpperCase())
     }
 
     pos = lEnd
@@ -399,23 +453,19 @@ function parseTextStyles(dxf: string, gc: (c: number) => string): Map<string, st
     pos = tables.indexOf(styleMarker, pos)
     if (pos < 0) break
     const lStart = pos + styleMarker.length
-    const nextEntity = tables.indexOf(sep, lStart)
+    const nextEntity = gcIdxFrom(tables, sep, lStart - 1, tables.length)
     const lEnd = nextEntity >= 0 ? nextEntity : tables.length
 
     const chunk = tables.substring(pos, lEnd)
 
     // style name (gc 2)
-    const ni = chunk.indexOf(gc2)
-    if (ni < 0) { pos = lStart; continue }
-    const name = chunk.substring(ni + gc2.length).split('\n', 1)[0].trim()
+    const name = gcValIn(chunk, gc2)
+    if (!name) { pos = lStart; continue }
 
-    // primary font file (gc 3)
-    const fi = chunk.indexOf(gc3)
-    const fontFile = fi >= 0 ? chunk.substring(fi + gc3.length).split('\n', 1)[0].trim() : ''
-
-    // bigfont file (gc 4): "whgtxt.shx", "kssm.shx" etc. - Korean/CJK
-    const bi = chunk.indexOf(gc4)
-    const bigfontFile = bi >= 0 ? chunk.substring(bi + gc4.length).split('\n', 1)[0].trim() : ''
+    // primary font file (gc 3) / bigfont file (gc 4): "whgtxt.shx", "kssm.shx" 등
+    // 70=4(vertical)·71=4(upside down) 가 실존해서 문자열 매칭이면 오탐한다.
+    const fontFile = gcValIn(chunk, gc3)
+    const bigfontFile = gcValIn(chunk, gc4)
 
     // Try primary font first, then bigfont for Korean detection
     let fontFamily: string | undefined
@@ -480,7 +530,20 @@ function fontFileToFamily(fontFile: string): string | undefined {
 
   // ── Unknown TTF/OTF → pass through as font-family name ──
   // 브라우저가 시스템에 설치된 폰트를 찾아봄. 없으면 CSS fallback chain으로 내려감.
-  return basename.replace(/\.(ttf|ttc|otf)$/i, '')
+  // 단 폰트 이름처럼 보이지 않으면 버린다. group code 오탐이나 깨진 인코딩으로
+  // "40", "?????" 같은 값이 들어오면 그대로 CSS font-family 에 박혀서
+  // 한글 폴백 체인까지 무효가 된다 → undefined 로 기본 폴백에 맡기는 게 낫다.
+  const passthrough = basename.replace(/\.(ttf|ttc|otf)$/i, '').trim()
+  return isFontNameLike(passthrough) ? passthrough : undefined
+}
+
+/** CSS font-family 로 내보내도 안전한 이름인지.
+ *  따옴표/세미콜론 등 리스트를 깨는 문자를 막고, 글자가 하나도 없는 값
+ *  (예: group code 오탐으로 들어온 "40")은 거부한다. */
+function isFontNameLike(name: string): boolean {
+  if (name.length < 2 || name.length > 64) return false
+  if (!/^[\w\s\u3131-\uD79D\u4E00-\u9FFF&.-]+$/.test(name)) return false
+  return /[A-Za-z\u3131-\uD79D\u4E00-\u9FFF]/.test(name)
 }
 
 /** Parse BLOCKS section → Map<name, BlockDef> (padding-aware) */
@@ -496,7 +559,7 @@ function parseBlocks(dxf: string, gc: (c: number) => string): Map<string, BlockD
   // prepend \n so the first entity separator \n0\n is properly matched
   // (extractSection returns content starting with "0\nBLOCK\n..." — without leading \n,
   //  split misidentifies first chunk's type as "0" instead of "BLOCK")
-  const chunks = ('\n' + sec).split(sep)
+  const chunks = splitAtGc0('\n' + sec, sep)
   let cur: BlockDef | null = null
 
   for (let i = 0; i < chunks.length; i++) {
@@ -1056,7 +1119,6 @@ function precomputeEntity(chunk: string): PrecomputedPoly | null {
 
 /** 글로벌 엔티티 평가 카운터 (INSERT 재귀 폭발 방지) */
 let globalEntityEvals = 0
-let globalTextStyleMap: Map<string, string> = new Map()
 const MAX_ENTITY_EVALS = 500_000
 
 /** Transform HatchData SVG path coordinates: subtract base point, apply transforms */
@@ -1090,6 +1152,7 @@ function entityToPolyline(
   output: PolylineData[],
   textsOutput?: TextData[],
   hatchesOutput?: HatchData[],
+  styleMap?: Map<string, string>,
 ): void {
   if (++globalEntityEvals > MAX_ENTITY_EVALS) return  // 총 평가 횟수 초과 → bail
   // DXF layer "0" inheritance: 블록 내부 엔티티가 layer "0"이면 INSERT 레이어 상속
@@ -1099,7 +1162,7 @@ function entityToPolyline(
 
   // TEXT/MTEXT → texts output (if provided)
   if ((type === 'TEXT' || type === 'MTEXT') && textsOutput) {
-    const td = extractTextEntity(type, codes, layer, colorNum, transforms, globalTextStyleMap)
+    const td = extractTextEntity(type, codes, layer, colorNum, transforms, styleMap)
     if (td) textsOutput.push(td)
     return
   }
@@ -1136,7 +1199,7 @@ function entityToPolyline(
       const eOwnLayer = eCodes.get(8)?.[0]?.trim() || '0'
       const eLayer = (eOwnLayer === '0' && layer) ? layer : eOwnLayer
       if (selectedLayers.size > 0 && !selectedLayers.has(eLayer)) continue
-      entityToPolyline(eType, eCodes, blocks, eLayer, transforms, depth + 1, selectedLayers, output, textsOutput, hatchesOutput)
+      entityToPolyline(eType, eCodes, blocks, eLayer, transforms, depth + 1, selectedLayers, output, textsOutput, hatchesOutput, styleMap)
     }
     return
   }
@@ -1206,7 +1269,7 @@ function entityToPolyline(
               const subOutput: PolylineData[] = []
               const subHatches: HatchData[] = []
               const subTexts: TextData[] = []
-              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput ? subTexts : undefined, hatchesOutput ? subHatches : undefined)
+              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput ? subTexts : undefined, hatchesOutput ? subHatches : undefined, styleMap)
               for (const pl of subOutput) {
                 if (selectedLayers.size > 0 && !selectedLayers.has(pl.layer)) continue
                 for (const p of pl.vertices) { p[0] -= block.baseX; p[1] -= block.baseY }
@@ -1252,7 +1315,7 @@ function entityToPolyline(
               }
               if (selectedLayers.size > 0 && !selectedLayers.has(eLayer)) continue
               const blockColor = eCodes.get(62)?.[0] ? parseInt(eCodes.get(62)![0]) : -1
-              const td = extractTextEntity(eType === 'ATTRIB' ? 'TEXT' : eType, eCodes, eLayer, blockColor, nextTransforms, globalTextStyleMap)
+              const td = extractTextEntity(eType === 'ATTRIB' ? 'TEXT' : eType, eCodes, eLayer, blockColor, nextTransforms, styleMap)
               if (td) {
                 const rawX = parseFloat(eCodes.get(10)?.[0] ?? '0') - block.baseX
                 const rawY = parseFloat(eCodes.get(20)?.[0] ?? '0') - block.baseY
@@ -1272,7 +1335,7 @@ function entityToPolyline(
               const subOutput: PolylineData[] = []
               const subHatches2: HatchData[] = []
               const subTexts2: TextData[] = []
-              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput ? subTexts2 : undefined, hatchesOutput ? subHatches2 : undefined)
+              entityToPolyline(eType, eCodes, blocks, layer, [], depth + 1, selectedLayers, subOutput, textsOutput ? subTexts2 : undefined, hatchesOutput ? subHatches2 : undefined, styleMap)
               for (const pl of subOutput) {
                 for (const p of pl.vertices) { p[0] -= block.baseX; p[1] -= block.baseY }
                 for (const tr of nextTransforms) applyTransform(pl.vertices, tr)
@@ -1348,6 +1411,7 @@ function extractTextEntity(
   let text: string
   let attachPt: number | undefined
   let mtextWidth: number | undefined
+  let mtextFont: string | undefined
   if (type === 'TEXT') {
     text = decodeDxfSpecialChars((codes.get(1)?.[0] ?? '').trim())
     // TEXT alignment: group 72 (horizontal) + 73 (vertical)
@@ -1364,7 +1428,12 @@ function extractTextEntity(
   } else {
     // MTEXT: group code 3 (앞쪽 250자 단위 청크들) + group code 1 (마지막 청크)
     const parts = [...(codes.get(3) || []), codes.get(1)?.[0] ?? '']
-    text = cleanMtextFormatting(decodeDxfSpecialChars(parts.join('').trim()))
+    const raw = decodeDxfSpecialChars(parts.join('').trim())
+    // 인라인 폰트 지정 `\f굴림|b0|i0|c129|p50;` 은 cleanMtextFormatting 이
+    // 서식 코드로 싸잡아 지우므로 **지우기 전에** 뽑아둬야 한다.
+    const fMatch = raw.match(/\\[fF]([^;|]+)/)
+    if (fMatch) mtextFont = fMatch[1].trim()
+    text = cleanMtextFormatting(raw)
     // MTEXT attachment point (group 71): 1=TL 2=TC 3=TR 4=ML 5=MC 6=MR 7=BL 8=BC 9=BR
     attachPt = parseInt(codes.get(71)?.[0] ?? '0') || undefined
     // MTEXT defined width (group 41)
@@ -1385,12 +1454,12 @@ function extractTextEntity(
   if (styleMap) {
     const styleName = (codes.get(7)?.[0] ?? '').trim().toUpperCase()
     if (styleName) fontName = styleMap.get(styleName)
-    // MTEXT inline font override: \f코딩체; → extract font name
-    if (!fontName && type === 'MTEXT') {
-      const fMatch = text.match(/\\[fF]([^;|]+)/)
-      if (fMatch) fontName = fMatch[1].trim()
-    }
   }
+  // MTEXT 인라인 폰트는 STYLE 이 못 풀었을 때만 쓴다. AutoCAD 는 인라인을
+  // 우선하지만 그건 **구간별** 폰트이고 여기 모델은 엔티티당 하나뿐이라,
+  // 일부 구간의 지정이 문장 전체 폰트를 갈아치우는 쪽이 더 나쁘다.
+  // fontFileToFamily 를 거쳐 한글 폰트 매핑과 이름 위생 검사를 같이 받는다.
+  if (!fontName && mtextFont) fontName = fontFileToFamily(mtextFont)
 
   return { x, y, text, height, rotation, layer, colorNumber: colorNum, attachPt, width: mtextWidth, fontName }
 }
@@ -1420,7 +1489,6 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   const linetypeMap = parseLinetypes(dxfText, gc)
   const layerLtMap = parseLayerLinetypes(dxfText, gc)
   const textStyleMap = parseTextStyles(dxfText, gc)
-  globalTextStyleMap = textStyleMap  // module-level for extractTextEntity access
   console.log(`[fast-worker] ${linetypeMap.size}개 LTYPE, ${textStyleMap.size}개 STYLE, $LTSCALE=${ltscale}`)
 
   // 2. Blocks
@@ -1494,11 +1562,14 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
       break
     }
 
-    const si = dxfText.indexOf(SEP_PAT, sepPos)
-    if (si < 0 || si >= entEnd) break
+    // sepPos 는 항상 코드 줄 앞 개행이므로 parity 를 지키며 다음 gc0 을 찾는다.
+    // 단순 indexOf 면 패딩 없는 DXF 의 `30\n0`(z=0) 같은 값 줄에서 끊기고,
+    // 그 토막이 `30` 타입의 가짜 엔티티로 잡힌다.
+    const si = gcIdxFrom(dxfText, SEP_PAT, sepPos, entEnd)
+    if (si < 0) break
 
     const eStart = si + SEP_PAT.length             // entity content start (TYPE\n...)
-    const nextSi = dxfText.indexOf(SEP_PAT, eStart)
+    const nextSi = idxIn(dxfText, SEP_PAT, eStart, entEnd)
     const eEnd = (nextSi >= 0 && nextSi < entEnd) ? nextSi : entEnd
 
     entityIdx++
@@ -1758,7 +1829,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
         const { lt, lw } = extractLtLw(eStart, eEnd)
         const entityLt = resolveLinetype(lt, entityLayer)
         const prevLen = output.length
-        entityToPolyline(type, codes, blocks, '', [], 0, layerSet, output, texts, hatches)
+        entityToPolyline(type, codes, blocks, '', [], 0, layerSet, output, texts, hatches, textStyleMap)
         // Tag newly added polylines with linetype/lineweight
         if (entityLt || lw !== undefined) {
           for (let pi = prevLen; pi < output.length; pi++) {
