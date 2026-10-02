@@ -2496,12 +2496,51 @@ function transformWorkerHatches(workerHatches: HatchData[], textScale: number): 
 }
 
 /** 클러스터 미할당 텍스트 → 독립 DxfGroup shape 생성 */
-function buildOrphanTextShapes(
+/** 고립 텍스트가 만들 수 있는 shape 수 상한.
+ *  넘으면 텍스트를 버리는 게 아니라 격자로 더 거칠게 묶는다. */
+const MAX_ORPHAN_TEXT_SHAPES = 1500
+
+/** 텍스트를 격자 셀로 다시 묶는다. 셀 수가 maxGroups 를 넘지 않도록 셀 크기를
+ *  바운딩박스에서 역산하므로, 결과 그룹 수는 항상 maxGroups 이하다. */
+function regroupTextsByGrid(texts: PxText[], maxGroups: number): PxText[][] {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const t of texts) {
+    if (t.x < minX) minX = t.x
+    if (t.x > maxX) maxX = t.x
+    if (t.y < minY) minY = t.y
+    if (t.y > maxY) maxY = t.y
+  }
+  const w = Math.max(maxX - minX, 1), h = Math.max(maxY - minY, 1)
+  // 면적에서 셀 크기를 역산하면 floor 때문에 셀 수가 상한을 살짝 넘는다
+  // (cols=ceil(w/cell), rows=ceil(h/cell)) → 들어맞을 때까지 키운다.
+  let cell = Math.max(Math.sqrt((w * h) / Math.max(1, maxGroups)), 1)
+  for (let i = 0; i < 20; i++) {
+    const cells = (Math.floor(w / cell) + 1) * (Math.floor(h / cell) + 1)
+    if (cells <= maxGroups) break
+    cell *= Math.sqrt(cells / maxGroups) * 1.02
+  }
+  const buckets = new Map<string, PxText[]>()
+  for (const t of texts) {
+    const key = `${Math.floor((t.x - minX) / cell)},${Math.floor((t.y - minY) / cell)}`
+    let b = buckets.get(key)
+    if (!b) { b = []; buckets.set(key, b) }
+    b.push(t)
+  }
+  return [...buckets.values()]
+}
+
+/** 어떤 지오메트리 클러스터에도 붙지 못한 텍스트를 텍스트 전용 shape 으로.
+ *
+ *  텍스트는 **같은 레이어의** 클러스터에만 붙는데, 도면은 보통 문자를 전용
+ *  레이어에 몰아넣는다 → 사실상 모든 텍스트가 여기로 온다. 예전엔 2000개를
+ *  넘으면 통째로 `return []` 했고, 로그조차 없어서 도면에서 글자가 전부
+ *  사라져도 아무 흔적이 안 남았다. 이제는 버리지 않고 더 거칠게 묶는다. */
+export function buildOrphanTextShapes(
   pxTexts: PxText[], assignedTextIdx: Set<number>,
   offsetX: number, offsetY: number, fingerprint: string,
 ): unknown[] {
   const orphanTexts = pxTexts.filter((_, idx) => !assignedTextIdx.has(idx))
-  if (orphanTexts.length === 0 || orphanTexts.length > 2000) return []
+  if (orphanTexts.length === 0) return []
 
   const TEXT_GROUP_GAP = 200
   const sorted = [...orphanTexts].sort((a, b) => a.y - b.y || a.x - b.x)
@@ -2520,8 +2559,15 @@ function buildOrphanTextShapes(
   }
   textGroups.push(curGroup)
 
+  // 그룹이 너무 많으면 shape 수가 폭발한다 → 격자로 재묶음. 텍스트는 안 버린다.
+  let groups = textGroups
+  if (groups.length > MAX_ORPHAN_TEXT_SHAPES) {
+    groups = regroupTextsByGrid(orphanTexts, MAX_ORPHAN_TEXT_SHAPES)
+    console.warn(`[CAD V2] 고립 텍스트 그룹 ${textGroups.length}개 → 격자 재묶음 ${groups.length}개 (텍스트 ${orphanTexts.length}개 전부 유지)`)
+  }
+
   const shapes: unknown[] = []
-  for (const tg of textGroups) {
+  for (const tg of groups) {
     let tMinX = Infinity, tMinY = Infinity, tMaxX = -Infinity, tMaxY = -Infinity
     for (const t of tg) {
       tMinX = Math.min(tMinX, t.x)
@@ -2545,7 +2591,7 @@ function buildOrphanTextShapes(
       meta: { dxfFingerprint: fingerprint, dxfLayer: tg[0].layer || '0' },
     })
   }
-  console.log(`[CAD V2] 고립 텍스트: ${orphanTexts.length}개 → ${textGroups.length}개 그룹`)
+  console.log(`[CAD V2] 고립 텍스트: ${orphanTexts.length}개 → ${groups.length}개 그룹`)
   return shapes
 }
 
