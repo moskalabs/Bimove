@@ -58,6 +58,15 @@ body,
   margin: 0;
   padding: 0;
   overflow: hidden;
+
+  /* 터치패드 두 손가락 가로 스와이프가 브라우저 뒤로가기로 새는 걸 막는다.
+     크롬/엣지는 가로 스크롤이 스크롤러 끝에 닿으면 (여긴 overflow:hidden 이라
+     항상 끝이다) overscroll navigation 제스처를 발동한다 — 캔버스에서 왼쪽으로
+     이동하려는 순간 페이지가 뒤로 가버렸다. 캔버스가 wheel 을 preventDefault
+     해도 소용없다. 이 제스처는 wheel 이벤트보다 앞단에서 결정되고, 끄는
+     방법은 스크롤러에 overscroll-behavior 를 거는 것뿐이다.
+     세로도 같이 막는다 — 당겨서 새로고침으로 작업이 날아가면 더 손해다. */
+  overscroll-behavior: none;
 }
 
 h1,
