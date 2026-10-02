@@ -16,12 +16,6 @@
     "test:ui": "vitest --ui"
   },
   "dependencies": {
-    "@mlightcad/cad-simple-viewer": "^1.7.3",
-    "@mlightcad/common": "^1.15.1",
-    "@mlightcad/data-model": "^1.15.1",
-    "@mlightcad/mtext-parser": "^1.5.3",
-    "@mlightcad/mtext-renderer": "^0.13.1",
-    "@mlightcad/three-renderer": "^1.7.3",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
     "@supabase/supabase-js": "^2.110.1",
