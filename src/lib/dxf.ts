@@ -2457,14 +2457,18 @@ function removeOutlierSegments(segs: RawSeg[]): RawSeg[] {
  *  (예: '평 면 (1/60)' h=2970, 'COVER' h=1980 — 도면에서 가장 큰 글자들)
  *  예전엔 여기서 통째로 버려서 제목만 쏙 사라졌고 로그도 안 남았다.
  *  레거시 commitCadImport 쪽은 처음부터 "지오메트리 제외, TEXT는 유지" 였다. */
-function transformWorkerTexts(workerTexts: TextData[], textScale: number): PxText[] {
+/**
+ * @param minHeight 텍스트 최소 높이(px). 캔버스 span 에 비례한 값을 넘긴다 —
+ *   computeMinTextHeight() 참고.
+ */
+function transformWorkerTexts(workerTexts: TextData[], textScale: number, minHeight: number): PxText[] {
   return workerTexts
     .filter(t => Math.abs(t.x) < COORD_LIMIT && Math.abs(t.y) < COORD_LIMIT && isFinite(t.x) && isFinite(t.y))
     .map(t => ({
       x: t.x * textScale,
       y: -t.y * textScale,
       text: t.text,
-      height: Math.max(t.height * textScale, 4),
+      height: Math.max(t.height * textScale, minHeight),
       rotation: t.rotation,
       color: t.colorNumber >= 0 ? aciToHex(t.colorNumber) : undefined,
       layer: t.layer,
@@ -2472,6 +2476,27 @@ function transformWorkerTexts(workerTexts: TextData[], textScale: number): PxTex
       width: t.width ? t.width * textScale : undefined,
       fontName: t.fontName,
     }))
+}
+
+/** 자동 축소 후 캔버스가 가질 수 있는 최대 span (px) */
+const MAX_CANVAS_SPAN_PX = 12000
+
+/**
+ * 텍스트 최소 높이(px)를 캔버스 span 에서 계산한다.
+ * span 이 MAX_CANVAS_SPAN_PX 일 때 1px, 더 작은 도면이면 그만큼 더 작게.
+ *
+ * 예전엔 절대값 4px 였다. autoScale 이 작은 대형 도면(autoScale 0.0123 같은)에선
+ * 글자 대부분이 4px 미만으로 스케일되므로 448개 중 430개가 **정확히 4px** 로
+ * 뭉개졌다 — 도면 제목, 실명, 치수, 주기가 전부 같은 크기가 되어 크기 위계가
+ * 통째로 사라졌다. 하한을 캔버스 크기에 비례시키면, 원래 크기 차이가
+ * 하한 아래로 깔리지 않는다.
+ *
+ * 0.1px 절대 하한은 남긴다 — 텍스트 높이를 shape props 에 toFixed(1) 로 넣으므로
+ * 그보다 작으면 0 으로 반올림되어 글자가 아예 사라진다.
+ */
+export function computeMinTextHeight(canvasSpanPx: number): number {
+  const span = canvasSpanPx > 0 && isFinite(canvasSpanPx) ? canvasSpanPx : MAX_CANVAS_SPAN_PX
+  return Math.max(span / MAX_CANVAS_SPAN_PX, 0.1)
 }
 
 /** Worker 해치 → px 좌표 변환 (Y-flip + scale, SVG path 변환) */
@@ -2745,13 +2770,12 @@ export async function commitCadImportV2(
   let minX = _minX, maxX = _maxX, minY = _minY, maxY = _maxY
 
   // 8. autoScale
-  const MAX_CANVAS_SPAN = 12000
   const spanX = maxX - minX || 1
   const spanY = maxY - minY || 1
   const maxSpan = Math.max(spanX, spanY)
   let autoScale = 1
-  if (maxSpan > MAX_CANVAS_SPAN) {
-    autoScale = MAX_CANVAS_SPAN / maxSpan
+  if (maxSpan > MAX_CANVAS_SPAN_PX) {
+    autoScale = MAX_CANVAS_SPAN_PX / maxSpan
     for (const s of finalSegs) {
       s.x1 *= autoScale; s.y1 *= autoScale; s.dx *= autoScale; s.dy *= autoScale
     }
@@ -2786,7 +2810,8 @@ export async function commitCadImportV2(
     txLoX = minX - bboxPad; txHiX = maxX + bboxPad
     txLoY = minY - bboxPad; txHiY = maxY + bboxPad
   }
-  const pxTexts = transformWorkerTexts(workerTexts, textScale)
+  const minTextPx = computeMinTextHeight(Math.max(maxX - minX, maxY - minY))
+  const pxTexts = transformWorkerTexts(workerTexts, textScale, minTextPx)
     .filter(t => t.x >= txLoX && t.x <= txHiX && t.y >= txLoY && t.y <= txHiY)
   console.log(`[CAD V2] ${pxTexts.length}개 텍스트 변환 (${viewportClip ? 'viewport' : 'bbox'} 필터)`)
   const pxHatches = transformWorkerHatches(workerHatches, textScale)
