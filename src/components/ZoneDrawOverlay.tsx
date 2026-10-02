@@ -66,6 +66,14 @@ export function ZoneDrawOverlay() {
     return () => window.removeEventListener('keydown', handler, true)
   }, [active, pagePoints.length])
 
+  // handleClick/handleDoubleClick 보다 **위에** 있어야 한다 (AreaMeasureOverlay 와 동일)
+  const finishDraw = useCallback((pts: Pt[]) => {
+    if (!editor || pts.length < 3) return
+    const scale = getScaleConfig(editor)
+    const measured = measurePolygon(pts, scale.pxPerMm)
+    completeZoneDraw({ points: pts, ...measured })
+  }, [editor])
+
   const handleClick = useCallback((e: React.MouseEvent) => {
     if (!editor || !active) return
     e.stopPropagation()
@@ -86,13 +94,13 @@ export function ZoneDrawOverlay() {
     }
 
     setPagePoints(prev => [...prev, pagePt])
-  }, [editor, active, pagePoints])
+  }, [editor, active, pagePoints, finishDraw])
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
     e.preventDefault()
     if (pagePoints.length >= 3) finishDraw(pagePoints)
-  }, [pagePoints])
+  }, [pagePoints, finishDraw])
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!editor || !active) return
@@ -127,13 +135,6 @@ export function ZoneDrawOverlay() {
     e.stopPropagation()
     if (pagePoints.length > 0) setPagePoints(prev => prev.slice(0, -1))
   }, [pagePoints.length])
-
-  const finishDraw = (pts: Pt[]) => {
-    if (!editor || pts.length < 3) return
-    const scale = getScaleConfig(editor)
-    const measured = measurePolygon(pts, scale.pxPerMm)
-    completeZoneDraw({ points: pts, ...measured })
-  }
 
   if (!active) return null
 

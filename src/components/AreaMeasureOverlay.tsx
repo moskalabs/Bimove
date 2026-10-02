@@ -71,6 +71,15 @@ export function AreaMeasureOverlay() {
     return () => window.removeEventListener('keydown', handler, true)
   }, [active, pagePoints.length])
 
+  // 측정 완료.
+  // handleClick/handleDoubleClick 보다 **위에** 있어야 한다 — 아래에 두면
+  // 아직 선언되지 않은 함수를 useCallback 안에서 참조하게 된다.
+  const finishMeasure = useCallback((pts: Pt[]) => {
+    if (!editor || pts.length < 3) return
+    const scale = getScaleConfig(editor)
+    completeAreaMeasure(measurePolygon(pts, scale.pxPerMm))
+  }, [editor])
+
   // 클릭: 꼭짓점 추가
   const handleClick = useCallback((e: React.MouseEvent) => {
     if (!editor || !active) return
@@ -96,7 +105,7 @@ export function AreaMeasureOverlay() {
     }
 
     setPagePoints(prev => [...prev, pagePt])
-  }, [editor, active, pagePoints])
+  }, [editor, active, pagePoints, finishMeasure])
 
   // 더블클릭: 폴리곤 닫기
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
@@ -105,7 +114,7 @@ export function AreaMeasureOverlay() {
     if (pagePoints.length >= 3) {
       finishMeasure(pagePoints)
     }
-  }, [pagePoints])
+  }, [pagePoints, finishMeasure])
 
   // 마우스 이동: 커서 위치 표시 + 스냅 감지
   const snapLoggedRef = useRef(false)
@@ -156,13 +165,6 @@ export function AreaMeasureOverlay() {
       setPagePoints(prev => prev.slice(0, -1))
     }
   }, [pagePoints.length])
-
-  // 측정 완료
-  const finishMeasure = (pts: Pt[]) => {
-    if (!editor || pts.length < 3) return
-    const scale = getScaleConfig(editor)
-    completeAreaMeasure(measurePolygon(pts, scale.pxPerMm))
-  }
 
   if (!active) return null
 

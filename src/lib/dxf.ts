@@ -535,7 +535,8 @@ export function parseDxfSegments(
                 const a = Math.hypot(maj.x, maj.y), b = a * ratio
                 const rot = Math.atan2(maj.y, maj.x)
                 const cosR = Math.cos(rot), sinR = Math.sin(rot)
-                let sa = edge.startAngle ?? 0, ea = edge.endAngle ?? (2 * Math.PI)
+                const sa = edge.startAngle ?? 0
+                let ea = edge.endAngle ?? (2 * Math.PI)
                 if (ea <= sa) ea += 2 * Math.PI
                 const N = 24, dt = (ea - sa) / N
                 for (let i = 0; i < N && segs.length < maxSegments; i++) {
@@ -617,7 +618,8 @@ function boundaryToSvgPath(bp: HatchBoundaryPath): string {
         const a = Math.hypot(maj.x, maj.y), b = a * ratio
         const rot = Math.atan2(maj.y, maj.x)
         const cosR = Math.cos(rot), sinR = Math.sin(rot)
-        let sa = edge.startAngle ?? 0, ea = edge.endAngle ?? (2 * Math.PI)
+        const sa = edge.startAngle ?? 0
+        let ea = edge.endAngle ?? (2 * Math.PI)
         if (ea <= sa) ea += 2 * Math.PI
         const N = 18, dt = (ea - sa) / N
         for (let i = 0; i <= N; i++) {
@@ -2701,10 +2703,10 @@ export async function commitCadImportV2(
   onProgress?.('도면 파싱 중...')
   let polylines: PolylineData[]
   let insUnits: number
-  let workerTexts: TextData[] = []
-  let workerHatches: HatchData[] = []
-  let workerLinetypes: LinetypeDef[] = []
-  let workerLtscale = 1
+  let workerTexts: TextData[]
+  let workerHatches: HatchData[]
+  let workerLinetypes: LinetypeDef[]
+  let workerLtscale: number
   try {
     const result = await runFastWorker(dxfText, layerArr, onProgress)
     polylines = result.polylines
@@ -2718,8 +2720,6 @@ export async function commitCadImportV2(
     // 동기 fallback 제거 — 메인 스레드에서 100MB+ 파일 파싱 시 브라우저 완전 멈춤
     // 대신 에러 알림 후 빈 결과 반환
     onProgress?.('파싱 실패 — 다시 시도해주세요')
-    polylines = []
-    insUnits = 4
     return 0
   }
   const parseMs = (performance.now() - t0).toFixed(0)

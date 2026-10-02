@@ -48,13 +48,13 @@ function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onClose: ()
             <span className="lbar-menu-arrow">›</span>
             {exportSub && (
               <div className="lbar-menu-sub" onClick={(e) => e.stopPropagation()}>
-                <div className="lbar-menu-item" onClick={() => { editor && exportDxf(editor); onClose(); setExportSub(false) }}>
+                <div className="lbar-menu-item" onClick={() => { if (editor) exportDxf(editor); onClose(); setExportSub(false) }}>
                   📐 DXF 내보내기
                 </div>
-                <div className="lbar-menu-item" onClick={() => { editor && exportPng(editor); onClose(); setExportSub(false) }}>
+                <div className="lbar-menu-item" onClick={() => { if (editor) exportPng(editor); onClose(); setExportSub(false) }}>
                   🖼 PNG 내보내기
                 </div>
-                <div className="lbar-menu-item" onClick={() => { editor && printReport(editor, { projectId: projectId || undefined }); onClose(); setExportSub(false) }}>
+                <div className="lbar-menu-item" onClick={() => { if (editor) printReport(editor, { projectId: projectId || undefined }); onClose(); setExportSub(false) }}>
                   📋 리포트 내보내기
                 </div>
               </div>

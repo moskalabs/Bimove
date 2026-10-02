@@ -27,7 +27,7 @@ function variantSummary(item: FinishingItem, v: MaterialVariant): { area: string
   const total = item.floorOnly ? sumFloorArea(v) : sumTotalArea(v)
   if (total <= 0) return { area: '-', qty: '-' }
 
-  let qty: number | string = 0
+  let qty: number | string
   switch (item.calcType) {
     case 'sheet': qty = calcSheetQty(item, v); break
     case 'roll': qty = calcRollQty(item, v); break

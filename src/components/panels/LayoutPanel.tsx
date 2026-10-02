@@ -70,6 +70,9 @@ export function LayoutPanel() {
   const thumbCache = useRef<Map<string, string | null>>(new Map())
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 재시도는 자기 자신을 다시 부른다. useCallback 안에서 refreshCurrentThumb 를
+  // 직접 참조하면 선언되기 전의 바인딩을 읽는 셈이라, ref 를 한 번 거친다.
+  const refreshRef = useRef<() => void>(() => {})
 
   /* ── 현재 페이지 썸네일만 갱신 ── */
   const refreshCurrentThumb = useCallback(async () => {
@@ -90,9 +93,11 @@ export function LayoutPanel() {
     // 썸네일 생성 실패 시 재시도
     if (!svgHtml && editor.getCurrentPageShapes().length > 0) {
       if (retryRef.current) clearTimeout(retryRef.current)
-      retryRef.current = setTimeout(() => refreshCurrentThumb(), 2000)
+      retryRef.current = setTimeout(() => refreshRef.current(), 2000)
     }
   }, [editor])
+
+  useEffect(() => { refreshRef.current = refreshCurrentThumb }, [refreshCurrentThumb])
 
   /* ── 전체 페이지 목록 동기화 ── */
   const syncPageList = useCallback(() => {

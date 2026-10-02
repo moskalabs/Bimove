@@ -31,7 +31,7 @@ import {
 import { drawingState } from '../lib/drawingState'
 import { getProjects, renameProject } from '../lib/projectStore'
 
-type SelInfo = {
+export type SelInfo = {
   id: TLShapeId
   type: string
   props: Record<string, unknown>
@@ -531,7 +531,74 @@ function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleC
 }
 
 /* ── 선택 속성 패널 (기존 유지) ── */
-function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleConfig }) {
+/**
+ * Zone 속성 입력.
+ *
+ * 별도 컴포넌트인 이유: 예전엔 PropsPanel 의 `sel.type === 'zone'` 분기
+ * **안에서** useState 를 불렀다. PropsPanel 은 다른 분기에서 훅을 쓰지 않으므로,
+ * Zone 을 선택했다가 벽을 선택하면 훅 개수가 2 → 0 으로 줄어
+ * "Rendered fewer hooks than expected" 로 터진다.
+ */
+function ZoneSection({ sel }: { sel: NonNullable<SelInfo> }) {
+  const editor = useEditor()
+  const zp = sel.props as { label: string; wallHeightMm: number; areaM2: number; perimeterM: number; color: string }
+  const [zLabel, setZLabel] = useState(zp.label)
+  const [zHeight, setZHeight] = useState(String(zp.wallHeightMm / 1000))
+
+  const commitZone = () => {
+    if (!editor) return
+    editor.updateShape({
+      id: sel.id,
+      type: 'zone',
+      props: {
+        label: zLabel.trim() || '미지정',
+        wallHeightMm: Math.round((parseFloat(zHeight) || 2.4) * 1000),
+      },
+    } as never)
+  }
+
+  return (
+    <section className="rbar-section">
+      <h3 style={{ color: zp.color }}>공간 (Zone)</h3>
+      <div className="rbar-prop-row">
+        <span className="rbar-prop-label">이름</span>
+        <input
+          className="rbar-prop-input"
+          value={zLabel}
+          onChange={e => setZLabel(e.target.value)}
+          onBlur={commitZone}
+          onKeyDown={e => { if (e.key === 'Enter') commitZone() }}
+        />
+      </div>
+      <div className="rbar-prop-row">
+        <span className="rbar-prop-label">층고</span>
+        <input
+          className="rbar-prop-input"
+          type="number"
+          step="0.1"
+          value={zHeight}
+          onChange={e => setZHeight(e.target.value)}
+          onBlur={commitZone}
+          onKeyDown={e => { if (e.key === 'Enter') commitZone() }}
+          style={{ width: 60 }}
+        />
+        <span className="rbar-prop-unit">m</span>
+      </div>
+      <div className="rbar-prop-row">
+        <span className="rbar-prop-label">면적</span>
+        <span className="rbar-prop-value">{zp.areaM2.toFixed(2)} m²</span>
+      </div>
+      <div className="rbar-prop-row">
+        <span className="rbar-prop-label">둘레</span>
+        <span className="rbar-prop-value">{zp.perimeterM.toFixed(2)} m</span>
+      </div>
+    </section>
+  )
+}
+
+// export 는 테스트용 — 선택 타입이 바뀔 때 훅 개수가 흔들리지 않는지 보려면
+// RBar 전체를 띄우지 않고 이 컴포넌트만 다시 렌더해보면 된다.
+export function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleConfig }) {
   const editor = useEditor()
   const shape = editor?.getShape(sel.id)
   const isLocked = shape?.isLocked ?? false
@@ -590,60 +657,14 @@ function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: ScaleCon
   }
 
   if (sel.type === 'zone') {
-    const zp = sel.props as { label: string; wallHeightMm: number; areaM2: number; perimeterM: number; color: string }
-    const [zLabel, setZLabel] = useState(zp.label)
-    const [zHeight, setZHeight] = useState(String(zp.wallHeightMm / 1000))
-
-    const commitZone = () => {
-      if (!editor) return
-      editor.updateShape({
-        id: sel.id,
-        type: 'zone',
-        props: {
-          label: zLabel.trim() || '미지정',
-          wallHeightMm: Math.round((parseFloat(zHeight) || 2.4) * 1000),
-        },
-      } as never)
-    }
-
+    // key={sel.id} 로 shape 마다 새로 마운트시킨다 — 아래 ZoneSection 의
+    // useState 초기값은 마운트 때 한 번만 읽히므로, 키가 없으면 다른 Zone 을
+    // 선택해도 앞 Zone 의 이름/층고가 입력칸에 남고 blur 하는 순간
+    // 엉뚱한 Zone 에 그 값이 써진다.
     return (
       <>
         {lockBtn}
-        <section className="rbar-section">
-          <h3 style={{ color: zp.color }}>공간 (Zone)</h3>
-          <div className="rbar-prop-row">
-            <span className="rbar-prop-label">이름</span>
-            <input
-              className="rbar-prop-input"
-              value={zLabel}
-              onChange={e => setZLabel(e.target.value)}
-              onBlur={commitZone}
-              onKeyDown={e => { if (e.key === 'Enter') commitZone() }}
-            />
-          </div>
-          <div className="rbar-prop-row">
-            <span className="rbar-prop-label">층고</span>
-            <input
-              className="rbar-prop-input"
-              type="number"
-              step="0.1"
-              value={zHeight}
-              onChange={e => setZHeight(e.target.value)}
-              onBlur={commitZone}
-              onKeyDown={e => { if (e.key === 'Enter') commitZone() }}
-              style={{ width: 60 }}
-            />
-            <span className="rbar-prop-unit">m</span>
-          </div>
-          <div className="rbar-prop-row">
-            <span className="rbar-prop-label">면적</span>
-            <span className="rbar-prop-value">{zp.areaM2.toFixed(2)} m²</span>
-          </div>
-          <div className="rbar-prop-row">
-            <span className="rbar-prop-label">둘레</span>
-            <span className="rbar-prop-value">{zp.perimeterM.toFixed(2)} m</span>
-          </div>
-        </section>
+        <ZoneSection key={sel.id} sel={sel} />
       </>
     )
   }
