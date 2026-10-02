@@ -2,22 +2,17 @@ import { useEffect, useState } from 'react'
 import { useEditor } from '../context/EditorContext'
 import { getScaleConfig } from '../lib/scaleConfig'
 
-function niceStep(mm: number): number {
-  if (mm <= 0 || !isFinite(mm)) return 1000
-  const mag = Math.pow(10, Math.floor(Math.log10(mm)))
-  const n = mm / mag
-  if (n < 1.5) return mag
-  if (n < 3.5) return 2 * mag
-  if (n < 7.5) return 5 * mag
-  return 10 * mag
-}
-
-function formatMm(mm: number): string {
+/** 실제 거리(mm)를 읽기 좋은 단위로 포맷 */
+function formatDistance(mm: number): string {
+  if (!isFinite(mm) || mm <= 0) return '0 m'
   if (mm >= 1_000_000) return `${(mm / 1_000_000).toFixed(2)} km`
   if (mm >= 1000) return `${(mm / 1000).toFixed(2)} m`
-  if (mm >= 100) return `${(mm / 10).toFixed(1)} cm`
-  return `${Math.round(mm)} mm`
+  if (mm >= 10) return `${(mm / 10).toFixed(1)} cm`
+  return `${mm.toFixed(1)} mm`
 }
+
+/** 바 고정 폭(px). 줌해도 바 길이는 안 변하고 숫자만 바뀜 */
+const BAR_PX = 200
 
 export function ScaleRuler() {
   const editor = useEditor()
@@ -38,32 +33,28 @@ export function ScaleRuler() {
     return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
   }, [editor])
 
+  // 화면상 BAR_PX 픽셀이 실제로 몇 mm에 해당하는지 계산
   const screenPxPerMm = pxPerMm * zoom
   if (!isFinite(screenPxPerMm) || screenPxPerMm <= 0) return null
-  const targetMm = 180 / screenPxPerMm
-  if (!isFinite(targetMm) || targetMm <= 0) return null
+  const realMm = BAR_PX / screenPxPerMm
+  if (!isFinite(realMm) || realMm <= 0) return null
 
-  const niceMm = niceStep(targetMm)
-  const barPx = Math.max(80, Math.min(280, niceMm * screenPxPerMm))
-  const label = formatMm(niceMm)
-
+  const label = formatDistance(realMm)
   const tickH = 8
   const barY = 28
-  const pad = 16
 
   return (
     <div style={{
       position: 'absolute', bottom: 24, left: 20, zIndex: 400,
       background: 'rgba(255,255,255,0.92)', borderRadius: 8,
-      padding: `8px ${pad}px 6px`,
+      padding: '8px 16px 6px',
       pointerEvents: 'none', userSelect: 'none',
       boxShadow: '0 1px 6px rgba(0,0,0,0.10)',
-      display: 'flex', alignItems: 'center', gap: 10,
     }}>
-      <svg width={barPx} height={36} style={{ display: 'block', overflow: 'visible' }}>
+      <svg width={BAR_PX} height={36} style={{ display: 'block', overflow: 'visible' }}>
         {/* centered label */}
         <text
-          x={barPx / 2} y={14}
+          x={BAR_PX / 2} y={14}
           fontSize={13} fontWeight={500} fill="#333"
           textAnchor="middle" dominantBaseline="auto"
           style={{ fontVariantNumeric: 'tabular-nums' }}
@@ -71,9 +62,9 @@ export function ScaleRuler() {
         {/* left tick ^ */}
         <line x1={1} y1={barY} x2={1} y2={barY - tickH} stroke="#999" strokeWidth={1} />
         {/* right tick ^ */}
-        <line x1={barPx - 1} y1={barY} x2={barPx - 1} y2={barY - tickH} stroke="#999" strokeWidth={1} />
+        <line x1={BAR_PX - 1} y1={barY} x2={BAR_PX - 1} y2={barY - tickH} stroke="#999" strokeWidth={1} />
         {/* horizontal bar */}
-        <line x1={1} y1={barY} x2={barPx - 1} y2={barY} stroke="#999" strokeWidth={1} />
+        <line x1={1} y1={barY} x2={BAR_PX - 1} y2={barY} stroke="#999" strokeWidth={1} />
       </svg>
     </div>
   )
