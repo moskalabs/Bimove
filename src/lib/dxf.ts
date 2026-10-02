@@ -2449,10 +2449,16 @@ function removeOutlierSegments(segs: RawSeg[]): RawSeg[] {
   return finalSegs
 }
 
-/** Worker 텍스트 → px 좌표 변환 (Y-flip + scale) */
+/** Worker 텍스트 → px 좌표 변환 (Y-flip + scale)
+ *
+ *  DEFPOINTS 는 지오메트리만 걸러낸다 (치수 정의점 — 어차피 안 보이는 POINT).
+ *  텍스트는 남긴다. AutoCAD 의 DEFPOINTS 는 "출력 안 함" 이지 "숨김" 이 아니라
+ *  화면에는 그대로 보이고, 실무에서 도면 제목을 여기에 올려놓는 경우가 흔하다.
+ *  (예: '평 면 (1/60)' h=2970, 'COVER' h=1980 — 도면에서 가장 큰 글자들)
+ *  예전엔 여기서 통째로 버려서 제목만 쏙 사라졌고 로그도 안 남았다.
+ *  레거시 commitCadImport 쪽은 처음부터 "지오메트리 제외, TEXT는 유지" 였다. */
 function transformWorkerTexts(workerTexts: TextData[], textScale: number): PxText[] {
   return workerTexts
-    .filter(t => (t.layer || '0').toUpperCase() !== 'DEFPOINTS')  // AutoCAD 비출력 레이어
     .filter(t => Math.abs(t.x) < COORD_LIMIT && Math.abs(t.y) < COORD_LIMIT && isFinite(t.x) && isFinite(t.y))
     .map(t => ({
       x: t.x * textScale,
