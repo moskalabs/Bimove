@@ -2601,6 +2601,63 @@ export function buildOrphanTextShapes(
   return shapes
 }
 
+/**
+ * 할당되지 않은 해치 → 독립 DxfGroup shape 하나.
+ *
+ * 세그먼트 100개 미만 도면(개별 wall shape 경로)은 해치를 담을 DxfGroup 이
+ * 아예 만들어지지 않는다. 예전엔 여기서 해치가 통째로 사라졌다.
+ * 작은 도면이라 개수가 적어서 한 shape 에 모아도 충분하다 —
+ * DxfGroupShape 은 overflow:visible 이라 bbox 가 커도 잘리지 않는다.
+ */
+export function buildOrphanHatchShapes(
+  pxHatches: PxHatch[], assignedHatchIdx: Set<number>,
+  offsetX: number, offsetY: number, fingerprint: string,
+): unknown[] {
+  const orphans = pxHatches.filter((_, idx) => !assignedHatchIdx.has(idx))
+  if (orphans.length === 0) return []
+
+  let hMinX = Infinity, hMinY = Infinity, hMaxX = -Infinity, hMaxY = -Infinity
+  const parsed = orphans.map(hh => {
+    let pMinX = Infinity, pMinY = Infinity, pMaxX = -Infinity, pMaxY = -Infinity
+    const pts: Array<[string, number, number]> = []
+    hh.pathData.replace(
+      /([MLZ])([\d.e+-]+),([\d.e+-]+)/g,
+      (_m, cmd: string, xStr: string, yStr: string) => {
+        const x = parseFloat(xStr), y = parseFloat(yStr)
+        pts.push([cmd, x, y])
+        pMinX = Math.min(pMinX, x); pMaxX = Math.max(pMaxX, x)
+        pMinY = Math.min(pMinY, y); pMaxY = Math.max(pMaxY, y)
+        return _m
+      }
+    )
+    if (pts.length === 0) return null
+    hMinX = Math.min(hMinX, pMinX); hMaxX = Math.max(hMaxX, pMaxX)
+    hMinY = Math.min(hMinY, pMinY); hMaxY = Math.max(hMaxY, pMaxY)
+    return { hh, pts, dim: Math.max(pMaxX - pMinX, pMaxY - pMinY, 10) }
+  }).filter((v): v is NonNullable<typeof v> => v !== null)
+
+  if (parsed.length === 0) return []
+
+  const localHatches = parsed.map(({ hh, pts, dim }) => ({
+    d: pts.map(([cmd, x, y]) => `${cmd}${(x - hMinX).toFixed(1)},${(y - hMinY).toFixed(1)}`).join(''),
+    p: hh.patternName, s: hh.patternScale, a: hh.patternAngle, c: hh.color,
+    dim: +dim.toFixed(1),
+  }))
+
+  console.log(`[CAD V2] 고립 해치: ${localHatches.length}개 → 1개 그룹`)
+  return [{
+    id: createShapeId(),
+    type: 'dxfgroup',
+    x: hMinX - offsetX, y: hMinY - offsetY,
+    props: {
+      w: Math.max(hMaxX - hMinX, 10), h: Math.max(hMaxY - hMinY, 10),
+      pathData: '', thickness: 0, segCount: 0,
+      textsJson: '', hatchesJson: JSON.stringify(localHatches),
+    },
+    meta: { dxfFingerprint: fingerprint, dxfLayer: parsed[0].hh.layer || '0' },
+  }]
+}
+
 export async function commitCadImportV2(
   editor: Editor,
   dxfText: string,
@@ -3010,8 +3067,19 @@ export async function commitCadImportV2(
     },
   }))
 
-  if (shapes.length) {
-    editor.createShapes(shapes as never)
+  // 텍스트/해치도 같이 만든다.
+  // 예전엔 이 분기가 wall shape 만 만들고 pxTexts/pxHatches 를 쳐다보지도
+  // 않았다 — 세그먼트 100개 미만 도면(작은 평면도, 상세도)은 글자와 해치가
+  // 통째로 사라졌다. 100개 이상 경로에선 DxfGroup 이 담아주던 것들이다.
+  // 여기선 묶어줄 DxfGroup 이 없으니 전부 "고립" 취급해서 독립 shape 로 만든다.
+  const extraShapes = [
+    ...buildOrphanTextShapes(pxTexts, new Set<number>(), offsetX, offsetY, fingerprint),
+    ...buildOrphanHatchShapes(pxHatches, new Set<number>(), offsetX, offsetY, fingerprint),
+  ]
+
+  const allShapes = [...shapes, ...extraShapes]
+  if (allShapes.length) {
+    editor.createShapes(allShapes as never)
     setTimeout(() => {
       try {
         editor.selectAll()
@@ -3022,7 +3090,7 @@ export async function commitCadImportV2(
   }
 
   const totalMs = ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0).toFixed(0)
-  console.log(`[CAD V2] ✅ 완료: ${shapes.length}개 wall shape (${totalMs}ms)`)
+  console.log(`[CAD V2] ✅ 완료: ${shapes.length}개 wall shape + ${extraShapes.length}개 텍스트/해치 shape (${totalMs}ms)`)
   return shapes.length
 }
 
