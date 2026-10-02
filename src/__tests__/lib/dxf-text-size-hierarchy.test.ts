@@ -11,7 +11,7 @@
  * 하한 아래로 깔리지 않게 했다.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { commitCadImportV2, computeMinTextHeight } from '../../lib/dxf'
+import { commitCadImportV2, computeMinTextHeight, unpackTextsJson } from '../../lib/dxf'
 import type { PolylineData, TextData } from '../../lib/dxf-fast-worker'
 
 describe('computeMinTextHeight', () => {
@@ -88,7 +88,7 @@ function heightsByText(shapes: unknown[]): Map<string, number> {
   const out = new Map<string, number>()
   for (const s of shapes as ShapeLike[]) {
     if (s.type !== 'dxfgroup' || !s.props.textsJson) continue
-    for (const e of JSON.parse(s.props.textsJson) as Array<{ t: string; h: number }>) {
+    for (const e of unpackTextsJson(s.props.textsJson) as Array<{ t: string; h: number }>) {
       out.set(e.t, e.h)
     }
   }

@@ -13,6 +13,65 @@ type Seg = { x1: number; y1: number; x2: number; y2: number }
 // ACI 색상 테이블, trueColorToHex → dxf-shared.ts에서 import (ACI_TABLE, trueColorToHexShared)
 const ACI_TO_HEX = ACI_TABLE
 
+// ── textsJson 압축: 폰트/색상 테이블로 중복 제거 ──
+// 기존: [{"x":1,"y":2,"t":"A","h":3,"f":"Arial","c":"#FF0000"}, ...]
+// 신규: {"F":["Arial"],"C":["#FF0000"],"T":[{"x":1,"y":2,"t":"A","h":3,"fi":0,"ci":0}, ...]}
+// 역호환: 파서가 배열이면 구형, 객체+T키면 신형으로 자동 판별
+type LocalTextEntry = { x: number; y: number; t: string; h: number; r?: number; c?: string; ap?: number; mw?: number; f?: string }
+
+function packTextsJson(texts: LocalTextEntry[]): string {
+  if (texts.length === 0) return ''
+  // 폰트/색상 고유값 수집
+  const fontSet = new Map<string, number>()
+  const colorSet = new Map<string, number>()
+  for (const t of texts) {
+    if (t.f && !fontSet.has(t.f)) fontSet.set(t.f, fontSet.size)
+    if (t.c && !colorSet.has(t.c)) colorSet.set(t.c, colorSet.size)
+  }
+  // 테이블이 없으면 (폰트/색상 전부 undefined) 구형 포맷이 더 작음
+  if (fontSet.size === 0 && colorSet.size === 0) return JSON.stringify(texts)
+
+  const fonts = Array.from(fontSet.keys())
+  const colors = Array.from(colorSet.keys())
+  const packed = texts.map(t => {
+    const entry: Record<string, unknown> = { x: t.x, y: t.y, t: t.t, h: t.h }
+    if (t.r !== undefined) entry.r = t.r
+    if (t.ap !== undefined) entry.ap = t.ap
+    if (t.mw !== undefined) entry.mw = t.mw
+    if (t.f) entry.fi = fontSet.get(t.f)
+    if (t.c) entry.ci = colorSet.get(t.c)
+    return entry
+  })
+  return JSON.stringify({ F: fonts, C: colors, T: packed })
+}
+
+/** textsJson 파싱 — 신형(테이블) / 구형(배열) 자동 판별 */
+export function unpackTextsJson(json: string): Array<{ x: number; y: number; t: string; h: number; r?: number; c?: string; ap?: number; mw?: number; f?: string }> {
+  if (!json) return []
+  try {
+    const parsed = JSON.parse(json)
+    // 구형: 배열 그대로
+    if (Array.isArray(parsed)) return parsed
+    // 신형: 테이블에서 복원
+    if (parsed && Array.isArray(parsed.T)) {
+      const fonts: string[] = parsed.F || []
+      const colors: string[] = parsed.C || []
+      return parsed.T.map((t: Record<string, unknown>) => ({
+        x: t.x as number,
+        y: t.y as number,
+        t: t.t as string,
+        h: t.h as number,
+        r: t.r as number | undefined,
+        c: t.ci !== undefined ? colors[t.ci as number] : undefined,
+        ap: t.ap as number | undefined,
+        mw: t.mw as number | undefined,
+        f: t.fi !== undefined ? fonts[t.fi as number] : undefined,
+      }))
+    }
+    return []
+  } catch { return [] }
+}
+
 function aciToHex(index: number): string | undefined {
   return ACI_TO_HEX[index]
 }
@@ -2050,7 +2109,7 @@ export function commitCadImport(
           y: gy,
           props: {
             w, h, pathData, thickness: thickness * autoScale * 0.3, segCount: cluster.length,
-            textsJson: localTexts.length ? JSON.stringify(localTexts) : '',
+            textsJson: localTexts.length ? packTextsJson(localTexts) : '',
             hatchesJson: localHatches.length ? JSON.stringify(localHatches) : '',
           },
           meta: {
@@ -2099,7 +2158,7 @@ export function commitCadImport(
           type: 'dxfgroup',
           x: tMinX - offsetX,
           y: tMinY - offsetY,
-          props: { w, h, pathData: '', thickness: 0, segCount: 0, textsJson: JSON.stringify(localTexts), hatchesJson: '' },
+          props: { w, h, pathData: '', thickness: 0, segCount: 0, textsJson: packTextsJson(localTexts), hatchesJson: '' },
           meta: { dxfFingerprint: result.fingerprint, dxfLayer: layer },
         })
       }
@@ -2676,7 +2735,7 @@ export function buildOrphanTextShapes(
       id: createShapeId(),
       type: 'dxfgroup',
       x: tMinX - offsetX, y: tMinY - offsetY,
-      props: { w: tw, h: th, pathData: '', thickness: 0, segCount: 0, textsJson: JSON.stringify(localTexts), hatchesJson: '' },
+      props: { w: tw, h: th, pathData: '', thickness: 0, segCount: 0, textsJson: packTextsJson(localTexts), hatchesJson: '' },
       meta: { dxfFingerprint: fingerprint, dxfLayer: tg[0].layer || '0' },
     })
   }
@@ -3108,7 +3167,7 @@ export async function commitCadImportV2(
             props: {
               w, h, pathData, thickness: thickness * autoScale * 0.3, segCount: sliceSegs.length,
               // 텍스트/해치는 첫 번째 슬라이스에만 포함 (중복 방지)
-              textsJson: si === 0 && localTexts.length > 0 ? JSON.stringify(localTexts) : '',
+              textsJson: si === 0 && localTexts.length > 0 ? packTextsJson(localTexts) : '',
               hatchesJson: si === 0 && localHatches.length > 0 ? JSON.stringify(localHatches) : '',
             },
             meta: {

@@ -11,7 +11,7 @@
  * 지오메트리(치수 정의점)는 계속 걸러내는 게 맞다.
  */
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest'
-import { commitCadImportV2 } from '../../lib/dxf'
+import { commitCadImportV2, unpackTextsJson } from '../../lib/dxf'
 
 // ── 테스트용 DXF 조립 ──
 const gc = (code: number, value: string | number) => `${code}\n${value}\n`
@@ -85,7 +85,7 @@ async function importTexts(
   const out: Array<{ t: string; h: number; layer: string }> = []
   for (const sh of created) {
     if (!sh.props?.textsJson) continue
-    for (const t of JSON.parse(sh.props.textsJson) as Array<{ t: string; h: number }>) {
+    for (const t of unpackTextsJson(sh.props.textsJson) as Array<{ t: string; h: number }>) {
       out.push({ t: t.t, h: t.h, layer: sh.meta.dxfLayer || '0' })
     }
   }

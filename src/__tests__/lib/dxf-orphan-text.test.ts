@@ -8,7 +8,7 @@
  * 아무 흔적이 안 남는다. 텍스트는 한 글자도 버리지 않아야 한다.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { buildOrphanTextShapes } from '../../lib/dxf'
+import { buildOrphanTextShapes, unpackTextsJson } from '../../lib/dxf'
 
 type ShapeLike = { props: { textsJson: string; w: number; h: number } }
 type TextEntry = { t: string }
@@ -27,7 +27,7 @@ function makeTexts(n: number): Array<{ x: number; y: number; text: string; heigh
 /** 생성된 shape 들에 들어 있는 텍스트 전부 */
 function textsIn(shapes: unknown[]): string[] {
   return (shapes as ShapeLike[]).flatMap(
-    sh => (JSON.parse(sh.props.textsJson) as TextEntry[]).map(t => t.t),
+    sh => (unpackTextsJson(sh.props.textsJson) as TextEntry[]).map(t => t.t),
   )
 }
 

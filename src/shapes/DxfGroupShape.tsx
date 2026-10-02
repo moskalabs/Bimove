@@ -14,6 +14,7 @@ import {
   useEditor,
 } from 'tldraw'
 import { getGrayscaleMode, getDarkMode } from '../lib/settings'
+import { unpackTextsJson } from '../lib/dxf'
 
 /** 색상의 상대 밝기 (0~1) */
 function luminance(hex: string): number {
@@ -465,8 +466,7 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
 
   // 텍스트/HATCH 데이터: useMemo로 캐싱 (리렌더 시 JSON.parse 재실행 방지)
   const texts: DxfTextEntry[] = useMemo(() => {
-    try { return shape.props.textsJson ? JSON.parse(shape.props.textsJson) : [] }
-    catch { return [] }
+    return unpackTextsJson(shape.props.textsJson)
   }, [shape.props.textsJson])
 
   const hatches: DxfHatchEntry[] = useMemo(() => {
@@ -648,10 +648,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
     const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
     const strokeW = dxfLw > 0 ? Math.max(0.5, Math.min(dxfLw / 100, 2)) : 0.8
 
-    let texts: DxfTextEntry[] = []
-    try {
-      if (shape.props.textsJson) texts = JSON.parse(shape.props.textsJson)
-    } catch { /* ignore */ }
+    const texts: DxfTextEntry[] = unpackTextsJson(shape.props.textsJson)
 
     let hatches: DxfHatchEntry[] = []
     try {

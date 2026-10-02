@@ -500,7 +500,9 @@ function fontFileToFamily(fontFile: string): string | undefined {
   // ── Korean design fonts (Nanum, HY, Expo, etc.) ──
   if (lower.startsWith('nanum')) return 'Nanum Gothic'
   if (lower.startsWith('expo')) return 'Noto Sans KR'  // Expo 계열은 웹에 없음 → fallback
-  if (lower.startsWith('hy') && lower.length > 2) return 'Noto Sans KR'  // HY중고딕 등 → fallback
+  // HY중고딕, HYGothic 등 한양 계열 한국어 폰트 → fallback
+  // hybrid, hydra, hyper 등 영문 단어와 구분하기 위해 알려진 HY 폰트 접두사 매칭
+  if (/^hy(go|po|he|sh|my|gr|sm|rg|gu|ba|do|ro|pi|ta|ls|pm|kp|ye|bw|견|중|신|울|그)/i.test(lower)) return 'Noto Sans KR'
 
   // ── Korean bigfont SHX (gc 4 bigfont용) ──
   if (lower === 'whgtxt' || lower === 'whgdtxt' || lower === 'whtgtxt' ||

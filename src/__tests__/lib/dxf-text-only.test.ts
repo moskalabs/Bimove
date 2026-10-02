@@ -9,7 +9,7 @@
  * 이제 텍스트/해치 좌표에서 bbox 를 뽑아 그대로 파이프라인을 태운다.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { commitCadImportV2 } from '../../lib/dxf'
+import { commitCadImportV2, unpackTextsJson } from '../../lib/dxf'
 import type { PolylineData, TextData, HatchData } from '../../lib/dxf-fast-worker'
 
 type WorkerResult = {
@@ -66,7 +66,7 @@ type ShapeLike = {
 function textsIn(shapes: unknown[]): string[] {
   return (shapes as ShapeLike[])
     .filter(s => s.type === 'dxfgroup' && s.props.textsJson)
-    .flatMap(s => (JSON.parse(s.props.textsJson!) as Array<{ t: string }>).map(e => e.t))
+    .flatMap(s => (unpackTextsJson(s.props.textsJson!) as Array<{ t: string }>).map(e => e.t))
 }
 
 function hatchCount(shapes: unknown[]): number {
@@ -141,7 +141,7 @@ describe('commitCadImportV2 — 선이 없는 도면', () => {
     }
     for (const s of created) {
       if (!s.props.textsJson) continue
-      for (const e of JSON.parse(s.props.textsJson) as Array<{ x: number; y: number; h: number }>) {
+      for (const e of unpackTextsJson(s.props.textsJson!) as Array<{ x: number; y: number; h: number }>) {
         expect(Number.isFinite(e.x)).toBe(true)
         expect(Number.isFinite(e.y)).toBe(true)
         expect(e.h).toBeGreaterThan(0)

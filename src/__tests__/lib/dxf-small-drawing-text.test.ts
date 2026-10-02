@@ -13,7 +13,7 @@
  * Worker 는 jsdom 에 없으니 미리 정해둔 결과를 돌려주는 가짜로 바꿔 끼운다.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { commitCadImportV2 } from '../../lib/dxf'
+import { commitCadImportV2, unpackTextsJson } from '../../lib/dxf'
 import type { PolylineData, TextData, HatchData } from '../../lib/dxf-fast-worker'
 
 type WorkerResult = {
@@ -78,7 +78,7 @@ type ShapeLike = { type: string; props: { textsJson: string; hatchesJson: string
 function textsIn(shapes: unknown[]): string[] {
   return (shapes as ShapeLike[])
     .filter(s => s.type === 'dxfgroup' && s.props.textsJson)
-    .flatMap(s => (JSON.parse(s.props.textsJson) as Array<{ t: string }>).map(e => e.t))
+    .flatMap(s => (unpackTextsJson(s.props.textsJson) as Array<{ t: string }>).map(e => e.t))
 }
 
 function hatchCount(shapes: unknown[]): number {
