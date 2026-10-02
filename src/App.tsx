@@ -40,7 +40,7 @@ import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as l
 import { saveVersion, getVersion } from './lib/versions'
 import { backupServerSnapshot } from './lib/conflictBackup'
 import { dwgToDxfBytes, decodeDxfBytes, commitCadImportV2 } from './lib/dxf'
-import { initGrayscaleAttr, initDarkAttr, getDarkMode } from './lib/settings'
+import { initGrayscaleAttr, initDarkAttr, getDarkMode, getWheelBehavior } from './lib/settings'
 import './App.css'
 
 // body data-grayscale / dark 동기화 (페이지 로드 시)
@@ -114,12 +114,13 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
     ed.setCameraOptions({
       ...ed.getCameraOptions(),
       zoomSteps: [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8],
-      wheelBehavior: 'zoom',
+      wheelBehavior: getWheelBehavior(),
     })
     // 다크모드: tldraw 내부 테마도 동기화
     ed.user.updateUserPreferences({ colorScheme: getDarkMode() ? 'dark' : 'light' })
     const onSettingsChange = () => {
       ed.user.updateUserPreferences({ colorScheme: getDarkMode() ? 'dark' : 'light' })
+      ed.setCameraOptions({ ...ed.getCameraOptions(), wheelBehavior: getWheelBehavior() })
     }
     window.addEventListener('bimova:settings', onSettingsChange)
     // Supabase에서 먼저 로드, 실패하면 localStorage 폴백

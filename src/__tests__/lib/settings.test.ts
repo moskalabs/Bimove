@@ -7,7 +7,9 @@ import {
   getRoomNames, setRoomName,
   getSnapEnabled, setSnapEnabled,
   getSnapMode, setSnapMode, getActiveSnapModes,
+  getWheelBehavior, setWheelBehavior,
 } from '../../lib/settings'
+import { scopedSet } from '../../lib/scopedStorage'
 
 describe('wall thickness', () => {
   it('returns 200 as default', () => {
@@ -187,5 +189,26 @@ describe('individual snap modes', () => {
     const modes = getActiveSnapModes()
     expect(modes.endpoint).toBe(false)
     expect(modes.extension).toBe(true)
+  })
+})
+
+describe('wheel behavior', () => {
+  // tldraw 는 ctrl 이 눌리면 wheelBehavior 를 뒤집는다. 터치패드는 두 손가락
+  // 스크롤을 ctrl 없이, 핀치를 ctrlKey: true 로 보내므로 'zoom' 으로 두면
+  // 스크롤=확대 / 핀치=이동 으로 정확히 뒤집힌다 → 기본값은 'pan'.
+  it("기본값은 'pan' (터치패드 기준)", () => {
+    expect(getWheelBehavior()).toBe('pan')
+  })
+
+  it('설정한 값이 유지된다', () => {
+    setWheelBehavior('zoom')
+    expect(getWheelBehavior()).toBe('zoom')
+    setWheelBehavior('pan')
+    expect(getWheelBehavior()).toBe('pan')
+  })
+
+  it("알 수 없는 값은 'pan' 으로 떨어진다", () => {
+    scopedSet('bimova_wheel_behavior', 'garbage')
+    expect(getWheelBehavior()).toBe('pan')
   })
 })

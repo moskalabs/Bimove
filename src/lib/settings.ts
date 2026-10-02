@@ -110,6 +110,27 @@ export function setDarkMode(v: boolean) {
   window.dispatchEvent(new Event('bimova:settings'))
 }
 
+const WHEEL_BEHAVIOR_KEY = 'bimova_wheel_behavior'
+
+/** 휠/터치패드 동작.
+ *
+ *  tldraw 는 ctrl 이 눌려 있으면 이 값을 뒤집는다 (Editor.js):
+ *    behavior = ctrlKey ? (wheelBehavior === 'pan' ? 'zoom' : 'pan') : wheelBehavior
+ *
+ *  터치패드는 두 손가락 스크롤을 ctrl 없이, 핀치를 `ctrlKey: true` 로 보낸다.
+ *  따라서 'zoom' 으로 두면 스크롤이 확대, 핀치가 이동이 되어 정확히 뒤집힌다.
+ *  기본값을 'pan' 으로 두는 이유 — 터치패드에서 스크롤=이동, 핀치=확대 로
+ *  자연스럽게 맞는다. 마우스 휠로 확대하는 CAD 습관을 원하면 'zoom'. */
+export type WheelBehavior = 'pan' | 'zoom'
+
+export function getWheelBehavior(): WheelBehavior {
+  return scopedGet(WHEEL_BEHAVIOR_KEY) === 'zoom' ? 'zoom' : 'pan'
+}
+export function setWheelBehavior(v: WheelBehavior) {
+  scopedSet(WHEEL_BEHAVIOR_KEY, v)
+  window.dispatchEvent(new Event('bimova:settings'))
+}
+
 /** 초기화 시 dark attr 동기화 */
 export function initDarkAttr() {
   document.documentElement.dataset.dark = getDarkMode() ? 'true' : ''

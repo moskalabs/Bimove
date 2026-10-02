@@ -25,6 +25,7 @@ import {
   getWallHeightMm, setWallHeightMm,
   getSnapEnabled, setSnapEnabled,
   getDarkMode, setDarkMode as persistDarkMode,
+  getWheelBehavior, setWheelBehavior, type WheelBehavior,
   getSnapMode, setSnapMode, type SnapMode,
 } from '../lib/settings'
 import { drawingState } from '../lib/drawingState'
@@ -189,6 +190,7 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
   const editor = useEditor()
   const [gridOn, setGridOn] = useState(false)
   const [darkMode, setDarkModeLocal] = useState(getDarkMode)
+  const [wheel, setWheelLocal] = useState<WheelBehavior>(getWheelBehavior)
   const [layerCount, setLayerCount] = useState(0)
 
   useEffect(() => {
@@ -253,6 +255,24 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
             className={`rbar-toggle-btn${darkMode ? ' active' : ''}`}
             onClick={() => { persistDarkMode(true); setDarkModeLocal(true) }}
           >Dark</button>
+        </div>
+      </div>
+
+      {/* 휠/터치패드 — tldraw 는 ctrl 이 눌리면 이 값을 뒤집으므로,
+          터치패드(스크롤=ctrl 없음, 핀치=ctrl)에서는 '이동' 이 맞다 */}
+      <div className="rbar-prop-row">
+        <span className="rbar-prop-label">휠 동작</span>
+        <div className="rbar-toggle-group">
+          <button
+            className={`rbar-toggle-btn${wheel === 'pan' ? ' active' : ''}`}
+            title="터치패드: 두 손가락 스크롤로 이동, 핀치로 확대"
+            onClick={() => { setWheelBehavior('pan'); setWheelLocal('pan') }}
+          >이동</button>
+          <button
+            className={`rbar-toggle-btn${wheel === 'zoom' ? ' active' : ''}`}
+            title="마우스: 휠로 확대/축소 (CAD 방식)"
+            onClick={() => { setWheelBehavior('zoom'); setWheelLocal('zoom') }}
+          >확대</button>
         </div>
       </div>
 
