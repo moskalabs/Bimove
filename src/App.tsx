@@ -37,7 +37,8 @@ import { EditorContext } from './context/EditorContext'
 import { ProjectContext } from './context/ProjectContext'
 import { loadSnapshot, saveSnapshot, saveThumbnail, touchProject } from './lib/projectStore'
 import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase } from './lib/supabaseSync'
-import { saveVersion } from './lib/versions'
+import { saveVersion, getVersion } from './lib/versions'
+import { backupServerSnapshot } from './lib/conflictBackup'
 import { dwgToDxfBytes, decodeDxfBytes, commitCadImportV2 } from './lib/dxf'
 import { initGrayscaleAttr, initDarkAttr, getDarkMode } from './lib/settings'
 import './App.css'
@@ -218,17 +219,37 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
     // Supabase 동기화 (5초 디바운스, optimistic locking)
     let lastServerUpdatedAt: string | undefined = serverUpdatedAtRef.current
     let syncFailed = false
+    let syncPaused = false                      // 충돌 백업 실패 → 서버 쓰기 중단
+    let backedUpServerAt: string | undefined    // 같은 서버 버전을 반복 백업하지 않기
+
     supabaseTimer = window.setInterval(async () => {
-      if (!latestSnapshot) return
+      if (!latestSnapshot || syncPaused) return
       const snap = latestSnapshot
       latestSnapshot = null
       try {
         const result = await saveSnapshotToSupabase(projectId, snap, undefined, lastServerUpdatedAt)
         if (result.conflict) {
-          // 충돌 시 조용히 현재 내용으로 덮어쓰기 (confirm 대신)
-          console.warn('[supabase-sync] conflict detected, auto-overwriting')
+          // 다른 세션이 먼저 저장했다. 예전엔 경고 로그만 찍고 조용히 덮어썼다 —
+          // 상대가 한 작업이 흔적도 없이 사라진다. 이제 서버 내용을 버전으로
+          // 백업한 뒤에만 덮어쓴다. 백업이 안 되면 서버 쓰기를 멈춘다 —
+          // 조용히 날리는 것보다 동기화를 포기하는 쪽이 낫다
+          // (로컬 저장은 계속 돌아가므로 지금 작업을 잃지는 않는다).
+          console.warn('[supabase-sync] 충돌 감지 — 서버 내용 백업 후 덮어쓰기')
+          const backup = await backupServerSnapshot(
+            projectId, result.serverUpdatedAt, backedUpServerAt,
+            { loadRemote: loadSnapshotFromSupabase, saveVersion, getVersion },
+          )
+          if (backup === 'saved') backedUpServerAt = result.serverUpdatedAt
+          if (backup === 'failed') {
+            syncPaused = true
+            toast('다른 기기의 변경과 충돌했지만 백업에 실패해 서버 저장을 멈췄습니다. 작업은 이 기기에 저장됩니다 — 새로고침해서 확인해주세요.', 'error')
+            return
+          }
           const retry = await saveSnapshotToSupabase(projectId, snap)
           lastServerUpdatedAt = retry.serverUpdatedAt
+          if (backup === 'saved') {
+            toast('다른 기기에서 저장한 내용이 있어 이 화면 내용으로 덮어썼습니다. 서버에 있던 내용은 버전 기록에 백업했습니다.', 'error')
+          }
         } else {
           lastServerUpdatedAt = result.serverUpdatedAt
           if (syncFailed) {
