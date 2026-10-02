@@ -43,6 +43,15 @@ function darkenForLightBg(hex: string): string {
   return `#${nr.toString(16).padStart(2, '0')}${ng.toString(16).padStart(2, '0')}${nb.toString(16).padStart(2, '0')}`
 }
 
+/** DXF 텍스트 폰트 → CSS font-family 리스트.
+ *  이름에 따옴표가 섞이면 리스트 전체가 무효가 되어 한글 폴백까지 날아가므로
+ *  리스트를 깨는 문자는 제거한다. (worker 쪽 isFontNameLike 와 이중 방어) */
+const DXF_FALLBACK_FONTS = "'Noto Sans KR', 'Malgun Gothic', sans-serif"
+function dxfFontFamily(f?: string): string {
+  const safe = f?.replace(/['"\\;,]/g, '').trim()
+  return safe ? `'${safe}', ${DXF_FALLBACK_FONTS}` : DXF_FALLBACK_FONTS
+}
+
 export type DxfGroupShapeProps = {
   w: number       // bounding width
   h: number       // bounding height
@@ -512,9 +521,7 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
         const ap = t.ap || 1
         const textAnchor = (ap % 3 === 0) ? 'end' : (ap % 3 === 2) ? 'middle' : 'start'
         const baseline = ap <= 3 ? 'hanging' : ap <= 6 ? 'central' : 'alphabetic'
-        const fontFamily = t.f
-          ? `'${t.f}', 'Noto Sans KR', 'Malgun Gothic', sans-serif`
-          : "'Noto Sans KR', 'Malgun Gothic', sans-serif"
+        const fontFamily = dxfFontFamily(t.f)
         const lines = t.t.split('\n')
         return (
           <text
@@ -664,9 +671,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
           const ap = t.ap || 1
           const textAnchor = (ap % 3 === 0) ? 'end' : (ap % 3 === 2) ? 'middle' : 'start'
           const baseline = ap <= 3 ? 'hanging' : ap <= 6 ? 'central' : 'alphabetic'
-          const fontFamily = t.f
-            ? `'${t.f}', 'Noto Sans KR', 'Malgun Gothic', sans-serif`
-            : "'Noto Sans KR', 'Malgun Gothic', sans-serif"
+          const fontFamily = dxfFontFamily(t.f)
           const lines = t.t.split('\n')
           return (
             <text
