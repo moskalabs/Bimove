@@ -1670,10 +1670,10 @@ function clusterConnectedSegs(segs: RawSeg[]): RawSeg[][] {
 }
 
 /** 동일선상(collinear) 세그먼트를 병합하여 shape 수를 줄임 */
-type RawSeg = { x1: number; y1: number; dx: number; dy: number; layer?: string; lineweight?: number; color?: string; linetypeName?: string }
+export type RawSeg = { x1: number; y1: number; dx: number; dy: number; layer?: string; lineweight?: number; color?: string; linetypeName?: string }
 
-function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
-  // 각도(3°) + 수직거리(10px) + 색상 기준으로 버킷팅
+export function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
+  // 각도(3°) + 수직거리(10px) + 속성(레이어/색/선종류/선굵기) 기준으로 버킷팅
   const buckets = new Map<string, RawSeg[]>()
   for (const s of segs) {
     const len = Math.hypot(s.dx, s.dy)
@@ -1683,7 +1683,10 @@ function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
     if (ang >= 180) ang -= 180
     const nx = -s.dy / len, ny = s.dx / len
     const perp = nx * s.x1 + ny * s.y1
-    const key = `${Math.round(ang / 3)}|${Math.round(perp / 10)}|${s.color || ''}`
+    // 병합하면 first 의 속성이 구간 전체를 대표하게 된다. 그래서 다른 것으로
+    // 보여야 하는 속성(layer/color/linetype/lineweight)은 모두 키에 들어가야 한다 —
+    // 빠지면 파선이 실선으로, 가는 선이 굵은 선으로, 다른 레이어 것으로 뭉개진다.
+    const key = `${Math.round(ang / 3)}|${Math.round(perp / 10)}|${s.layer || ''}|${s.color || ''}|${s.linetypeName || ''}|${s.lineweight ?? ''}`
     let b = buckets.get(key)
     if (!b) { b = []; buckets.set(key, b) }
     b.push(s)
@@ -1714,7 +1717,12 @@ function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
       if (hi - lo < 1) return
       const sx = first.x1 + lo * ux, sy = first.y1 + lo * uy
       const ex = first.x1 + hi * ux, ey = first.y1 + hi * uy
-      out.push({ x1: sx, y1: sy, dx: ex - sx, dy: ey - sy, layer: first.layer, color: first.color })
+      // 버킷 키가 linetype/lineweight 까지 포함하므로 group 전체가 같은 값 → first 로 대표
+      out.push({
+        x1: sx, y1: sy, dx: ex - sx, dy: ey - sy,
+        layer: first.layer, color: first.color,
+        linetypeName: first.linetypeName, lineweight: first.lineweight,
+      })
     }
 
     for (let i = 1; i < intervals.length; i++) {
@@ -2704,7 +2712,9 @@ export async function commitCadImportV2(
     for (const s of finalSegs) {
       const layer = s.layer || '0'
       const ltKey = s.linetypeName || ''
-      const key = `${layer}\0${s.color || ''}\0${ltKey}`
+      // lineweight 도 키에 — shape 는 sliceSegs[0].lineweight 하나만 쓰므로
+      // 섞여 있으면 나머지 굵기가 전부 첫 값으로 덮인다.
+      const key = `${layer}\0${s.color || ''}\0${ltKey}\0${s.lineweight ?? ''}`
       let g = layerGroups.get(key)
       if (!g) {
         g = {
