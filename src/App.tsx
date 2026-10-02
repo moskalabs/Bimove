@@ -37,8 +37,9 @@ import { EditorContext } from './context/EditorContext'
 import { ProjectContext } from './context/ProjectContext'
 import { loadSnapshot, saveSnapshot, saveThumbnail, touchProject, resolveSnapshot } from './lib/projectStore'
 import { createDebouncedSaver } from './lib/debouncedSave'
-import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase } from './lib/supabaseSync'
+import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, saveProjectVersion } from './lib/supabaseSync'
 import { saveVersion, getVersion } from './lib/versions'
+import { pushVersion } from './lib/versionSync'
 import { backupServerSnapshot } from './lib/conflictBackup'
 import { dwgToDxfBytes, decodeDxfBytes, commitCadImportV2 } from './lib/dxf'
 import { initGrayscaleAttr, initDarkAttr, getDarkMode, getWheelBehavior } from './lib/settings'
@@ -47,6 +48,22 @@ import './App.css'
 // body data-grayscale / dark 동기화 (페이지 로드 시)
 initGrayscaleAttr()
 initDarkAttr()
+
+/**
+ * 버전을 로컬에 저장하고 서버에도 올린다.
+ *
+ * 예전엔 로컬(localStorage)에만 저장해서, 기기를 바꾸거나 캐시를 지우면
+ * 버전 기록이 통째로 사라졌다. 서버 테이블과 그걸 쓰는 함수는 있었지만
+ * 아무도 부르지 않는 죽은 코드였다.
+ *
+ * 서버 쓰기는 기다리지 않는다 — 실패해도 로컬 버전은 남았고,
+ * 호출부(자동 저장/충돌 백업)는 동기 반환값이 필요하다.
+ */
+function saveVersionSynced(projectId: string, snapshot: object, label?: string) {
+  const v = saveVersion(projectId, snapshot, label)
+  void pushVersion(projectId, v, saveProjectVersion)
+  return v
+}
 
 const SHAPE_UTILS = [WallShapeUtil, DxfGroupShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil, CommentShapeUtil, DimensionShapeUtil, ZoneShapeUtil]
 const TOOLS = [WallTool, DoorTool, WindowTool, BlockTool, CommentTool, DimensionTool]
@@ -253,7 +270,7 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
           console.warn('[supabase-sync] 충돌 감지 — 서버 내용 백업 후 덮어쓰기')
           const backup = await backupServerSnapshot(
             projectId, result.serverUpdatedAt, backedUpServerAt,
-            { loadRemote: loadSnapshotFromSupabase, saveVersion, getVersion },
+            { loadRemote: loadSnapshotFromSupabase, saveVersion: saveVersionSynced, getVersion },
           )
           if (backup === 'saved') backedUpServerAt = result.serverUpdatedAt
           if (backup === 'failed') {
@@ -287,7 +304,7 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
     const autoVersionTimer = window.setInterval(() => {
       if (!dirtySinceAuto) return
       try {
-        saveVersion(projectId, editor.store.getStoreSnapshot(), '자동저장')
+        saveVersionSynced(projectId, editor.store.getStoreSnapshot(), '자동저장')
         dirtySinceAuto = false
       } catch (err) {
         console.warn('[auto-version] failed', err)

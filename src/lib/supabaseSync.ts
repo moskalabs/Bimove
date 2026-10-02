@@ -1,6 +1,6 @@
 // Supabase ↔ 발주서 동기화
 // localStorage를 1차 캐시로, Supabase를 영속 저장소로 사용
-import { supabase } from './supabase'
+import { supabase, supabaseConfigured } from './supabase'
 import type {
   PurchaseOrder, BOQTable, BOQItem,
 } from './purchaseOrder'
@@ -337,30 +337,57 @@ export async function syncMaterialPresets(userId: string, presets: MaterialPrese
 }
 
 // ── 프로젝트 버전 히스토리 동기화 ──
+//
+// 여기 함수들은 실패를 삼키지 않고 throw 한다 — 호출부(versionSync)가
+// "서버 버전을 못 불러왔다" 를 사용자에게 알려줘야 하기 때문이다.
+// 단, 환경변수가 없으면 서버 기능 자체가 없는 것이므로 조용히 넘어간다.
 
 import type { Version } from './versions'
 
-export async function fetchProjectVersions(projectId: string): Promise<Version[]> {
-  const { data } = await supabase
+/** 버전 목록 항목 — 스냅샷은 들어있지 않다. */
+export type RemoteVersionMeta = { id: string; timestamp: number; label?: string }
+
+/**
+ * 서버 버전 목록 (스냅샷 제외, 최신순 30개).
+ *
+ * snapshot 을 일부러 빼고 받는다. 스냅샷 하나가 수 MB 라서 30개를 한꺼번에
+ * 받으면 패널을 여는 것만으로 수십 MB 를 내려받게 된다.
+ * 스냅샷은 복원/비교할 때 fetchProjectVersionSnapshot 으로 따로 받는다.
+ */
+export async function fetchProjectVersionMetas(projectId: string): Promise<RemoteVersionMeta[]> {
+  if (!supabaseConfigured) return []
+  const { data, error } = await supabase
     .from('project_versions')
-    .select('*')
+    .select('id, label, created_at')
     .eq('project_id', projectId)
     .order('created_at', { ascending: false })
     .limit(30)
-  if (!data) return []
-  return data.map(v => ({
+  if (error) throw error
+  return (data ?? []).map(v => ({
     id: v.id,
     timestamp: new Date(v.created_at).getTime(),
     label: v.label ?? undefined,
-    snapshot: v.snapshot as object,
   }))
+}
+
+/** 버전 하나의 스냅샷만 받아온다. */
+export async function fetchProjectVersionSnapshot(versionId: string): Promise<object | null> {
+  if (!supabaseConfigured) return null
+  const { data, error } = await supabase
+    .from('project_versions')
+    .select('snapshot')
+    .eq('id', versionId)
+    .single()
+  if (error) throw error
+  return (data?.snapshot as object) ?? null
 }
 
 export async function saveProjectVersion(
   projectId: string,
   version: Version,
 ): Promise<void> {
-  await supabase
+  if (!supabaseConfigured) return
+  const { error } = await supabase
     .from('project_versions')
     .insert({
       id: version.id,
@@ -369,11 +396,24 @@ export async function saveProjectVersion(
       snapshot: version.snapshot,
       created_at: new Date(version.timestamp).toISOString(),
     })
+  if (error) throw error
 }
 
 export async function deleteProjectVersion(versionId: string): Promise<void> {
-  await supabase
+  if (!supabaseConfigured) return
+  const { error } = await supabase
     .from('project_versions')
     .delete()
     .eq('id', versionId)
+  if (error) throw error
+}
+
+/** 버전 라벨 변경. 서버에만 있는 버전도 이름을 고칠 수 있어야 한다. */
+export async function renameProjectVersion(versionId: string, label: string | null): Promise<void> {
+  if (!supabaseConfigured) return
+  const { error } = await supabase
+    .from('project_versions')
+    .update({ label })
+    .eq('id', versionId)
+  if (error) throw error
 }

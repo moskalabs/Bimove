@@ -4,11 +4,22 @@ import { createClient } from '@supabase/supabase-js'
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+// 환경변수가 없으면 서버 기능 자체를 건너뛴다 — 로컬 개발에서
+// "서버 연결 실패" 같은 경고를 띄우지 않기 위해서.
+export const supabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY)
+
+if (!supabaseConfigured) {
   console.warn('[supabase] VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY 환경변수가 설정되지 않았습니다.')
 }
 
-export const supabase = createClient(SUPABASE_URL ?? '', SUPABASE_ANON_KEY ?? '')
+// 미설정이면 자리채움 값으로 만든다. 빈 문자열을 넘기면 createClient 가
+// "supabaseUrl is required." 로 **import 시점에** 던지고, 그러면 supabase 를
+// 간접적으로 거치는 화면까지 통째로 못 뜬다.
+// 실제 요청을 보낼지는 supabaseConfigured 로 가린다.
+export const supabase = createClient(
+  supabaseConfigured ? SUPABASE_URL : 'http://localhost:54321',
+  supabaseConfigured ? SUPABASE_ANON_KEY : 'unconfigured-anon-key',
+)
 
 // ── DB 타입 ──
 
