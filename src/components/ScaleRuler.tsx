@@ -13,10 +13,10 @@ function niceStep(mm: number): number {
 }
 
 function formatMm(mm: number): string {
-  if (mm >= 1_000_000) return `${mm / 1_000_000}km`
-  if (mm >= 1000) return `${mm / 1000}m`
-  if (mm >= 100) return `${mm / 10}cm`
-  return `${mm}mm`
+  if (mm >= 1_000_000) return `${(mm / 1_000_000).toFixed(2)} km`
+  if (mm >= 1000) return `${(mm / 1000).toFixed(2)} m`
+  if (mm >= 100) return `${(mm / 10).toFixed(1)} cm`
+  return `${Math.round(mm)} mm`
 }
 
 export function ScaleRuler() {
@@ -44,33 +44,36 @@ export function ScaleRuler() {
   if (!isFinite(targetMm) || targetMm <= 0) return null
 
   const niceMm = niceStep(targetMm)
-  const barPx = Math.max(40, Math.min(320, niceMm * screenPxPerMm))
+  const barPx = Math.max(80, Math.min(280, niceMm * screenPxPerMm))
   const label = formatMm(niceMm)
+
+  const tickH = 8
+  const barY = 28
+  const pad = 16
 
   return (
     <div style={{
       position: 'absolute', bottom: 24, left: 20, zIndex: 400,
-      background: 'rgba(255,255,255,0.88)', borderRadius: 6,
-      padding: '6px 8px 4px',
+      background: 'rgba(255,255,255,0.92)', borderRadius: 8,
+      padding: `8px ${pad}px 6px`,
       pointerEvents: 'none', userSelect: 'none',
-      boxShadow: '0 1px 5px rgba(0,0,0,0.13)',
+      boxShadow: '0 1px 6px rgba(0,0,0,0.10)',
+      display: 'flex', alignItems: 'center', gap: 10,
     }}>
-      <svg width={barPx} height={22} style={{ display: 'block', overflow: 'visible' }}>
-        {/* left tick */}
-        <line x1={1} y1={2} x2={1} y2={18} stroke="#333" strokeWidth={1.5} />
-        {/* mid tick */}
-        <line x1={barPx / 2} y1={6} x2={barPx / 2} y2={18} stroke="#555" strokeWidth={1} />
-        {/* right tick */}
-        <line x1={barPx - 1} y1={2} x2={barPx - 1} y2={18} stroke="#333" strokeWidth={1.5} />
-        {/* bar left half black */}
-        <rect x={1} y={9} width={(barPx - 2) / 2} height={6} fill="#444" />
-        {/* bar right half white */}
-        <rect x={1 + (barPx - 2) / 2} y={9} width={(barPx - 2) / 2} height={6} fill="#fff" stroke="#444" strokeWidth={0.5} />
-        {/* outer border */}
-        <rect x={1} y={9} width={barPx - 2} height={6} fill="none" stroke="#444" strokeWidth={1} />
-        {/* labels */}
-        <text x={1} y={8} fontSize={9} fill="#555" textAnchor="middle" dominantBaseline="auto">0</text>
-        <text x={barPx - 1} y={8} fontSize={9} fill="#555" textAnchor="middle" dominantBaseline="auto">{label}</text>
+      <svg width={barPx} height={36} style={{ display: 'block', overflow: 'visible' }}>
+        {/* centered label */}
+        <text
+          x={barPx / 2} y={14}
+          fontSize={13} fontWeight={500} fill="#333"
+          textAnchor="middle" dominantBaseline="auto"
+          style={{ fontVariantNumeric: 'tabular-nums' }}
+        >{label}</text>
+        {/* left tick ^ */}
+        <line x1={1} y1={barY} x2={1} y2={barY - tickH} stroke="#999" strokeWidth={1} />
+        {/* right tick ^ */}
+        <line x1={barPx - 1} y1={barY} x2={barPx - 1} y2={barY - tickH} stroke="#999" strokeWidth={1} />
+        {/* horizontal bar */}
+        <line x1={1} y1={barY} x2={barPx - 1} y2={barY} stroke="#999" strokeWidth={1} />
       </svg>
     </div>
   )
