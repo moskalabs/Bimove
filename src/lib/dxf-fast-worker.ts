@@ -1930,6 +1930,18 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
+      // ── Skip non-geometry entities that never produce polylines ──
+      // OLE2FRAME/OLEFRAME can be 10-20MB+ of hex binary data; parsing them
+      // via parseGroupCodes causes 300K+ array entries and potential OOM in web workers.
+      if (type === 'OLE2FRAME' || type === 'OLEFRAME' || type === 'IMAGE' ||
+          type === 'WIPEOUT' || type === 'VIEWPORT' || type === 'ATTDEF' ||
+          type === 'LEADER' || type === 'MULTILEADER' || type === 'TOLERANCE' ||
+          type === 'ACAD_PROXY_ENTITY' || type === 'BODY' || type === 'REGION' ||
+          type === '3DSOLID' || type === 'SURFACE' || type === 'HELIX' ||
+          type === 'LIGHT' || type === 'MESH' || type === 'MLINE') {
+        sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
+      }
+
       // ── Generic path: substring + parseGroupCodes (LWPOLYLINE, SPLINE, ELLIPSE, INSERT, DIMENSION, etc.) ──
       const chunk = dxfText.substring(eStart, eEnd)
       const { codes } = parseGroupCodes(chunk)
