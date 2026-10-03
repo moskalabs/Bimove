@@ -339,7 +339,7 @@ export function dxfFingerprint(fileName: string, fileSize: number, entityCount: 
 }
 
 /** DXF 엔티티 배열에서 선분(segment) 추출 (테스트 가능) */
-export type DxfSeg = Seg & { layer?: string; lineweight?: number; color?: string }
+export type DxfSeg = Seg & { layer?: string; lineweight?: number; color?: string; transparency?: number }
 
 /** DXF TEXT/MTEXT 엔티티 데이터 */
 export type DxfText = {
@@ -1731,7 +1731,7 @@ function clusterConnectedSegs(segs: RawSeg[]): RawSeg[][] {
 }
 
 /** 동일선상(collinear) 세그먼트를 병합하여 shape 수를 줄임 */
-export type RawSeg = { x1: number; y1: number; dx: number; dy: number; layer?: string; lineweight?: number; color?: string; linetypeName?: string }
+export type RawSeg = { x1: number; y1: number; dx: number; dy: number; layer?: string; lineweight?: number; color?: string; linetypeName?: string; transparency?: number }
 
 export function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
   // 각도(3°) + 수직거리(10px) + 속성(레이어/색/선종류/선굵기) 기준으로 버킷팅
@@ -1745,9 +1745,9 @@ export function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
     const nx = -s.dy / len, ny = s.dx / len
     const perp = nx * s.x1 + ny * s.y1
     // 병합하면 first 의 속성이 구간 전체를 대표하게 된다. 그래서 다른 것으로
-    // 보여야 하는 속성(layer/color/linetype/lineweight)은 모두 키에 들어가야 한다 —
-    // 빠지면 파선이 실선으로, 가는 선이 굵은 선으로, 다른 레이어 것으로 뭉개진다.
-    const key = `${Math.round(ang / 3)}|${Math.round(perp / 10)}|${s.layer || ''}|${s.color || ''}|${s.linetypeName || ''}|${s.lineweight ?? ''}`
+    // 보여야 하는 속성(layer/color/linetype/lineweight/transparency)은 모두 키에 들어가야 한다 —
+    // 빠지면 파선이 실선으로, 가는 선이 굵은 선으로, 투명도가 뭉개진다.
+    const key = `${Math.round(ang / 3)}|${Math.round(perp / 10)}|${s.layer || ''}|${s.color || ''}|${s.linetypeName || ''}|${s.lineweight ?? ''}|${s.transparency ?? ''}`
     let b = buckets.get(key)
     if (!b) { b = []; buckets.set(key, b) }
     b.push(s)
@@ -1778,11 +1778,12 @@ export function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
       if (hi - lo < 1) return
       const sx = first.x1 + lo * ux, sy = first.y1 + lo * uy
       const ex = first.x1 + hi * ux, ey = first.y1 + hi * uy
-      // 버킷 키가 linetype/lineweight 까지 포함하므로 group 전체가 같은 값 → first 로 대표
+      // 버킷 키가 linetype/lineweight/transparency 포함하므로 group 전체가 같은 값 → first 로 대표
       out.push({
         x1: sx, y1: sy, dx: ex - sx, dy: ey - sy,
         layer: first.layer, color: first.color,
         linetypeName: first.linetypeName, lineweight: first.lineweight,
+        transparency: first.transparency,
       })
     }
 
@@ -1821,7 +1822,7 @@ export function commitCadImport(
       const y1 = -s.y1 * scale
       const dx = (s.x2 - s.x1) * scale
       const dy = -(s.y2 - s.y1) * scale
-      return { x1, y1, dx, dy, layer: s.layer, lineweight: s.lineweight, color: s.color }
+      return { x1, y1, dx, dy, layer: s.layer, lineweight: s.lineweight, color: s.color, transparency: s.transparency }
     })
 
   console.log(`[CAD Commit] rawSegsAll (레이어 필터 후): ${rawSegsAll.length}, scale=${scale}`)
@@ -2117,6 +2118,7 @@ export function commitCadImport(
             dxfLayer: layer,
             ...(firstSeg.lineweight ? { dxfLineweight: firstSeg.lineweight } : {}),
             ...(firstSeg.color ? { dxfColor: firstSeg.color } : {}),
+            ...(firstSeg.transparency ? { dxfTransparency: firstSeg.transparency } : {}),
           },
         })
       }
@@ -2224,6 +2226,7 @@ export function commitCadImport(
       ...(s.layer ? { dxfLayer: s.layer } : {}),
       ...(s.lineweight ? { dxfLineweight: s.lineweight } : {}),
       ...(s.color ? { dxfColor: s.color } : {}),
+      ...(s.transparency ? { dxfTransparency: s.transparency } : {}),
     },
   }))
 
@@ -2253,13 +2256,13 @@ export function commitCadImport(
  * - UI 스레드 블로킹 없음 (Worker)
  * - 진행률 콜백 지원
  */
-import type { PolylineData, TextData, HatchData, LinetypeDef, WorkerOut } from './dxf-fast-worker'
+import type { PolylineData, TextData, HatchData, LinetypeDef, LayerInfo, WorkerOut } from './dxf-fast-worker'
 
 function runFastWorker(
   dxfText: string,
   selectedLayers: string[],
   onProgress?: (msg: string) => void,
-): Promise<{ polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number }> {
+): Promise<{ polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo> }> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(
       new URL('./dxf-fast-worker.ts', import.meta.url),
@@ -2285,6 +2288,7 @@ function runFastWorker(
           polylines: msg.polylines, insUnits: msg.insUnits,
           texts: msg.texts || [], hatches: msg.hatches || [],
           linetypes: msg.linetypes || [], ltscale: msg.ltscale ?? 1,
+          layers: msg.layers || {},
         })
       } else if (msg.type === 'error') {
         clearTimeout(timeout)
@@ -2449,6 +2453,7 @@ function polylinesToSegments(polylines: PolylineData[], scale: number): RawSeg[]
         layer: pl.layer, color,
         linetypeName: pl.linetypeName,
         lineweight: pl.lineweight,
+        transparency: pl.transparency,
       })
     }
   }
@@ -2822,6 +2827,7 @@ export async function commitCadImportV2(
   let workerHatches: HatchData[]
   let workerLinetypes: LinetypeDef[]
   let workerLtscale: number
+  let workerLayers: Record<string, LayerInfo>
   try {
     const result = await runFastWorker(dxfText, layerArr, onProgress)
     polylines = result.polylines
@@ -2830,6 +2836,7 @@ export async function commitCadImportV2(
     workerHatches = result.hatches || []
     workerLinetypes = result.linetypes || []
     workerLtscale = result.ltscale ?? 1
+    workerLayers = result.layers || {}
   } catch (workerErr) {
     console.error(`[CAD V2] Worker 실패:`, workerErr)
     // 동기 fallback 제거 — 메인 스레드에서 100MB+ 파일 파싱 시 브라우저 완전 멈춤
@@ -2839,6 +2846,12 @@ export async function commitCadImportV2(
   }
   const parseMs = (performance.now() - t0).toFixed(0)
   console.log(`[CAD V2] 파싱 완료: ${polylines.length}개 폴리라인, ${workerHatches.length}개 해치 (${parseMs}ms)`)
+
+  // 레이어 lineweight/color 정보 로그
+  const lwLayers = Object.entries(workerLayers).filter(([, v]) => v.lineweight)
+  if (lwLayers.length > 0) {
+    console.log(`[CAD V2] 레이어 lineweight: ${lwLayers.map(([k, v]) => `${k}=${v.lineweight}`).join(', ')}`)
+  }
 
   // 2. 유닛 스케일
   const unit = insUnits
@@ -2978,9 +2991,9 @@ export async function commitCadImportV2(
     for (const s of finalSegs) {
       const layer = s.layer || '0'
       const ltKey = s.linetypeName || ''
-      // lineweight 도 키에 — shape 는 sliceSegs[0].lineweight 하나만 쓰므로
-      // 섞여 있으면 나머지 굵기가 전부 첫 값으로 덮인다.
-      const key = `${layer}\0${s.color || ''}\0${ltKey}\0${s.lineweight ?? ''}`
+      // lineweight/transparency 도 키에 — shape 는 sliceSegs[0] 값 하나만 쓰므로
+      // 섞여 있으면 나머지가 전부 첫 값으로 덮인다.
+      const key = `${layer}\0${s.color || ''}\0${ltKey}\0${s.lineweight ?? ''}\0${s.transparency ?? ''}`
       let g = layerGroups.get(key)
       if (!g) {
         g = {
@@ -3176,6 +3189,7 @@ export async function commitCadImportV2(
               ...(groupColor ? { dxfColor: groupColor } : {}),
               ...(groupDashArray ? { dxfDashArray: groupDashArray } : {}),
               ...(segLw !== undefined && segLw > 0 ? { dxfLineweight: segLw } : {}),
+              ...(sliceSegs[0]?.transparency ? { dxfTransparency: sliceSegs[0].transparency } : {}),
             },
           })
         }

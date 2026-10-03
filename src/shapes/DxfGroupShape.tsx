@@ -459,8 +459,12 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
       ? (isNearBlack(rawColor) ? '#ccc' : rawColor)
       : darkenForLightBg(rawColor)
   const dxfLw = (meta.dxfLineweight as number) ?? 0
-  // non-scaling-stroke: 브라우저 네이티브 처리. React 재렌더 불필요.
-  const strokeW = dxfLw > 0 ? Math.max(1.0, Math.min(dxfLw / 100, 3)) : 1.5
+  // non-scaling-stroke: 화면 px 단위. dxfLw는 0.01mm 단위.
+  // ×0.04 스케일: 0.25mm→1px, 0.50mm→2px, 1.00mm→4px (두께 차이가 시각적으로 구분됨)
+  const strokeW = dxfLw > 0 ? Math.max(0.5, Math.min(dxfLw * 0.04, 6)) : 1.0
+  // Transparency: 0-100 (percent transparent) → CSS opacity 0-1
+  const dxfTr = (meta.dxfTransparency as number) ?? 0
+  const opacity = dxfTr > 0 ? Math.max(0.05, 1 - dxfTr / 100) : 1
   // Linetype dash pattern (from DXF LTYPE table)
   const dxfDash = (meta.dxfDashArray as string) || ''
 
@@ -532,6 +536,7 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
           strokeWidth={strokeW}
           strokeLinecap="round"
           vectorEffect="non-scaling-stroke"
+          {...(opacity < 1 ? { opacity } : {})}
           {...(dxfDash ? { strokeDasharray: dxfDash } : {})}
         />
       )}
@@ -646,7 +651,9 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
     const rawColor = (shape.meta?.dxfColor as string) || '#333'
     const stroke = darkenForLightBg(rawColor)
     const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
-    const strokeW = dxfLw > 0 ? Math.max(0.5, Math.min(dxfLw / 100, 2)) : 0.8
+    const strokeW = dxfLw > 0 ? Math.max(0.4, Math.min(dxfLw * 0.03, 4)) : 0.6
+    const dxfTr = (shape.meta?.dxfTransparency as number) ?? 0
+    const opacity = dxfTr > 0 ? Math.max(0.05, 1 - dxfTr / 100) : 1
 
     const texts: DxfTextEntry[] = unpackTextsJson(shape.props.textsJson)
 
@@ -688,6 +695,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
             stroke={stroke}
             strokeWidth={strokeW}
             strokeLinecap="round"
+            {...(opacity < 1 ? { opacity } : {})}
           />
         )}
         {texts.map((t, i) => {

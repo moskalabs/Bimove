@@ -26,6 +26,7 @@ export interface PolylineData {
   colorNumber: number
   linetypeName?: string    // entity linetype name (gc 6); undefined = ByLayer
   lineweight?: number      // entity lineweight in 0.01mm (gc 370); undefined = ByLayer
+  transparency?: number    // 0-100 (percent transparent); undefined = fully opaque
 }
 
 export interface TextData {
@@ -61,9 +62,17 @@ export interface LinetypeDef {
   totalLen: number    // 패턴 총 길이 (gc 40)
 }
 
+/** 레이어 테이블 정보 (lineweight/color/transparency) */
+export interface LayerInfo {
+  lineweight?: number      // 0.01mm 단위
+  colorIndex?: number      // ACI 1-255
+  trueColor?: number       // 24-bit RGB
+  transparency?: number    // 0-100 (percent transparent)
+}
+
 export type WorkerOut =
   | { type: 'progress'; phase: string; percent: number }
-  | { type: 'result'; polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number }
+  | { type: 'result'; polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo> }
   | { type: 'error'; message: string }
 
 // ===== Internal types =====
@@ -400,15 +409,28 @@ function parseLinetypes(dxf: string, gc: (c: number) => string): Map<string, Lin
   return result
 }
 
-/** Parse LAYER table → Map<layerName, linetypeName> (for ByLayer linetype resolution) */
-function parseLayerLinetypes(dxf: string, gc: (c: number) => string): Map<string, string> {
-  const result = new Map<string, string>()
+/** LAYER 테이블 정보: linetype + lineweight + color + transparency */
+interface LayerDef {
+  linetype?: string        // linetype name (gc 6), CONTINUOUS 이면 생략
+  lineweight?: number      // gc 370 (0.01mm 단위). -1/undefined = ByDefault
+  colorIndex?: number      // gc 62 (ACI 0-255). 0 이면 생략
+  trueColor?: number       // gc 420 (24-bit true color)
+  transparency?: number    // 0-100 (percent transparent). gc 440
+}
+
+/** Parse LAYER table → Map<layerName, LayerDef> */
+function parseLayerDefs(dxf: string, gc: (c: number) => string): Map<string, LayerDef> {
+  const result = new Map<string, LayerDef>()
   const tables = extractSection(dxf, 'TABLES', gc)
   if (!tables) return result
 
   const sep = `\n${gc(0)}\n`
   const gc2 = `\n${gc(2)}\n`
   const gc6 = `\n${gc(6)}\n`
+  const gc62 = `\n${gc(62)}\n`
+  const gc370 = `\n${gc(370)}\n`
+  const gc420 = `\n${gc(420)}\n`
+  const gc440 = `\n${gc(440)}\n`
 
   const layerMarker = `${sep.slice(0, -1)}\nLAYER\n`
   let pos = 0
@@ -424,16 +446,58 @@ function parseLayerLinetypes(dxf: string, gc: (c: number) => string): Map<string
     const name = gcValIn(chunk, gc2)
     if (!name) { pos = lStart; continue }
 
-    // LAYER 는 62(색) 가 6(linetype) 보다 먼저 온다. 문자열 매칭이면
+    const def: LayerDef = {}
+
+    // linetype (gc 6) -- LAYER 는 62(색) 가 6(linetype) 보다 먼저 온다.
     // 마젠타(62=6) 레이어에서 `\n62\n6\n` 이 먼저 걸린다 → gcValIn 사용.
     const ltName = gcValIn(chunk, gc6)
     if (ltName && ltName.toUpperCase() !== 'CONTINUOUS') {
-      result.set(name, ltName.toUpperCase())
+      def.linetype = ltName.toUpperCase()
     }
 
+    // lineweight (gc 370) -- 0.01mm 단위. -1 = ByDefault, -3 = ByBlock
+    const lwVal = gcValIn(chunk, gc370)
+    if (lwVal !== undefined) {
+      const lw = parseInt(lwVal)
+      if (lw > 0) def.lineweight = lw
+    }
+
+    // color index (gc 62)
+    const ciVal = gcValIn(chunk, gc62)
+    if (ciVal !== undefined) {
+      const ci = parseInt(ciVal)
+      // 음수 = 레이어 OFF (abs 값이 실제 색)
+      if (ci !== 0) def.colorIndex = Math.abs(ci)
+    }
+
+    // true color (gc 420) -- 24-bit RGB
+    const tcVal = gcValIn(chunk, gc420)
+    if (tcVal !== undefined) {
+      const tc = parseInt(tcVal)
+      if (tc > 0) def.trueColor = tc
+    }
+
+    // transparency (gc 440) -- 0x020000TT, TT: 0=opaque, 255=fully transparent
+    const trVal = gcValIn(chunk, gc440)
+    if (trVal !== undefined) {
+      const raw = parseInt(trVal)
+      const tt = raw & 0xFF
+      if (tt > 0) def.transparency = Math.round(tt / 255 * 100)
+    }
+
+    result.set(name, def)
     pos = lEnd
   }
   return result
+}
+
+/** 레거시 호환: linetype Map 추출 */
+function layerDefsToLinetypeMap(defs: Map<string, LayerDef>): Map<string, string> {
+  const m = new Map<string, string>()
+  for (const [name, d] of defs) {
+    if (d.linetype) m.set(name, d.linetype)
+  }
+  return m
 }
 
 /** Parse STYLE table → Map<styleName, fontFamilyName> */
@@ -1466,7 +1530,7 @@ function extractTextEntity(
   return { x, y, text, height, rotation, layer, colorNumber: colorNum, attachPt, width: mtextWidth, fontName }
 }
 
-function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number } {
+function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo> } {
   const t0 = performance.now()
   globalEntityEvals = 0  // 글로벌 카운터 리셋
   const layerSet = new Set(selectedLayers)
@@ -1489,9 +1553,10 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
 
   // 1-1. LTYPE table → linetype 패턴 정의
   const linetypeMap = parseLinetypes(dxfText, gc)
-  const layerLtMap = parseLayerLinetypes(dxfText, gc)
+  const layerDefs = parseLayerDefs(dxfText, gc)
+  const layerLtMap = layerDefsToLinetypeMap(layerDefs)
   const textStyleMap = parseTextStyles(dxfText, gc)
-  console.log(`[fast-worker] ${linetypeMap.size}개 LTYPE, ${textStyleMap.size}개 STYLE, $LTSCALE=${ltscale}`)
+  console.log(`[fast-worker] ${linetypeMap.size}개 LTYPE, ${layerDefs.size}개 LAYER, ${textStyleMap.size}개 STYLE, $LTSCALE=${ltscale}`)
 
   // 2. Blocks
   progress('블록 정의 파싱', 10)
@@ -1508,13 +1573,19 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
     entHdr = `${gc(0)}\nSECTION\n${gc(2)}\nENTITIES\n`
     entIdx = dxfText.indexOf(entHdr)
   }
+  // ENTITIES 섹션이 없거나 비어있는 경우 → Paper Space 블록만으로 시도
+  let entStart = -1, entEnd = -1
   if (entIdx < 0) {
-    console.warn('[fast-worker] ENTITIES 섹션 없음')
-    return { polylines: [], insUnits, texts: [], hatches: [], linetypes: [...linetypeMap.values()], ltscale }
+    console.warn('[fast-worker] ENTITIES 섹션 없음 → Paper Space fallback 시도')
+  } else {
+    entStart = entIdx + entHdr.length
+    entEnd = dxfText.indexOf(ENDSEC_PAT, entStart)
+    if (entEnd <= entStart) {
+      console.warn('[fast-worker] ENTITIES 섹션 비어있음 → Paper Space fallback 시도')
+      entStart = -1
+      entEnd = -1
+    }
   }
-  const entStart = entIdx + entHdr.length
-  const entEnd = dxfText.indexOf(ENDSEC_PAT, entStart)
-  if (entEnd <= entStart) return { polylines: [], insUnits, texts: [], hatches: [], linetypes: [...linetypeMap.values()], ltscale }
 
   // 4. indexOf-based entity scanning (padding-aware SEP_PAT / GC8_PAT)
   //    Peak memory: O(selected entities) instead of O(all entities)
@@ -1535,14 +1606,10 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   // GC71 reserved for ATTRIB generation number
   const GC7  = `\n${gc(7)}\n`   // text style name
   const GC370 = `\n${gc(370)}\n` // lineweight
+  const GC440 = `\n${gc(440)}\n` // transparency
   const GC72 = `\n${gc(72)}\n`
   const GC73 = `\n${gc(73)}\n`
   const GC230 = `\n${gc(230)}\n`
-
-  // Estimate total entities from section size (skip expensive pre-count scan)
-  const entSectionLen = entEnd - entStart
-  const estEntities = Math.max(1, Math.round(entSectionLen / 300))  // ~300 bytes per entity avg
-  console.log(`[fast-worker] ENTITIES 섹션: ${(entSectionLen / 1048576).toFixed(1)}MB, 추정 ${estEntities}개 (${(performance.now() - t0).toFixed(0)}ms)`)
 
   progress('도면 요소 변환', 30)
   const output: PolylineData[] = []
@@ -1553,12 +1620,19 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   let polylineState: { layer: string; colorNum: number; vertices: Vertex[]; closed: boolean } | null = null
 
   let errCount = 0
+
+  // Estimate total entities from section size (skip expensive pre-count scan)
+  const entSectionLen = entStart >= 0 ? entEnd - entStart : 0
+  if (entStart >= 0) {
+    const estEntities = Math.max(1, Math.round(entSectionLen / 300))  // ~300 bytes per entity avg
+    console.log(`[fast-worker] ENTITIES 섹션: ${(entSectionLen / 1048576).toFixed(1)}MB, 추정 ${estEntities}개 (${(performance.now() - t0).toFixed(0)}ms)`)
+  }
   let entityIdx = 0
 
   // First SEP is at entStart - 1 (the \n from ENTITIES header + gc(0) + \n)
-  let sepPos = entStart - 1
+  let sepPos = entStart >= 0 ? entStart - 1 : -1
 
-  while (true) {
+  while (entStart >= 0) {
     if (output.length >= MAX_POLYLINES && texts.length >= MAX_TEXTS) {
       console.warn(`[fast-worker] 폴리라인 ${MAX_POLYLINES}개 + 텍스트 ${MAX_TEXTS}개 제한 도달, 나머지 건너뜀`)
       break
@@ -1642,16 +1716,54 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
-      // ── Helper: per-entity linetype + lineweight 추출 ──
-      const extractLtLw = (eS: number, eE: number): { lt?: string; lw?: number } => {
+      // ── Helper: per-entity linetype + lineweight + transparency 추출 (ByLayer → 레이어 기본값 resolve) ──
+      const extractLtLwTr = (eS: number, eE: number, layer: string): { lt?: string; lw?: number; tr?: number } => {
         const lt6 = idxIn(dxfText, GC6, eS, eE)
         const lw370 = idxIn(dxfText, GC370, eS, eE)
+        const tr440 = idxIn(dxfText, GC440, eS, eE)
         const lt = lt6 >= 0 ? valAt(dxfText, lt6 + GC6.length, eE).toUpperCase() : undefined
-        const lw = lw370 >= 0 ? parseInt(valAt(dxfText, lw370 + GC370.length, eE)) : undefined
+        const rawLw = lw370 >= 0 ? parseInt(valAt(dxfText, lw370 + GC370.length, eE)) : undefined
+
+        // lineweight resolve: entity > ByLayer(레이어 기본값) > undefined
+        let lw: number | undefined
+        if (rawLw !== undefined && rawLw > 0) {
+          lw = rawLw
+        } else {
+          const ld = layerDefs.get(layer)
+          if (ld?.lineweight && ld.lineweight > 0) lw = ld.lineweight
+        }
+
+        // transparency resolve: entity gc 440 > ByLayer > undefined (opaque)
+        // gc 440 format: 0x020000TT, TT: 0=opaque, 255=fully transparent
+        let tr: number | undefined
+        if (tr440 >= 0) {
+          const raw = parseInt(valAt(dxfText, tr440 + GC440.length, eE))
+          const tt = raw & 0xFF
+          if (tt > 0) tr = Math.round(tt / 255 * 100)
+        }
+        if (tr === undefined) {
+          const ld = layerDefs.get(layer)
+          if (ld?.transparency && ld.transparency > 0) tr = ld.transparency
+        }
+
         return {
           lt: lt && lt !== 'BYLAYER' && lt !== 'CONTINUOUS' ? lt : undefined,
-          lw: lw !== undefined && lw >= 0 ? lw : undefined,
+          lw,
+          tr,
         }
+      }
+      /** Resolve entity color: entity gc62 → ByLayer(레이어 색상) → -1 */
+      const resolveColor = (c62idx: number, _eS: number, eE: number, layer: string): number => {
+        if (c62idx >= 0) {
+          const ci = parseInt(valAt(dxfText, c62idx + GC62.length, eE))
+          // 256 = ByLayer, 0 = ByBlock → 레이어 색 사용
+          if (ci > 0 && ci < 256) return ci
+        }
+        // ByLayer: 레이어 테이블에서 색상 가져오기
+        const ld = layerDefs.get(layer)
+        if (ld?.trueColor && ld.trueColor > 0) return -1  // trueColor는 별도 처리
+        if (ld?.colorIndex && ld.colorIndex > 0) return ld.colorIndex
+        return -1
       }
       /** Resolve entity linetype: entity gc6 → ByLayer → layer's linetype → undefined */
       const resolveLinetype = (entityLt: string | undefined, layer: string): string | undefined => {
@@ -1673,13 +1785,14 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
           // 길이 0인 LINE 건너뛰기 (점처럼 보임)
           if (Math.abs(lx1 - lx2) > 1e-6 || Math.abs(ly1 - ly2) > 1e-6) {
             const c62 = idxIn(dxfText, GC62, eStart, eEnd)
-            const { lt, lw } = extractLtLw(eStart, eEnd)
+            const { lt, lw, tr } = extractLtLwTr(eStart, eEnd, entityLayer)
             output.push({
               vertices: [[lx1, ly1], [lx2, ly2]],
               layer: entityLayer,
-              colorNumber: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
+              colorNumber: resolveColor(c62, eStart, eEnd, entityLayer),
               linetypeName: resolveLinetype(lt, entityLayer),
               lineweight: lw,
+              transparency: tr,
             })
           }
         }
@@ -1706,12 +1819,13 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
               for (const p of poly) p[0] = -p[0]
             }
             const c62 = idxIn(dxfText, GC62, eStart, eEnd)
-            const { lt, lw } = extractLtLw(eStart, eEnd)
+            const { lt, lw, tr } = extractLtLwTr(eStart, eEnd, entityLayer)
             output.push({
               vertices: poly, layer: entityLayer,
-              colorNumber: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
+              colorNumber: resolveColor(c62, eStart, eEnd, entityLayer),
               linetypeName: resolveLinetype(lt, entityLayer),
               lineweight: lw,
+              transparency: tr,
             })
           }
         }
@@ -1734,12 +1848,13 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
               for (const p of poly) p[0] = -p[0]
             }
             const c62 = idxIn(dxfText, GC62, eStart, eEnd)
-            const { lt, lw } = extractLtLw(eStart, eEnd)
+            const { lt, lw, tr } = extractLtLwTr(eStart, eEnd, entityLayer)
             output.push({
               vertices: poly, layer: entityLayer,
-              colorNumber: c62 >= 0 ? parseInt(valAt(dxfText, c62 + GC62.length, eEnd)) : -1,
+              colorNumber: resolveColor(c62, eStart, eEnd, entityLayer),
               linetypeName: resolveLinetype(lt, entityLayer),
               lineweight: lw,
+              transparency: tr,
             })
           }
         }
@@ -1827,17 +1942,19 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
           if (td) texts.push(td)
         }
       } else {
-        // Extract entity-level linetype + lineweight for non-fast-path entities
-        const { lt, lw } = extractLtLw(eStart, eEnd)
+        // Extract entity-level linetype + lineweight + transparency for non-fast-path entities
+        const { lt, lw, tr } = extractLtLwTr(eStart, eEnd, entityLayer)
         const entityLt = resolveLinetype(lt, entityLayer)
+        const c62 = idxIn(dxfText, GC62, eStart, eEnd)
+        const resolvedColor = resolveColor(c62, eStart, eEnd, entityLayer)
         const prevLen = output.length
         entityToPolyline(type, codes, blocks, '', [], 0, layerSet, output, texts, hatches, textStyleMap)
-        // Tag newly added polylines with linetype/lineweight
-        if (entityLt || lw !== undefined) {
-          for (let pi = prevLen; pi < output.length; pi++) {
-            if (entityLt && !output[pi].linetypeName) output[pi].linetypeName = entityLt
-            if (lw !== undefined && output[pi].lineweight === undefined) output[pi].lineweight = lw
-          }
+        // Tag newly added polylines with linetype/lineweight/color/transparency
+        for (let pi = prevLen; pi < output.length; pi++) {
+          if (entityLt && !output[pi].linetypeName) output[pi].linetypeName = entityLt
+          if (lw !== undefined && output[pi].lineweight === undefined) output[pi].lineweight = lw
+          if (resolvedColor >= 0 && output[pi].colorNumber < 0) output[pi].colorNumber = resolvedColor
+          if (tr !== undefined && output[pi].transparency === undefined) output[pi].transparency = tr
         }
       }
 
@@ -1849,11 +1966,71 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
     sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd
   }
 
+  // ── Paper Space fallback ──
+  // ENTITIES 섹션(= Model Space)에 도형이 없고, *Paper_Space* 블록에 엔티티가 있으면
+  // 해당 블록의 엔티티를 직접 펼쳐서 사용한다.
+  // DWG→DXF 변환 시 Paper Space 전용 도면이 이 패턴을 보인다.
+  if (output.length === 0 && texts.length === 0 && hatches.length === 0) {
+    const psBlockNames = [...blocks.keys()].filter(n =>
+      /^\*Paper_Space/i.test(n)
+    )
+    if (psBlockNames.length > 0) {
+      console.log(`[fast-worker] Model Space 비어있음 → Paper Space 블록 ${psBlockNames.join(', ')} 에서 엔티티 추출`)
+      progress('Paper Space 엔티티 추출', 85)
+
+      for (const psName of psBlockNames) {
+        const psBlock = blocks.get(psName)
+        if (!psBlock) continue
+
+        // 1) precomputed (LINE/ARC/CIRCLE/LWPOLYLINE/SPLINE/SOLID/3DFACE)
+        for (const pe of psBlock.precomputed) {
+          if (output.length >= MAX_POLYLINES) break
+          if (pe.isHatchBoundary && psBlock.hasSolidHatch) continue
+          const entityLayer = pe.rawLayer || '0'
+          if (layerSet.size > 0 && !layerSet.has(entityLayer)) continue
+          const verts: number[][] = pe.vertices.map(v => [v[0], v[1]])
+          output.push({ vertices: verts, layer: entityLayer, colorNumber: pe.colorNumber })
+        }
+
+        // 2) entityChunks (INSERT, TEXT, MTEXT, HATCH, etc.)
+        for (const chunk of psBlock.entityChunks) {
+          if (output.length >= MAX_POLYLINES) break
+          const { type: eType, codes: eCodes } = parseGroupCodes(chunk)
+          const eLayer = eCodes.get(8)?.[0]?.trim() || '0'
+          if (layerSet.size > 0 && !layerSet.has(eLayer)) continue
+
+          if ((eType === 'TEXT' || eType === 'MTEXT') && texts.length < MAX_TEXTS) {
+            const colorNum = eCodes.get(62)?.[0] ? parseInt(eCodes.get(62)![0]) : -1
+            const td = extractTextEntity(eType, eCodes, eLayer, colorNum, [], textStyleMap)
+            if (td) texts.push(td)
+          } else if (eType === 'HATCH' && hatches.length < MAX_HATCHES) {
+            const hd = parseHatchEntity(chunk, eLayer)
+            if (hd) hatches.push(hd)
+          } else {
+            entityToPolyline(eType, eCodes, blocks, eLayer, [], 0, layerSet, output, texts, hatches, textStyleMap)
+          }
+        }
+      }
+      console.log(`[fast-worker] Paper Space fallback: ${output.length}개 폴리라인, ${texts.length}개 텍스트, ${hatches.length}개 해치`)
+    }
+  }
+
   progress('완료', 95)
   const elapsed = (performance.now() - t0).toFixed(0)
   console.log(`[fast-worker] 파싱 완료: ${output.length}개 폴리라인, ${texts.length}개 텍스트, ${hatches.length}개 해치, ${errCount}개 에러 (${elapsed}ms)`)
 
-  return { polylines: output, insUnits, texts, hatches, linetypes: [...linetypeMap.values()], ltscale }
+  // layerDefs → LayerInfo (worker 결과로 전달)
+  const layersOut: Record<string, LayerInfo> = {}
+  for (const [name, d] of layerDefs) {
+    const info: LayerInfo = {}
+    if (d.lineweight && d.lineweight > 0) info.lineweight = d.lineweight
+    if (d.colorIndex && d.colorIndex > 0) info.colorIndex = d.colorIndex
+    if (d.trueColor && d.trueColor > 0) info.trueColor = d.trueColor
+    if (d.transparency && d.transparency > 0) info.transparency = d.transparency
+    if (Object.keys(info).length > 0) layersOut[name] = info
+  }
+
+  return { polylines: output, insUnits, texts, hatches, linetypes: [...linetypeMap.values()], ltscale, layers: layersOut }
 }
 
 // ===== Worker message handler =====
@@ -1874,6 +2051,7 @@ self.onmessage = (e: MessageEvent<ParseRequest>) => {
       hatches: result.hatches,
       linetypes: result.linetypes,
       ltscale: result.ltscale,
+      layers: result.layers,
     })
   } catch (err) {
     post({ type: 'error', message: err instanceof Error ? err.message : String(err) })

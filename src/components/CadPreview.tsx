@@ -342,6 +342,61 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
     }
   }
 
+  // --- 2b. ENTITIES가 비어있으면 *Paper_Space 블록에서 레이어 스캔 ---
+  if (layerCounts.size === 0) {
+    const SEC_BLOCKS = `\n${gc(0)}\nSECTION\n${gc(2)}\nBLOCKS\n`
+    const blkIdx = dxfText.indexOf(SEC_BLOCKS)
+    if (blkIdx >= 0) {
+      const blkBody = blkIdx + SEC_BLOCKS.length
+      const blkEnd = dxfText.indexOf(ENDSEC, blkBody)
+      if (blkEnd > blkBody) {
+        // *Paper_Space 블록 찾기
+        const BLOCK_HDR = `\n${gc(0)}\nBLOCK\n`
+        const ENDBLK = `\n${gc(0)}\nENDBLK`
+        let bpos = blkBody
+        while (true) {
+          const bi = dxfText.indexOf(BLOCK_HDR, bpos)
+          if (bi < 0 || bi >= blkEnd) break
+          const bStart = bi + BLOCK_HDR.length
+          // 블록 이름 추출
+          const n2i = dxfText.indexOf(GC2, bi)
+          const nextEnd = dxfText.indexOf(ENDBLK, bStart)
+          const blockEnd = (nextEnd >= 0 && nextEnd < blkEnd) ? nextEnd : blkEnd
+          if (n2i >= 0 && n2i < blockEnd) {
+            const nvs = n2i + GC2.length
+            const nvn = dxfText.indexOf('\n', nvs)
+            const blockName = dxfText.substring(nvs, (nvn >= 0 && nvn <= blockEnd) ? nvn : blockEnd).trim()
+            if (/^\*Paper_Space/i.test(blockName)) {
+              console.log(`[CadPreview] Paper Space 블록 "${blockName}"에서 레이어 스캔`)
+              // 블록 내 엔티티 스캔
+              let sepPos2 = bStart
+              while (true) {
+                const si2 = dxfText.indexOf(SEP, sepPos2)
+                if (si2 < 0 || si2 >= blockEnd) break
+                const eStart2 = si2 + SEP.length
+                const nextSi2 = dxfText.indexOf(SEP, eStart2)
+                const eEnd2 = (nextSi2 >= 0 && nextSi2 < blockEnd) ? nextSi2 : blockEnd
+                const l8 = dxfText.indexOf(GC8, eStart2)
+                if (l8 >= 0 && l8 < eEnd2) {
+                  const ns = l8 + GC8.length
+                  const nn = dxfText.indexOf('\n', ns)
+                  const name = dxfText.substring(ns, (nn >= 0 && nn <= eEnd2) ? nn : eEnd2).trim()
+                  layerCounts.set(name, (layerCounts.get(name) || 0) + 1)
+                }
+                if (nextSi2 < 0 || nextSi2 >= blockEnd) break
+                sepPos2 = nextSi2
+              }
+            }
+          }
+          bpos = blockEnd
+        }
+        if (layerCounts.size > 0) {
+          console.log(`[CadPreview] Paper Space fallback: ${layerCounts.size}개 레이어 발견`)
+        }
+      }
+    }
+  }
+
   // --- 3. 합치기 ---
   const allNames = new Set([...layerDefs.keys(), ...layerCounts.keys()])
   const result: LayerInfo[] = []

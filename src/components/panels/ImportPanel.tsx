@@ -47,12 +47,17 @@ export function ImportPanel() {
           setLoading(null)
           return
         }
+        console.log(`[Import] DWG→DXF 변환: ${(buffer.byteLength / 1048576).toFixed(1)}MB DWG → ${(dxfBytes.length / 1048576).toFixed(1)}MB DXF`)
         dxfText = decodeDxfBytes(dxfBytes)
         if (!dxfText || (!dxfText.includes('SECTION') && !dxfText.includes('ENTITIES'))) {
           toast('DWG 변환 실패: 유효하지 않은 DXF입니다.', 'error')
           setLoading(null)
           return
         }
+        // Paper Space 디버그 로그
+        const hasPaperSpace = /\*Paper_Space/i.test(dxfText)
+        const hasEntities = dxfText.includes('ENTITIES')
+        console.log(`[Import] DXF 구조: ENTITIES=${hasEntities}, Paper_Space=${hasPaperSpace}, 총 ${(dxfText.length / 1048576).toFixed(1)}MB`)
       } else {
         // DXF 직접 읽기
         setLoading(`도면 파일 읽는 중... (${sizeMB}MB)`)

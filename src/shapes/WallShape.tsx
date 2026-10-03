@@ -257,21 +257,24 @@ function WallComponent({ shape }: { shape: WallShape }) {
     const rawDxf = (shape.meta?.dxfColor as string) || '#333'
     const dxfColor = isSelected ? '#1a73e8' : (isNearWhite(rawDxf) ? '#333' : rawDxf)
     const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
-    const baseSw = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
+    const baseSw = dxfLw > 0 ? Math.max(0.5, Math.min(dxfLw * 0.04, 6)) : 1.0
+    const dxfTr = (shape.meta?.dxfTransparency as number) ?? 0
+    const dxfOpacity = dxfTr > 0 ? Math.max(0.05, 1 - dxfTr / 100) : 1
     // 줌에 따른 최소 화면 0.5px 보장
     const zoom = editor.getZoomLevel()
     const sw = isSelected ? Math.max(baseSw * 1.5, 1 / Math.max(zoom, 0.001)) : Math.max(baseSw, 0.5 / Math.max(zoom, 0.001))
     // 채워진 사각형이 아닌, 중심선만 렌더
     return (
       <SVGContainer>
-        <line x1={0} y1={0} x2={x2} y2={y2} stroke={dxfColor} strokeWidth={sw} strokeLinecap="round" />
+        <line x1={0} y1={0} x2={x2} y2={y2} stroke={dxfColor} strokeWidth={sw} strokeLinecap="round"
+          {...(dxfOpacity < 1 ? { opacity: dxfOpacity } : {})} />
       </SVGContainer>
     )
   }
 
-  // DXF lineweight → strokeWidth (hundredths of mm → px)
+  // DXF lineweight → strokeWidth (0.01mm → screen px)
   const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
-  const strokeW = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 25, 4)) : 1
+  const strokeW = dxfLw > 0 ? Math.max(0.5, Math.min(dxfLw * 0.04, 6)) : 1
 
   // Grayscale 모드: 패턴 OFF, 흑백 선
   // DXF 색상이 있으면 fill/stroke 대신 사용 (BUG 8)
@@ -397,7 +400,7 @@ export class WallShapeUtil extends ShapeUtil<WallShape> {
       const rawDxf = (shape.meta?.dxfColor as string) || '#333'
       const color = isNearWhite(rawDxf) ? '#333' : rawDxf
       const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
-      const sw = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 100, 2)) : 0.5
+      const sw = dxfLw > 0 ? Math.max(0.4, Math.min(dxfLw * 0.03, 4)) : 0.6
       return <line x1={0} y1={0} x2={x2} y2={y2} stroke={color} strokeWidth={sw} strokeLinecap="round" />
     }
 
@@ -406,7 +409,7 @@ export class WallShapeUtil extends ShapeUtil<WallShape> {
     const rawFill = (shape.meta?.fill as string) ?? '#555'
     const rawStroke = (shape.meta?.stroke as string) ?? '#222'
     const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
-    const sw = dxfLw > 0 ? Math.max(0.3, Math.min(dxfLw / 25, 4)) : 1
+    const sw = dxfLw > 0 ? Math.max(0.4, Math.min(dxfLw * 0.03, 4)) : 0.6
     return <path d={d} fill={rawFill} stroke={rawStroke} strokeWidth={sw} />
   }
 }
