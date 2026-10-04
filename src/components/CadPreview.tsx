@@ -21,12 +21,18 @@ interface LayerInfo {
   approx?: boolean  // 대용량 파일 샘플링 시 true
 }
 
+/** Multi-layout import info (passed when DXF has multiple AutoCAD tabs) */
+export interface LayoutImportInfo {
+  layouts: DxfLayout[]
+  viewportsByLayout: Map<string, DxfViewport[]>
+}
+
 export interface CadPreviewProps {
   dxfText: string
   fileName: string
   fileSize: number
   isDwg: boolean
-  onImport: (selectedLayers: Set<string>, dxfText: string, viewportClip?: ViewportClip | null) => void
+  onImport: (selectedLayers: Set<string>, dxfText: string, viewportClip?: ViewportClip | null, layoutInfo?: LayoutImportInfo | null) => void
   onClose: () => void
 }
 
@@ -43,7 +49,6 @@ export default function CadPreview({
   const [parsing, setParsing] = useState(true)
   const [layouts, setLayouts] = useState<DxfLayout[]>([])
   const [viewportsByLayout, setViewportsByLayout] = useState<Map<string, DxfViewport[]>>(new Map())
-  const [selectedLayout, setSelectedLayout] = useState<string>('Model')
 
   // 모달 열릴 때 body data attr 추가
   useEffect(() => {
@@ -118,21 +123,15 @@ export default function CadPreview({
 
   const handleImport = useCallback(() => {
     if (selected.size === 0) return
-    let clip: ViewportClip | null = null
-    if (selectedLayout !== 'Model') {
-      const vps = viewportsByLayout.get(selectedLayout)
-      if (vps && vps.length > 0) {
-        clip = {
-          minX: Math.min(...vps.map(v => v.clipMinX)),
-          minY: Math.min(...vps.map(v => v.clipMinY)),
-          maxX: Math.max(...vps.map(v => v.clipMaxX)),
-          maxY: Math.max(...vps.map(v => v.clipMaxY)),
-        }
-        console.log(`[CadPreview] Layout "${selectedLayout}" viewport clip: (${clip.minX.toFixed(0)},${clip.minY.toFixed(0)})~(${clip.maxX.toFixed(0)},${clip.maxY.toFixed(0)})`)
-      }
+    if (layouts.length > 1) {
+      // Multi-layout: pass all layout info → ImportPanel creates separate pages
+      console.log(`[CadPreview] Multi-layout import: ${layouts.map(l => l.name).join(', ')}`)
+      onImport(selected, dxfText, null, { layouts, viewportsByLayout })
+    } else {
+      // Single layout (Model only): no viewport clip
+      onImport(selected, dxfText, null)
     }
-    onImport(selected, dxfText, clip)
-  }, [selected, dxfText, selectedLayout, viewportsByLayout, onImport])
+  }, [selected, dxfText, layouts, viewportsByLayout, onImport])
 
   // ESC 키로 닫기
   useEffect(() => {
@@ -153,17 +152,9 @@ export default function CadPreview({
         </div>
 
         {layouts.length > 1 && (
-          <div className="cad-layout-selector">
-            <label>레이아웃:</label>
-            <select value={selectedLayout} onChange={e => setSelectedLayout(e.target.value)}>
-              {layouts
-                .sort((a, b) => a.tabOrder - b.tabOrder)
-                .map(l => (
-                  <option key={l.name} value={l.name}>
-                    {l.name}{l.isModelSpace ? ' (전체)' : ''}
-                  </option>
-                ))}
-            </select>
+          <div className="cad-layout-selector" style={{ fontSize: 12, color: '#888', padding: '4px 8px' }}>
+            📑 {layouts.length}개 레이아웃 감지 ({layouts.sort((a, b) => a.tabOrder - b.tabOrder).map(l => l.name).join(', ')})
+            → 각각 별도 페이지로 가져옵니다
           </div>
         )}
 

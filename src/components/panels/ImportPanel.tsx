@@ -1,9 +1,11 @@
 import { useState, Suspense, lazy } from 'react'
+import { PageRecordType } from 'tldraw'
 import { useEditor } from '../../context/EditorContext'
 import { useToast } from '../../context/ToastContext'
 import { uploadImage } from '../../lib/project'
 import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2 } from '../../lib/dxf'
 import type { ViewportClip } from '../../lib/dxf-shared'
+import type { LayoutImportInfo } from '../CadPreview'
 import { importPdf } from '../../lib/pdfImport'
 
 const CadPreview = lazy(() => import('../CadPreview'))
@@ -81,7 +83,12 @@ export function ImportPanel() {
     }
   }
 
-  const handlePreviewImport = async (selectedLayers: Set<string>, dxfText: string, viewportClip?: ViewportClip | null) => {
+  const handlePreviewImport = async (
+    selectedLayers: Set<string>,
+    dxfText: string,
+    viewportClip?: ViewportClip | null,
+    layoutInfo?: LayoutImportInfo | null,
+  ) => {
     if (!editor || !previewData) return
 
     const prev = previewData
@@ -92,22 +99,77 @@ export function ImportPanel() {
     await new Promise(r => requestAnimationFrame(r))
 
     try {
-      const count = await commitCadImportV2(
-        editor,
-        dxfText,
-        selectedLayers,
-        prev.fileName,
-        prev.fileSize,
-        prev.isDwg,
-        (progress: string) => setLoading(progress),
-        viewportClip,
-      )
+      if (layoutInfo && layoutInfo.layouts.length > 1) {
+        // ── Multi-layout import: AutoCAD 탭별 별도 페이지 생성 ──
+        let totalCount = 0
+        const sortedLayouts = [...layoutInfo.layouts].sort((a, b) => a.tabOrder - b.tabOrder)
+        const modelPageId = editor.getCurrentPageId()
 
-      const fmt = prev.isDwg ? 'DWG' : 'DXF'
-      if (count === 0) {
-        toast('선택한 레이어에 표시할 도형이 없습니다.', 'info')
+        for (let i = 0; i < sortedLayouts.length; i++) {
+          const layout = sortedLayouts[i]
+
+          if (i === 0) {
+            // 첫 번째 레이아웃 (보통 Model Space) → 현재 페이지 사용, 이름 변경
+            const page = editor.getPage(modelPageId)
+            if (page) {
+              editor.store.put([{ ...page, name: layout.name }])
+            }
+          } else {
+            // Paper Space 레이아웃 → 새 페이지 생성
+            const newPageId = PageRecordType.createId()
+            editor.createPage({ name: layout.name, id: newPageId })
+            editor.setCurrentPage(newPageId)
+          }
+
+          // Paper Space 레이아웃은 viewport clip 적용 (Model Space 일부만 표시)
+          let clip: ViewportClip | null = null
+          if (!layout.isModelSpace) {
+            const vps = layoutInfo.viewportsByLayout.get(layout.name)
+            if (vps && vps.length > 0) {
+              clip = {
+                minX: Math.min(...vps.map(v => v.clipMinX)),
+                minY: Math.min(...vps.map(v => v.clipMinY)),
+                maxX: Math.max(...vps.map(v => v.clipMaxX)),
+                maxY: Math.max(...vps.map(v => v.clipMaxY)),
+              }
+              console.log(`[Import] Layout "${layout.name}" viewport clip: (${clip.minX.toFixed(0)},${clip.minY.toFixed(0)})~(${clip.maxX.toFixed(0)},${clip.maxY.toFixed(0)})`)
+            }
+          }
+
+          setLoading(`"${layout.name}" 임포트 중... (${i + 1}/${sortedLayouts.length})`)
+          const count = await commitCadImportV2(
+            editor, dxfText, selectedLayers,
+            prev.fileName, prev.fileSize, prev.isDwg,
+            (progress: string) => setLoading(`[${layout.name}] ${progress}`),
+            clip,
+          )
+          totalCount += count
+          console.log(`[Import] Layout "${layout.name}": ${count}개 요소`)
+        }
+
+        // Model Space 페이지로 복귀
+        editor.setCurrentPage(modelPageId)
+        setTimeout(() => {
+          try { editor.zoomToFit({ animation: { duration: 0 } }) } catch { /* ignore */ }
+        }, 400)
+
+        const fmt = prev.isDwg ? 'DWG' : 'DXF'
+        toast(`"${prev.fileName}" ${fmt} 가져옴 (${sortedLayouts.length}개 레이아웃, ${totalCount.toLocaleString()}개 요소)`, 'success')
       } else {
-        toast(`"${prev.fileName}" ${fmt} 가져옴 (${count.toLocaleString()}개 요소, ${selectedLayers.size}개 레이어)`, 'success')
+        // ── Single-layout import (기존 동작) ──
+        const count = await commitCadImportV2(
+          editor, dxfText, selectedLayers,
+          prev.fileName, prev.fileSize, prev.isDwg,
+          (progress: string) => setLoading(progress),
+          viewportClip,
+        )
+
+        const fmt = prev.isDwg ? 'DWG' : 'DXF'
+        if (count === 0) {
+          toast('선택한 레이어에 표시할 도형이 없습니다.', 'info')
+        } else {
+          toast(`"${prev.fileName}" ${fmt} 가져옴 (${count.toLocaleString()}개 요소, ${selectedLayers.size}개 레이어)`, 'success')
+        }
       }
     } catch (err) {
       console.error('[Import] commitCadImportV2 에러:', err)

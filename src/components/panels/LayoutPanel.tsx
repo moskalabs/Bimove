@@ -215,7 +215,7 @@ export function LayoutPanel() {
                 <div className="layout-page-empty">빈 페이지</div>
               )}
             </div>
-            <div className="layout-page-label">{p.index} - Page</div>
+            <div className="layout-page-label">{p.index} - {p.name}</div>
           </div>
         ))}
       </div>

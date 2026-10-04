@@ -3212,9 +3212,13 @@ export async function commitCadImportV2(
     }
 
     // zoomToFit (select spread 대신 zoomToFit 사용 — spread 5000개는 V8 성능 문제)
+    // 멀티 레이아웃 임포트 시 다른 페이지로 넘어갈 수 있으므로 현재 페이지 확인
+    const zoomPageId1 = editor.getCurrentPageId()
     setTimeout(() => {
       try {
-        editor.zoomToFit({ animation: { duration: 0 } })
+        if (editor.getCurrentPageId() === zoomPageId1) {
+          editor.zoomToFit({ animation: { duration: 0 } })
+        }
       } catch { /* ignore */ }
     }, 300)
 
@@ -3251,11 +3255,14 @@ export async function commitCadImportV2(
   const allShapes = [...shapes, ...extraShapes]
   if (allShapes.length) {
     editor.createShapes(allShapes as never)
+    const zoomPageId2 = editor.getCurrentPageId()
     setTimeout(() => {
       try {
-        editor.selectAll()
-        editor.zoomToFit({ animation: { duration: 0 } })
-        editor.selectNone()
+        if (editor.getCurrentPageId() === zoomPageId2) {
+          editor.selectAll()
+          editor.zoomToFit({ animation: { duration: 0 } })
+          editor.selectNone()
+        }
       } catch { /* ignore */ }
     }, 300)
   }
