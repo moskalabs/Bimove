@@ -400,11 +400,40 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
       }
     }
 
+    // 마우스 휠 vs 터치패드 자동 감지 → wheelBehavior 동적 전환
+    // - 마우스 휠: zoom (오토캐드 방식)
+    // - 터치패드 스크롤: pan (한 손 두 손가락 스크롤 = 이동)
+    // - 터치패드 핀치: zoom (브라우저가 ctrlKey + 작은 deltaY로 전달)
+    let lastWheelBehavior: 'pan' | 'zoom' = 'zoom'
+    const handleWheel = (e: WheelEvent) => {
+      if (!(e.target as HTMLElement)?.closest('.tl-container')) return
+      // ctrlKey + 작은 delta → 터치패드 핀치 → 'pan' (tldraw가 ctrl 감지해서 flip → zoom)
+      // deltaMode 1 → 마우스 라인 스크롤 → 'zoom'
+      // deltaMode 0 + 큰 정수값 → 마우스 픽셀 스크롤 → 'zoom'
+      // 그 외 (작은/소수점 delta) → 터치패드 스크롤 → 'pan'
+      let want: 'pan' | 'zoom'
+      if (e.ctrlKey) {
+        want = 'pan'  // 핀치 → tldraw가 ctrl로 flip → 결과적으로 zoom
+      } else if (e.deltaMode === 1) {
+        want = 'zoom' // 마우스 라인 모드
+      } else if (Math.abs(e.deltaY) >= 50 && e.deltaY % 1 === 0) {
+        want = 'zoom' // 마우스 픽셀 모드 (큰 정수 단위)
+      } else {
+        want = 'pan'  // 터치패드 스크롤
+      }
+      if (want !== lastWheelBehavior) {
+        lastWheelBehavior = want
+        editor.setCameraOptions({ ...editor.getCameraOptions(), wheelBehavior: want })
+      }
+    }
+
+    document.addEventListener('wheel', handleWheel, { capture: true, passive: true })
     document.addEventListener('mousedown', handleMiddleDown, true)
     document.addEventListener('mousemove', handleMouseMove, true)
     document.addEventListener('mouseup', handleMouseUp, true)
     document.addEventListener('auxclick', handleAuxClick, true)
     return () => {
+      document.removeEventListener('wheel', handleWheel, true)
       document.removeEventListener('mousedown', handleMiddleDown, true)
       document.removeEventListener('mousemove', handleMouseMove, true)
       document.removeEventListener('mouseup', handleMouseUp, true)
