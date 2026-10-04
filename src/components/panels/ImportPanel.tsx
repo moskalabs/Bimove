@@ -107,17 +107,19 @@ export function ImportPanel() {
 
         for (let i = 0; i < sortedLayouts.length; i++) {
           const layout = sortedLayouts[i]
+          // AutoCAD "Model" → 한국어 "모형" 매핑
+          const displayName = layout.isModelSpace && layout.name === 'Model' ? '모형' : layout.name
 
           if (i === 0) {
             // 첫 번째 레이아웃 (보통 Model Space) → 현재 페이지 사용, 이름 변경
             const page = editor.getPage(modelPageId)
             if (page) {
-              editor.store.put([{ ...page, name: layout.name }])
+              editor.store.put([{ ...page, name: displayName }])
             }
           } else {
             // Paper Space 레이아웃 → 새 페이지 생성
             const newPageId = PageRecordType.createId()
-            editor.createPage({ name: layout.name, id: newPageId })
+            editor.createPage({ name: displayName, id: newPageId })
             editor.setCurrentPage(newPageId)
           }
 
