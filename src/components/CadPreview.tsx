@@ -297,7 +297,8 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
   // (debug removed)
 
   // --- 2. ENTITIES → 레이어별 엔티티 수 (indexOf 스캐닝) ---
-  // 대용량 파일(>20MB)은 앞부분만 샘플링 후 비율 추정 — 3.7초→<1초
+  // 비기하학 엔티티(OLE2FRAME 등)가 20MB+ 차지할 수 있으므로 엔티티 수 기반 제한 사용.
+  // 기존 20MB 바이트 샘플링은 거대 OLE2FRAME 하나에 전부 잡혀서 나머지 엔티티를 놓침.
   const layerCounts = new Map<string, number>()
   const entIdx = dxfText.indexOf(SEC_ENTITIES)
   let extrapolated = false
@@ -306,20 +307,20 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
     const entEnd = dxfText.indexOf(ENDSEC, bodyStart)
     if (entEnd > bodyStart) {
       const sectionLen = entEnd - bodyStart
-      const SAMPLE_LIMIT = 20_000_000  // 20MB까지만 스캔
-      const scanEnd = sectionLen > SAMPLE_LIMIT ? bodyStart + SAMPLE_LIMIT : entEnd
-      extrapolated = sectionLen > SAMPLE_LIMIT
-      const ratio = sectionLen > SAMPLE_LIMIT ? sectionLen / SAMPLE_LIMIT : 1
+      const MAX_ENTITIES_SCAN = 50_000  // 엔티티 수 기반 제한 (바이트 제한 대신)
+      let entityScanned = 0
 
       let sepPos = bodyStart - 1
 
-      while (true) {
+      while (entityScanned < MAX_ENTITIES_SCAN) {
         const si = dxfText.indexOf(SEP, sepPos)
-        if (si < 0 || si >= scanEnd) break
+        if (si < 0 || si >= entEnd) break
 
         const eStart = si + SEP.length
         const nextSi = dxfText.indexOf(SEP, eStart)
-        const eEnd = (nextSi >= 0 && nextSi < scanEnd) ? nextSi : scanEnd
+        const eEnd = (nextSi >= 0 && nextSi < entEnd) ? nextSi : entEnd
+
+        entityScanned++
 
         const l8 = dxfText.indexOf(GC8, eStart)
         if (l8 >= 0 && l8 < eEnd) {
@@ -329,14 +330,20 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
           layerCounts.set(name, (layerCounts.get(name) || 0) + 1)
         }
 
-        if (nextSi < 0 || nextSi >= scanEnd) break
+        if (nextSi < 0 || nextSi >= entEnd) break
         sepPos = nextSi
       }
 
-      // 샘플링 비율에 따라 엔티티 수 추정
-      if (extrapolated) {
-        for (const [k, v] of layerCounts) {
-          layerCounts.set(k, Math.round(v * ratio))
+      // 엔티티 수 제한에 걸렸으면 비율 추정
+      if (entityScanned >= MAX_ENTITIES_SCAN) {
+        extrapolated = true
+        // 스캔한 바이트 범위 대비 전체 섹션 비율로 추정
+        const scannedBytes = (sepPos > bodyStart) ? sepPos - bodyStart : sectionLen
+        const ratio = sectionLen / Math.max(1, scannedBytes)
+        if (ratio > 1.05) {
+          for (const [k, v] of layerCounts) {
+            layerCounts.set(k, Math.round(v * ratio))
+          }
         }
       }
     }
