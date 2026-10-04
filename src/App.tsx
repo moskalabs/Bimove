@@ -335,24 +335,63 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
     }
   }, [editor, projectId, toast])
 
-  // 휠(중간) 버튼 더블클릭 → 화면 맞춤(zoomToFit)
+  // 휠(중간) 버튼: 드래그=이동(오토캐드 방식), 더블클릭=화면 맞춤
   useEffect(() => {
     if (!editor) return
     let lastMiddleDown = 0
+    let isPanning = false
+    let panStartX = 0
+    let panStartY = 0
+    let didDrag = false
+
     const handleMiddleDown = (e: MouseEvent) => {
-      if (e.button !== 1) return          // 중간 버튼만
-      // 캔버스 영역 내에서만 동작
+      if (e.button !== 1) return
       if (!(e.target as HTMLElement)?.closest('.tl-container')) return
+      e.preventDefault()
+      e.stopPropagation()
+
       const now = Date.now()
-      if (now - lastMiddleDown < 400) {   // 400ms 이내 = 더블클릭
-        e.preventDefault()
-        e.stopPropagation()
+      if (now - lastMiddleDown < 400) {
+        // 더블클릭 → 화면 맞춤
         editor.zoomToFit({ animation: { duration: 250 } })
         lastMiddleDown = 0
-      } else {
-        lastMiddleDown = now
+        return
       }
+      lastMiddleDown = now
+
+      // 드래그 팬 시작
+      isPanning = true
+      didDrag = false
+      panStartX = e.clientX
+      panStartY = e.clientY
+      document.body.style.cursor = 'grabbing'
     }
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isPanning) return
+      e.preventDefault()
+      const dx = e.clientX - panStartX
+      const dy = e.clientY - panStartY
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) didDrag = true
+      if (!didDrag) return
+
+      const camera = editor.getCamera()
+      const zoom = camera.z
+      editor.setCamera({
+        x: camera.x + dx / zoom,
+        y: camera.y + dy / zoom,
+        z: zoom,
+      })
+      panStartX = e.clientX
+      panStartY = e.clientY
+    }
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if (e.button !== 1 || !isPanning) return
+      isPanning = false
+      document.body.style.cursor = ''
+    }
+
     // auxclick 방지 (중간 버튼 기본 동작 차단)
     const handleAuxClick = (e: MouseEvent) => {
       if (e.button !== 1) return
@@ -360,11 +399,17 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
         e.preventDefault()
       }
     }
+
     document.addEventListener('mousedown', handleMiddleDown, true)
+    document.addEventListener('mousemove', handleMouseMove, true)
+    document.addEventListener('mouseup', handleMouseUp, true)
     document.addEventListener('auxclick', handleAuxClick, true)
     return () => {
       document.removeEventListener('mousedown', handleMiddleDown, true)
+      document.removeEventListener('mousemove', handleMouseMove, true)
+      document.removeEventListener('mouseup', handleMouseUp, true)
       document.removeEventListener('auxclick', handleAuxClick, true)
+      document.body.style.cursor = ''
     }
   }, [editor])
 
