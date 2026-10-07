@@ -352,56 +352,56 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
     }
   }
 
-  // --- 2b. ENTITIES가 비어있으면 *Paper_Space 블록에서 레이어 스캔 ---
-  if (layerCounts.size === 0) {
+  // --- 2b. BLOCKS 섹션도 **항상** 스캔 ---
+  //
+  // 전엔 `layerCounts.size === 0` 일 때만, 그것도 *Paper_Space 블록만 봤다.
+  // 그래서 **블록 정의 안에서만 쓰이는 레이어가 목록에 안 올라갔다**. 목록에
+  // 없으면 임포트 대화상자에서 선택이 안 되고, 워커는 선택 안 된 레이어를
+  // 블록 내부에서도 버린다(dxf-fast-worker 의 `!layerSet.has(eLayer)`).
+  // 결과: 건물 셸을 블록으로 묶어 INSERT 한 도면이 통째로 사라진다.
+  // 실제 파일에서 테이블 44개 중 ENTITIES 에는 32개만 나와, 나머지 12개에
+  // 들어있던 건축 도형이 전부 누락됐다.
+  //
+  // 비용은 걱정 없다 — 이 파일은 전체 116MB 중 ENTITIES 가 113MB 라
+  // BLOCKS 는 몇 MB 수준이다.
+  let blockOnlyLayers = 0
+  {
     const SEC_BLOCKS = `\n${gc(0)}\nSECTION\n${gc(2)}\nBLOCKS\n`
     const blkIdx = dxfText.indexOf(SEC_BLOCKS)
     if (blkIdx >= 0) {
       const blkBody = blkIdx + SEC_BLOCKS.length
       const blkEnd = dxfText.indexOf(ENDSEC, blkBody)
       if (blkEnd > blkBody) {
-        // *Paper_Space 블록 찾기
-        const BLOCK_HDR = `\n${gc(0)}\nBLOCK\n`
-        const ENDBLK = `\n${gc(0)}\nENDBLK`
-        let bpos = blkBody
-        while (true) {
-          const bi = dxfText.indexOf(BLOCK_HDR, bpos)
-          if (bi < 0 || bi >= blkEnd) break
-          const bStart = bi + BLOCK_HDR.length
-          // 블록 이름 추출
-          const n2i = dxfText.indexOf(GC2, bi)
-          const nextEnd = dxfText.indexOf(ENDBLK, bStart)
-          const blockEnd = (nextEnd >= 0 && nextEnd < blkEnd) ? nextEnd : blkEnd
-          if (n2i >= 0 && n2i < blockEnd) {
-            const nvs = n2i + GC2.length
-            const nvn = dxfText.indexOf('\n', nvs)
-            const blockName = dxfText.substring(nvs, (nvn >= 0 && nvn <= blockEnd) ? nvn : blockEnd).trim()
-            if (/^\*Paper_Space/i.test(blockName)) {
-              console.log(`[CadPreview] Paper Space 블록 "${blockName}"에서 레이어 스캔`)
-              // 블록 내 엔티티 스캔
-              let sepPos2 = bStart
-              while (true) {
-                const si2 = dxfText.indexOf(SEP, sepPos2)
-                if (si2 < 0 || si2 >= blockEnd) break
-                const eStart2 = si2 + SEP.length
-                const nextSi2 = dxfText.indexOf(SEP, eStart2)
-                const eEnd2 = (nextSi2 >= 0 && nextSi2 < blockEnd) ? nextSi2 : blockEnd
-                const l8 = dxfText.indexOf(GC8, eStart2)
-                if (l8 >= 0 && l8 < eEnd2) {
-                  const ns = l8 + GC8.length
-                  const nn = dxfText.indexOf('\n', ns)
-                  const name = dxfText.substring(ns, (nn >= 0 && nn <= eEnd2) ? nn : eEnd2).trim()
-                  layerCounts.set(name, (layerCounts.get(name) || 0) + 1)
-                }
-                if (nextSi2 < 0 || nextSi2 >= blockEnd) break
-                sepPos2 = nextSi2
-              }
-            }
+        const fromEntities = new Set(layerCounts.keys())
+        let blkScanned = 0
+        let sepPos2 = blkBody - 1
+        while (blkScanned < MAX_ENTITIES_SCAN) {
+          const si2 = dxfText.indexOf(SEP, sepPos2)
+          if (si2 < 0 || si2 >= blkEnd) break
+          const eStart2 = si2 + SEP.length
+          const nextSi2 = dxfText.indexOf(SEP, eStart2)
+          const eEnd2 = (nextSi2 >= 0 && nextSi2 < blkEnd) ? nextSi2 : blkEnd
+          blkScanned++
+
+          const l8 = dxfText.indexOf(GC8, eStart2)
+          if (l8 >= 0 && l8 < eEnd2) {
+            const ns = l8 + GC8.length
+            const nn = dxfText.indexOf('\n', ns)
+            const name = dxfText.substring(ns, (nn >= 0 && nn <= eEnd2) ? nn : eEnd2).trim()
+            if (name) layerCounts.set(name, (layerCounts.get(name) || 0) + 1)
           }
-          bpos = blockEnd
+
+          if (nextSi2 < 0 || nextSi2 >= blkEnd) break
+          sepPos2 = nextSi2
         }
-        if (layerCounts.size > 0) {
-          console.log(`[CadPreview] Paper Space fallback: ${layerCounts.size}개 레이어 발견`)
+        for (const name of layerCounts.keys()) {
+          if (!fromEntities.has(name)) blockOnlyLayers++
+        }
+        if (blockOnlyLayers > 0) {
+          console.log(`[CadPreview] BLOCKS 스캔(${blkScanned}개 엔티티): 블록 안에서만 쓰이는 레이어 ${blockOnlyLayers}개 추가 발견`)
+        }
+        if (blkScanned >= MAX_ENTITIES_SCAN) {
+          console.warn(`[CadPreview] ⚠ BLOCKS 스캔이 ${MAX_ENTITIES_SCAN}개에서 끊겼다 — 뒤쪽 블록에만 쓰이는 레이어는 여전히 빠질 수 있다`)
         }
       }
     }
@@ -446,7 +446,8 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
     console.warn(`[CadPreview] 스캔이 ${MAX_ENTITIES_SCAN}개에서 끊겨 레이어 개수는 추정치다. ` +
       `스캔 범위에 안 나온 테이블 정의 레이어 ${keptUnscanned}개를 그대로 살림`)
   }
-  console.log(`[CadPreview] 레이어: 테이블 ${layerDefs.size}개, 엔티티에서 발견 ${layerCounts.size}개 → 목록 ${result.length}개`)
+  console.log(`[CadPreview] 레이어: 테이블 ${layerDefs.size}개, 엔티티+블록에서 발견 ${layerCounts.size}개 ` +
+    `(블록 전용 ${blockOnlyLayers}개) → 목록 ${result.length}개`)
 
   return result.sort((a, b) => b.segCount - a.segCount)
 }
