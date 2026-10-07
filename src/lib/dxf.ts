@@ -1649,8 +1649,6 @@ export async function parseCadFile(
   }
 }
 
-const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
-
 /** 세그먼트를 공간 격자로 쪼갠다 — 연결성 클러스터링이 실패했을 때의 폴백.
  *
  * 연결성으로 못 쪼갠 덩어리를 그대로 두면 클릭 한 번에 도면 절반이 잡힌다.
@@ -1679,12 +1677,21 @@ function partitionSegsByGrid(segs: RawSeg[], targetPerCell: number): RawSeg[][] 
 
 /** 연결된 세그먼트끼리 클러스터링 (Union-Find)
  *  endpoint가 SNAP_TOL 이내이면 같은 그룹으로 판정.
- *  방/벽 단위로 개별 선택 가능하도록 분리. */
-function clusterConnectedSegs(segs: RawSeg[], deadline = Infinity): RawSeg[][] {
+ *  방/벽 단위로 개별 선택 가능하도록 분리.
+ *
+ *  **시간 예산이 없다.** MAX_BUCKET 이 작업량을 세그먼트당 상수로 묶기 때문이다:
+ *  endpoint 2개 x 인접 셀 9개 x 버킷당 최대 30개 = 세그먼트당 거리 비교 540회가
+ *  증명 가능한 상한이다 (30 을 넘게 자란 버킷은 통째로 건너뛴다). 즉 전체가
+ *  O(n) 이고 상수도 작다 — 실측 1104개 65ms.
+ *
+ *  예전엔 벽시계 4초 예산이 있었는데, (1) 같은 도면이 PC 성능에 따라 다르게
+ *  쪼개지고 (2) 예산이 터지면 레이어를 단일 그룹으로 되돌려 "선 하나가 안
+ *  골라지는" 버그를 그대로 재현했다. 결정적이지 않은 안전망은 없는 게 낫다. */
+function clusterConnectedSegs(segs: RawSeg[]): RawSeg[][] {
   if (segs.length <= 1) return [segs]
 
   const SNAP_TOL = 5 // px 단위 endpoint 근접 허용치
-  const MAX_BUCKET = 30 // 버킷당 최대 세그먼트 수 (O(n²) 방지)
+  const MAX_BUCKET = 30 // 버킷당 최대 세그먼트 수 (작업량을 세그먼트당 상수로 묶는다)
   const n = segs.length
 
   // Union-Find
@@ -1706,14 +1713,8 @@ function clusterConnectedSegs(segs: RawSeg[], deadline = Infinity): RawSeg[][] {
   // endpoint를 grid cell로 해싱
   const cellSize = SNAP_TOL
   const cellMap = new Map<string, number[]>()
-  let timedOut = false
 
   for (let i = 0; i < n; i++) {
-    // 시간 예산 체크 (매 500개마다). 예산은 **호출자가 레이어 전체에 대해**
-    // 하나로 쥔다 — 레이어 그룹이 수십 개라 호출마다 2초씩 주면 임포트가
-    // 통째로 멈춘다.
-    if ((i & 511) === 0 && i > 0 && nowMs() > deadline) { timedOut = true; break }
-
     const s = segs[i]
     const x1 = s.x1, y1 = s.y1, x2 = s.x1 + s.dx, y2 = s.y1 + s.dy
 
@@ -1751,11 +1752,6 @@ function clusterConnectedSegs(segs: RawSeg[], deadline = Infinity): RawSeg[][] {
       if (!ownBucket) { ownBucket = []; cellMap.set(ownKey, ownBucket) }
       if (ownBucket.length < MAX_BUCKET * 2) ownBucket.push(i) // 과대 버킷 방지
     }
-  }
-
-  if (timedOut) {
-    console.warn(`[CAD] clusterConnectedSegs 시간 초과 (${n}개 세그먼트) → 단일 그룹 반환`)
-    return [segs]
   }
 
   // 그룹별로 세그먼트 수집
@@ -2749,8 +2745,6 @@ export async function commitCadImportV2(
     })
 
     const groupShapes: unknown[] = []
-    // 연결성 클러스터링 전체에 주는 예산. 레이어 그룹마다 따로 주면 합이 분 단위가 된다.
-    const clusterDeadline = nowMs() + 4000
     // 한 덩어리가 이것보다 크면 "선택 단위"로 너무 크다고 보고 격자로 더 쪼갠다.
     const MAX_SEGS_PER_CLUSTER = 400
     for (const [, { layer, color: groupColor, dashArray: groupDashArray, segs }] of layerGroups) {
@@ -2760,8 +2754,9 @@ export async function commitCadImportV2(
       // clusterConnectedSegs 가 O(n²) 이던 시절의 상한인데, 지금은 격자 해싱 +
       // union-find 라 O(n) 이다. 상한만 남아서 클릭 한 번에 레이어 절반이
       // 통째로 잡히고 있었다 — 도면에서 선 하나를 못 고르는 체감의 원인.
-      let clusters = clusterConnectedSegs(segs, clusterDeadline)
-      // 연결성으로도 안 쪼개지는 덩어리(격자 밀집·시간 초과)는 격자로 한 번 더.
+      let clusters = clusterConnectedSegs(segs)
+      // 연결성으로도 안 쪼개지는 덩어리(밀집 버킷이 MAX_BUCKET 을 넘어 건너뛰어진
+      // 경우 등)는 격자로 한 번 더.
       if (clusters.some(c => c.length > MAX_SEGS_PER_CLUSTER)) {
         clusters = clusters.flatMap(c =>
           c.length > MAX_SEGS_PER_CLUSTER ? partitionSegsByGrid(c, MAX_SEGS_PER_CLUSTER / 4) : [c])
