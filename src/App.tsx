@@ -42,7 +42,7 @@ import { saveVersion, getVersion } from './lib/versions'
 import { pushVersion } from './lib/versionSync'
 import { backupServerSnapshot } from './lib/conflictBackup'
 import { dwgToDxfBytes, decodeDxfBytes, commitCadImportV2 } from './lib/dxf'
-import { initGrayscaleAttr, initDarkAttr, getDarkMode, getWheelBehavior } from './lib/settings'
+import { initGrayscaleAttr, initDarkAttr, getDarkMode, getWheelBehavior, getWheelMode } from './lib/settings'
 import './App.css'
 
 // body data-grayscale / dark 동기화 (페이지 로드 시)
@@ -413,8 +413,16 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
     // - 마우스 휠: zoom (오토캐드 방식)
     // - 터치패드 스크롤: pan (한 손 두 손가락 스크롤 = 이동)
     // - 터치패드 핀치: zoom (브라우저가 ctrlKey + 작은 deltaY로 전달)
-    let lastWheelBehavior: 'pan' | 'zoom' = 'zoom'
+    //
+    // 설정에서 '이동'/'확대' 를 직접 고르면 감지는 손을 뗀다 (getWheelMode() !== 'auto').
+    // 전엔 감지가 무조건 덮어써서 설정 토글이 아무 효과도 없었다.
+    //
+    // 직전 값을 따로 캐시하지 않고 카메라 옵션을 그대로 읽는다. 전엔 'zoom' 으로
+    // 하드코딩해 두고 비교했는데, 설정이 'pan' 인 상태에서 첫 마우스 휠이
+    // want==='zoom' 을 "이미 같다"고 판단해 건너뛰고 그 뒤로 추적값과 실제값이
+    // 계속 어긋났다. 설정 변경으로 옵션이 바뀌어도 캐시는 모른다.
     const handleWheel = (e: WheelEvent) => {
+      if (getWheelMode() !== 'auto') return
       if (!(e.target as HTMLElement)?.closest('.tl-container')) return
       // ctrlKey + 작은 delta → 터치패드 핀치 → 'pan' (tldraw가 ctrl 감지해서 flip → zoom)
       // deltaMode 1 → 마우스 라인 스크롤 → 'zoom'
@@ -430,9 +438,9 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
       } else {
         want = 'pan'  // 터치패드 스크롤
       }
-      if (want !== lastWheelBehavior) {
-        lastWheelBehavior = want
-        editor.setCameraOptions({ ...editor.getCameraOptions(), wheelBehavior: want })
+      const opts = editor.getCameraOptions()
+      if (opts.wheelBehavior !== want) {
+        editor.setCameraOptions({ ...opts, wheelBehavior: want })
       }
     }
 

@@ -118,19 +118,32 @@ const WHEEL_BEHAVIOR_KEY = 'bimova_wheel_behavior'
  *    behavior = ctrlKey ? (wheelBehavior === 'pan' ? 'zoom' : 'pan') : wheelBehavior
  *
  *  터치패드는 두 손가락 스크롤을 ctrl 없이, 핀치를 `ctrlKey: true` 로 보낸다.
- *  따라서 'zoom' 으로 두면 스크롤이 확대, 핀치가 이동이 되어 정확히 뒤집힌다.
- *  기본값 'zoom' — 마우스 휠로 바로 확대/축소 (오토캐드 방식).
- *  터치패드 사용자는 설정에서 'pan' 으로 변경 가능. */
+ *  따라서 'zoom' 으로 두면 스크롤이 확대, 핀치가 이동이 되어 정확히 뒤집힌다. */
 export type WheelBehavior = 'pan' | 'zoom'
 
-export function getWheelBehavior(): WheelBehavior {
+/** 설정에 저장되는 값.
+ *
+ *  'auto' = App 이 휠 이벤트를 보고 마우스/터치패드를 감지해 매번 고른다.
+ *  'pan' / 'zoom' = 한이 직접 고른 값. 이 경우 **자동 감지는 손을 뗀다.**
+ *  (전엔 자동 감지가 설정을 무조건 덮어써서 토글이 아무 효과도 없었다.)
+ *
+ *  기본값은 'auto' — 저장된 값이 없던 기존 사용자도 그대로 자동 감지를 받는다. */
+export type WheelMode = 'auto' | WheelBehavior
+
+export function getWheelMode(): WheelMode {
   const stored = scopedGet(WHEEL_BEHAVIOR_KEY)
-  if (stored === 'pan') return 'pan'
-  return 'zoom'  // 기본값: CAD 방식 (휠=확대, Ctrl+휠=이동)
+  if (stored === 'pan' || stored === 'zoom') return stored
+  return 'auto'
 }
-export function setWheelBehavior(v: WheelBehavior) {
+export function setWheelMode(v: WheelMode) {
   scopedSet(WHEEL_BEHAVIOR_KEY, v)
   window.dispatchEvent(new Event('bimova:settings'))
+}
+
+/** tldraw cameraOptions.wheelBehavior 에 넣을 값.
+ *  'auto' 는 'zoom'(오토캐드 방식) 으로 시작하고 이후 자동 감지가 덮어쓴다. */
+export function getWheelBehavior(): WheelBehavior {
+  return getWheelMode() === 'pan' ? 'pan' : 'zoom'
 }
 
 /** 초기화 시 dark attr 동기화 */

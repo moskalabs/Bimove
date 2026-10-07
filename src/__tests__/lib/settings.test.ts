@@ -7,7 +7,7 @@ import {
   getRoomNames, setRoomName,
   getSnapEnabled, setSnapEnabled,
   getSnapMode, setSnapMode, getActiveSnapModes,
-  getWheelBehavior, setWheelBehavior,
+  getWheelBehavior, getWheelMode, setWheelMode,
 } from '../../lib/settings'
 import { scopedSet } from '../../lib/scopedStorage'
 
@@ -193,22 +193,36 @@ describe('individual snap modes', () => {
 })
 
 describe('wheel behavior', () => {
-  // 기본값은 'zoom' — 마우스 휠로 바로 확대/축소 하는 오토캐드 방식.
-  // (터치패드는 App.tsx 가 휠 이벤트를 보고 'pan' 으로 자동 전환한다.)
-  it("기본값은 'zoom' (오토캐드 방식)", () => {
+  // 저장된 값이 없으면 'auto' — App.tsx 가 휠 이벤트를 보고 마우스/터치패드를
+  // 감지한다. 카메라 옵션 초기값은 'zoom'(오토캐드 방식) 으로 시작한다.
+  it("기본 모드는 'auto', 초기 behavior 는 'zoom'", () => {
+    expect(getWheelMode()).toBe('auto')
     expect(getWheelBehavior()).toBe('zoom')
   })
 
   it('설정한 값이 유지된다', () => {
-    setWheelBehavior('zoom')
+    setWheelMode('zoom')
+    expect(getWheelMode()).toBe('zoom')
     expect(getWheelBehavior()).toBe('zoom')
-    setWheelBehavior('pan')
+    setWheelMode('pan')
+    expect(getWheelMode()).toBe('pan')
     expect(getWheelBehavior()).toBe('pan')
+    setWheelMode('auto')
+    expect(getWheelMode()).toBe('auto')
   })
 
-  // 'pan' 만 명시적으로 인정하고 나머지는 기본값으로 떨어뜨린다.
-  it("알 수 없는 값은 'zoom' 으로 떨어진다", () => {
+  // 'pan'/'zoom' 만 명시적 선택으로 인정하고 나머지는 'auto' 로 떨어뜨린다.
+  it("알 수 없는 값은 'auto' 로 떨어진다", () => {
     scopedSet('bimova_wheel_behavior', 'garbage')
+    expect(getWheelMode()).toBe('auto')
     expect(getWheelBehavior()).toBe('zoom')
+  })
+
+  // 'auto' 는 tldraw 에 그대로 넘길 수 없는 값이다 — 반드시 해소돼야 한다.
+  it("getWheelBehavior 는 'auto' 를 절대 반환하지 않는다", () => {
+    for (const v of ['auto', 'pan', 'zoom', '', 'garbage']) {
+      scopedSet('bimova_wheel_behavior', v)
+      expect(['pan', 'zoom']).toContain(getWheelBehavior())
+    }
   })
 })
