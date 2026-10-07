@@ -1653,7 +1653,12 @@ export async function parseCadFile(
  *
  * 연결성으로 못 쪼갠 덩어리를 그대로 두면 클릭 한 번에 도면 절반이 잡힌다.
  * 의미 단위는 아니지만, 적어도 화면 한 구석씩은 따로 집히게 만든다.
- * `targetPerCell` 은 셀 하나에 들어갈 세그먼트 수 목표치다. */
+ * `targetPerCell` 은 셀 하나에 들어갈 세그먼트 수 목표치다.
+ *
+ * 칸은 세그먼트 **중점**으로 정한다. 시작점으로 정하면 긴 대각선이나 외곽선이
+ * 시작점 쪽 칸에만 들어가서, 그 칸의 bbox 가 격자를 가로질러 늘어난다 — 선택은
+ * 되지만 선택 박스가 엉뚱하게 커 보인다. 중점이면 적어도 선의 가운데가 있는
+ * 칸에 속한다. */
 function partitionSegsByGrid(segs: RawSeg[], targetPerCell: number): RawSeg[][] {
   const cells = Math.max(2, Math.ceil(Math.sqrt(segs.length / targetPerCell)))
   let sMinX = Infinity, sMinY = Infinity, sMaxX = -Infinity, sMaxY = -Infinity
@@ -1665,8 +1670,9 @@ function partitionSegsByGrid(segs: RawSeg[], targetPerCell: number): RawSeg[][] 
   const cellH = (sMaxY - sMinY || 1) / cells
   const grid = new Map<string, RawSeg[]>()
   for (const s of segs) {
-    const cx = Math.floor((s.x1 - sMinX) / cellW)
-    const cy = Math.floor((s.y1 - sMinY) / cellH)
+    // 중점이 정확히 최대 경계에 닿으면 cells 가 나와 칸이 하나 더 생긴다 — 묶는다.
+    const cx = Math.min(cells - 1, Math.floor((s.x1 + s.dx / 2 - sMinX) / cellW))
+    const cy = Math.min(cells - 1, Math.floor((s.y1 + s.dy / 2 - sMinY) / cellH))
     const key = `${cx},${cy}`
     let cell = grid.get(key)
     if (!cell) { cell = []; grid.set(key, cell) }
