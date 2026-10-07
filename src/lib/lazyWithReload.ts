@@ -13,6 +13,22 @@ function markReload(): void {
 }
 
 /**
+ * 배포가 갈려 청크를 못 가져올 때 새 index.html 을 받도록 리로드한다.
+ *
+ * **한 번만** 한다 — 진짜로 청크가 깨진 배포라면 무한 새로고침이 된다.
+ * 쿨다운 안에 또 불리면 아무것도 하지 않고 false 를 돌려주니, 호출자는
+ * 그때 에러를 그대로 올려야 한다.
+ *
+ * @returns 리로드를 시작했으면 true (페이지가 곧 사라진다)
+ */
+export function reloadForStaleChunk(): boolean {
+  if (Date.now() - lastReloadAt() <= RELOAD_COOLDOWN_MS) return false
+  markReload()
+  window.location.reload()
+  return true
+}
+
+/**
  * 배포가 갈리는 순간 열려 있던 탭을 살리는 lazy().
  *
  * 빌드마다 청크 파일명 해시가 바뀐다. 예전 index.js 를 들고 있는 탭이 그 시점에
@@ -30,9 +46,7 @@ export function lazyWithReload<T extends ComponentType<never>>(
 ): LazyExoticComponent<T> {
   return lazy(() =>
     factory().catch((err: unknown) => {
-      if (Date.now() - lastReloadAt() <= RELOAD_COOLDOWN_MS) throw err
-      markReload()
-      window.location.reload()
+      if (!reloadForStaleChunk()) throw err
       // 리로드가 실제로 일어날 때까지 Suspense 를 붙잡아 둔다.
       // 여기서 resolve 하면 깨진 채로 한 프레임이 그려진다.
       return new Promise<{ default: T }>(() => {})

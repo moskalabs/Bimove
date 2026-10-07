@@ -3,6 +3,7 @@ import DxfParser from 'dxf-parser'
 import { convertDwgToDxf, CDN_WASM_BASE } from 'dwgdxf'
 import { createShapeId, type Editor } from 'tldraw'
 import { getScaleConfig } from './scaleConfig'
+import { reloadForStaleChunk } from './lazyWithReload'
 import { getDefaultWallThicknessMm } from './settings'
 import { ACI_TO_HEX as ACI_TABLE, trueColorToHex as trueColorToHexShared, decodeDxfSpecialChars as decodeSpecialCharsShared, STRUCTURAL_KEYWORDS, type ViewportClip } from './dxf-shared'
 
@@ -1872,6 +1873,20 @@ function runFastWorker(
     worker.onerror = (err) => {
       clearTimeout(timeout)
       worker.terminate()
+
+      // 모듈 스크립트 **로딩 자체**가 실패하면 ErrorEvent.message 가 비어 있다
+      // (워커 안에서 터진 런타임 에러는 message 가 채워진다). 배포가 갈려
+      // 예전 탭이 사라진 워커 청크를 요청한 경우가 이것이다 — Vercel 이 없는
+      // 경로에 index.html 을 돌려주므로 브라우저가 MIME 로 거부한다.
+      // 실제 로그: `Failed to load module script: ... "text/html"` 뒤에
+      // `Worker 에러: undefined`.
+      //
+      // lazyWithReload 는 React.lazy 만 감싸서 워커를 커버하지 못한다.
+      if (!err.message) {
+        if (reloadForStaleChunk()) return  // 리로드 중 — 일부러 settle 하지 않는다
+        reject(new Error('DXF 파서(Worker) 를 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.'))
+        return
+      }
       reject(new Error(`Worker 에러: ${err.message}`))
     }
 
@@ -2440,10 +2455,15 @@ export async function commitCadImportV2(
     workerSkipped = result.skipped || {}
   } catch (workerErr) {
     console.error(`[CAD V2] Worker 실패:`, workerErr)
-    // 동기 fallback 제거 — 메인 스레드에서 100MB+ 파일 파싱 시 브라우저 완전 멈춤
-    // 대신 에러 알림 후 빈 결과 반환
-    onProgress?.('파싱 실패 — 다시 시도해주세요')
-    return 0
+    onProgress?.('파싱 실패')
+    // 동기 fallback 은 없다 — 메인 스레드에서 100MB+ 를 파싱하면 브라우저가 멈춘다.
+    //
+    // 예전엔 여기서 `return 0` 을 했다. 그러면 호출자는 **실패**와 "선택한
+    // 레이어에 도형이 없음"(둘 다 0)을 구분할 수 없다. 실제로 워커 청크가
+    // 404 났는데 `[Import] Layout "Model": 0개 요소` 로 조용히 넘어가고
+    // 빈 페이지 + 성공 토스트까지 나왔다. 호출자(ImportPanel, App)는 둘 다
+    // try/catch 로 에러 토스트를 띄우니, 던지는 쪽이 맞다.
+    throw workerErr instanceof Error ? workerErr : new Error(String(workerErr))
   }
   const parseMs = (performance.now() - t0).toFixed(0)
   console.log(`[CAD V2] 파싱 완료: ${polylines.length}개 폴리라인, ${workerHatches.length}개 해치 (${parseMs}ms)`)
