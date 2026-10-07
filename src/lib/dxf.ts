@@ -2448,7 +2448,15 @@ export async function commitCadImportV2(
   // 3. 폴리라인 → RawSeg 변환 + 필터링 파이프라인
   onProgress?.('좌표 변환 중...')
   const rawSegsAll = polylinesToSegments(polylines, scale)
-  console.log(`[CAD V2] rawSegsAll: ${rawSegsAll.length}개 세그먼트`)
+  // 필터를 하나도 안 거친 전체 범위. 뷰포트 clip 이 도형을 하나도 못 잡을 때
+  // "그 영역이 원래 비어 있는가" 와 "우리가 걸러낸 것인가" 를 가르는 기준이다.
+  if (rawSegsAll.length > 0) {
+    const rb = computeBBox(rawSegsAll, 0, 1)
+    console.log(`[CAD V2] rawSegsAll: ${rawSegsAll.length}개 세그먼트, ` +
+      `전체 범위 X ${rb.minX.toFixed(0)}~${rb.maxX.toFixed(0)}, Y ${rb.minY.toFixed(0)}~${rb.maxY.toFixed(0)}`)
+  } else {
+    console.log(`[CAD V2] rawSegsAll: 0개 세그먼트`)
+  }
 
   // 세그먼트가 0개여도 글자나 해치가 있으면 계속 간다.
   // 범례/주기 시트처럼 선이 하나도 없는 DXF 가 실제로 있고,
