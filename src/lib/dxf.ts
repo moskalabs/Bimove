@@ -1005,7 +1005,19 @@ export function decodeDxfBytes(dxfBytes: Uint8Array): string {
   // 이중 인코딩 복원: DWG→DXF 변환기가 EUC-KR 바이트를 Latin-1로 해석 후
   // UTF-8로 인코딩하는 경우 ($DWGCODEPAGE=ANSI_1252 but 실제 EUC-KR)
   // → ÇöÀå (Latin chars) 가 되어야 할 텍스트가 현장 (Korean) 으로 복원
-  return reverseDoubleEncodingIfNeeded(text)
+  return normalizeNewlines(reverseDoubleEncodingIfNeeded(text))
+}
+
+/** CRLF → LF 통일.
+ *
+ *  DXF 파서 전체가 LF 기준 문자열(줄바꿈 + "0" + 줄바꿈 + "SECTION" 등) 로
+ *  indexOf 를 한다. 윈도우 오토캐드가 내보낸 CRLF DXF 는 그 바늘이 하나도
+ *  안 맞아서 섹션을 통째로 못 찾고, 에러 없이 빈 도면이 들어온다.
+ *  디코딩 직후 한 번만 고친다 — DXF 텍스트가 만들어지는 유일한 입구가 여기다.
+ *
+ *  캐리지리턴이 없으면 복사도 하지 않는다 (대용량 도면에서 괜한 한 패스 방지). */
+function normalizeNewlines(text: string): string {
+  return text.indexOf('\r') < 0 ? text : text.replace(/\r\n?/g, '\n')
 }
 
 /**

@@ -322,14 +322,25 @@ function floatAt(text: string, start: number, end: number): number {
 
 // ===== DXF Parsing =====
 
+/** needle 을 "줄 시작" 에서만 찾는다. 파일 맨 앞(인덱스 0)도 줄 시작이다.
+ *
+ *  전엔 호출부에서 바늘 앞에 줄바꿈을 붙여 indexOf 했다. 그래서 byte 0 에 있는
+ *  건 영원히 못 찾았다 — 표준 DXF 는 HEADER 가 바로 맨 앞에 오므로 $INSUNITS 를
+ *  한 번도 못 읽고 늘 mm 로 가정했다. inch 도면이 조용히 틀린 축척으로 들어왔다. */
+function indexOfLineStart(text: string, needle: string, from = 0): number {
+  if (from <= 0 && text.startsWith(needle)) return 0
+  const i = text.indexOf(`\n${needle}`, Math.max(0, from - 1))
+  return i < 0 ? -1 : i + 1
+}
+
 /** Extract a named section's inner text (padding-aware) */
-function extractSection(dxf: string, name: string, gc: (c: number) => string): string | null {
-  const hdr = `\n${gc(0)}\nSECTION\n${gc(2)}\n${name}\n`
-  const idx = dxf.indexOf(hdr)
+export function extractSection(dxf: string, name: string, gc: (c: number) => string): string | null {
+  const hdr = `${gc(0)}\nSECTION\n${gc(2)}\n${name}\n`
+  const idx = indexOfLineStart(dxf, hdr)
   if (idx < 0) return null
   const start = idx + hdr.length
-  const end = dxf.indexOf(`\n${gc(0)}\nENDSEC`, start)
-  return end > start ? dxf.substring(start, end) : null
+  const end = indexOfLineStart(dxf, `${gc(0)}\nENDSEC`, start)
+  return end >= start ? dxf.substring(start, end) : null
 }
 
 /** Parse $INSUNITS from HEADER section */
