@@ -51,3 +51,48 @@ describe('poExport (JPG)', () => {
     expect(typeof mod.exportPOJpg).toBe('function')
   })
 })
+
+describe('HTML 이스케이프 (XSS)', () => {
+  /** window.open 을 가짜로 바꿔 document.write 로 넘어간 HTML 을 잡아낸다. */
+  function captureHtml(run: () => void): string {
+    let captured = ''
+    const fakeWin = {
+      document: { write: (s: string) => { captured += s }, close: () => {} },
+      print: () => {},
+    }
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(fakeWin as unknown as Window)
+    try { run() } finally { openSpy.mockRestore() }
+    return captured
+  }
+
+  const PAYLOAD = '<script>alert(1)</script>'
+
+  it('발주서: 단위 칸의 태그를 이스케이프한다', async () => {
+    const { printPOPdf } = await import('../../lib/poExport')
+    const po = makePO([makeTable([makeItem({ unit: PAYLOAD })])])
+    vi.useFakeTimers()
+    const html = captureHtml(() => printPOPdf(po))
+    vi.useRealTimers()
+    expect(html).not.toContain(PAYLOAD)
+    expect(html).toContain('&lt;script&gt;')
+  })
+
+  it('발주서: 품명·마감재도 이스케이프한다', async () => {
+    const { printPOPdf } = await import('../../lib/poExport')
+    const po = makePO([makeTable([makeItem({ name: PAYLOAD, material: PAYLOAD })])])
+    vi.useFakeTimers()
+    const html = captureHtml(() => printPOPdf(po))
+    vi.useRealTimers()
+    expect(html).not.toContain(PAYLOAD)
+  })
+
+  it('견적서: 카테고리·단위를 이스케이프한다', async () => {
+    const { printQuotePdf } = await import('../../lib/quoteExport')
+    const html = captureHtml(() => printQuotePdf(
+      [{ category: PAYLOAD, name: '벽체', qty: 1, unit: PAYLOAD, unitPrice: 1000, amount: 1000 }],
+      { projectName: PAYLOAD },
+    ))
+    expect(html).not.toContain(PAYLOAD)
+    expect(html).toContain('&lt;script&gt;')
+  })
+})

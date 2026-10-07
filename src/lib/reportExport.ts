@@ -35,7 +35,9 @@ function variantSummary(item: FinishingItem, v: MaterialVariant): { area: string
     case 'length': qty = v.zones.reduce((s, z) => s + z.wallLengthM, 0).toFixed(1); break
     default: qty = total.toFixed(2)
   }
-  return { area: total.toFixed(2), qty: `${qty} ${item.unit}` }
+  // 단위는 자유 입력칸(FinishingTab) 이라 반드시 이스케이프한다 —
+  // 이 문자열은 그대로 HTML 표에 들어가고 document.write 로 렌더된다.
+  return { area: total.toFixed(2), qty: `${qty} ${esc(item.unit)}` }
 }
 
 function buildSpecRows(projectId: string): string {

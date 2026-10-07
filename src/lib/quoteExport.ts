@@ -32,11 +32,11 @@ export function printQuotePdf(lines: CostLine[], opts: QuoteOptions) {
   }
 
   const rowsHtml = Array.from(groups.entries()).map(([cat, items]) => `
-    <tr class="cat-row"><td colspan="4">${cat}</td></tr>
+    <tr class="cat-row"><td colspan="4">${escapeHtml(cat)}</td></tr>
     ${items.map(l => `
       <tr>
         <td class="name">${escapeHtml(l.name)}</td>
-        <td class="qty">${l.qty.toLocaleString('ko-KR', { maximumFractionDigits: 2 })} ${l.unit}</td>
+        <td class="qty">${l.qty.toLocaleString('ko-KR', { maximumFractionDigits: 2 })} ${escapeHtml(l.unit)}</td>
         <td class="unit-price">${fmtKRW(l.unitPrice)}</td>
         <td class="amount">${fmtKRW(l.amount)}</td>
       </tr>

@@ -132,7 +132,7 @@ function buildPOBodyHtml(po: PurchaseOrder) {
         <td class="l">${esc(item.material || '-')}</td>
         <td class="c">${item.itemWidthMm > 0 ? `${item.itemWidthMm}x${item.itemLengthMm}` : '-'}</td>
         <td class="r">${calcQuantity(item)}</td>
-        <td class="c">${item.unit}</td>
+        <td class="c">${esc(item.unit)}</td>
         <td class="r">${comma(item.unitPrice)}</td>
         <td class="r">${comma(calcAmount(item))}</td>
         <td class="l">${netArea(item) > 0 ? netArea(item).toFixed(1) + 'm²' : ''}</td>
