@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useEditor } from '../context/EditorContext'
 import { getScaleConfig } from '../lib/scaleConfig'
 import {
-  type SnapMode,
-  getSnapEnabled, setSnapEnabled,
-  getSnapMode, setSnapMode,
+  type SnapUiMode,
+  getSnapUiState, setSnapUiMode,
 } from '../lib/settings'
 
 /** 실제 거리(mm)를 읽기 좋은 단위로 포맷 */
@@ -90,7 +89,7 @@ function MagnetIcon({ color, size = 16 }: { color: string; size?: number }) {
   )
 }
 
-const SNAP_ITEMS: { mode: SnapMode | 'ortho'; label: string; color: string }[] = [
+const SNAP_ITEMS: { mode: SnapUiMode; label: string; color: string }[] = [
   { mode: 'endpoint',      label: '끝점',   color: '#f5a623' },
   { mode: 'midpoint',      label: '중간점', color: '#f5a623' },
   { mode: 'intersection',  label: '교차점', color: '#e8a01a' },
@@ -104,15 +103,8 @@ export function ScaleRuler() {
   const [zoom, setZoom] = useState(1)
   const [pxPerMm, setPxPerMm] = useState(1)
 
-  // 스냅 상태
-  const [snapEnabled, _setSnapEnabled] = useState(getSnapEnabled)
-  const [snapModes, setSnapModes] = useState(() => ({
-    endpoint: getSnapMode('endpoint'),
-    midpoint: getSnapMode('midpoint'),
-    intersection: getSnapMode('intersection'),
-    perpendicular: getSnapMode('perpendicular'),
-    extension: getSnapMode('extension'),
-  }))
+  // 스냅 상태 — RBar 의 같은 패널과 'bimova:settings' 로 동기화한다
+  const [snapUi, setSnapUi] = useState(getSnapUiState)
   const [snapOpen, setSnapOpen] = useState(false)
   const snapRef = useRef<HTMLDivElement>(null)
 
@@ -129,6 +121,13 @@ export function ScaleRuler() {
     })
     return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
   }, [editor])
+
+  // 설정이 바뀌면 (RBar 쪽 토글 포함) 다시 읽는다
+  useEffect(() => {
+    const sync = () => setSnapUi(getSnapUiState())
+    window.addEventListener('bimova:settings', sync)
+    return () => window.removeEventListener('bimova:settings', sync)
+  }, [])
 
   // 바깥 클릭 시 스냅 드롭다운 닫기
   useEffect(() => {
@@ -150,24 +149,12 @@ export function ScaleRuler() {
   const tickH = 8
   const barY = 28
 
-  const toggleSnapEnabled = () => {
-    const next = !snapEnabled
-    _setSnapEnabled(next)
-    setSnapEnabled(next)
-  }
-
+  // 저장만 하면 'bimova:settings' 가 동기적으로 돌아 위 effect 가 상태를 다시 읽는다.
   const toggleSnapMode = (item: typeof SNAP_ITEMS[number]) => {
-    if (item.mode === 'ortho') {
-      toggleSnapEnabled()
-    } else {
-      const mode = item.mode as SnapMode
-      const next = !snapModes[mode]
-      setSnapModes(prev => ({ ...prev, [mode]: next }))
-      setSnapMode(mode, next)
-    }
+    setSnapUiMode(item.mode, !snapUi[item.mode])
   }
 
-  const anyActive = snapEnabled || Object.values(snapModes).some(Boolean)
+  const anyActive = Object.values(snapUi).some(Boolean)
 
   return (
     <div style={{
@@ -209,9 +196,7 @@ export function ScaleRuler() {
               스냅 모드
             </div>
             {SNAP_ITEMS.map(item => {
-              const active = item.mode === 'ortho'
-                ? snapEnabled
-                : snapModes[item.mode as SnapMode]
+              const active = snapUi[item.mode]
               return (
                 <label
                   key={item.mode}

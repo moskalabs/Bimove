@@ -45,6 +45,7 @@ export function getSnapEnabled(): boolean {
 }
 export function setSnapEnabled(v: boolean) {
   scopedSet(SNAP_ENABLED_KEY, String(v))
+  window.dispatchEvent(new Event('bimova:settings'))
 }
 
 // ── 개별 스냅 모드 토글 ──
@@ -67,6 +68,7 @@ export function getSnapMode(mode: SnapMode): boolean {
 
 export function setSnapMode(mode: SnapMode, v: boolean) {
   scopedSet(SNAP_MODE_PREFIX + mode, String(v))
+  window.dispatchEvent(new Event('bimova:settings'))
 }
 
 /** 현재 활성화된 스냅 모드 전체 반환 */
@@ -78,6 +80,24 @@ export function getActiveSnapModes(): Record<SnapMode, boolean> {
     perpendicular: getSnapMode('perpendicular'),
     extension: getSnapMode('extension'),
   }
+}
+
+/** 스냅 체크박스 UI 가 다루는 항목.
+ *  'ortho' 는 개별 스냅이 아니라 직교 각도 스냅(SNAP_ENABLED_KEY) 이다 — 저장 위치가 다르다. */
+export type SnapUiMode = SnapMode | 'ortho'
+
+/** 스냅 패널 전체 상태.
+ *
+ *  ScaleRuler 와 RBar 가 같은 설정을 각자 useState 로 한 번 읽고 끝내서,
+ *  한쪽에서 토글하면 다른 쪽 체크박스가 옛 값을 그대로 보여줬다. 이제 둘 다
+ *  이 함수로 읽고 'bimova:settings' 이벤트로 다시 읽는다. */
+export function getSnapUiState(): Record<SnapUiMode, boolean> {
+  return { ...getActiveSnapModes(), ortho: getSnapEnabled() }
+}
+
+export function setSnapUiMode(mode: SnapUiMode, v: boolean) {
+  if (mode === 'ortho') setSnapEnabled(v)
+  else setSnapMode(mode, v)
 }
 
 const GRAYSCALE_KEY = 'bimova_grayscale'

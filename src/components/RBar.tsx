@@ -23,10 +23,9 @@ import { VersionHistoryPanel } from './VersionHistoryPanel'
 import {
   getDefaultWallThicknessMm, setDefaultWallThicknessMm,
   getWallHeightMm, setWallHeightMm,
-  getSnapEnabled, setSnapEnabled,
   getDarkMode, setDarkMode as persistDarkMode,
   getWheelMode, setWheelMode, type WheelMode,
-  getSnapMode, setSnapMode, type SnapMode,
+  getSnapUiState, setSnapUiMode, type SnapUiMode,
 } from '../lib/settings'
 import { drawingState } from '../lib/drawingState'
 import { getProjects, renameProject } from '../lib/projectStore'
@@ -320,7 +319,7 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
 
 /* ── 스냅 모드 정의: 아이콘 + 레이블 + 키 ── */
 type SnapOptionDef = {
-  mode: SnapMode | 'ortho'
+  mode: SnapUiMode
   label: string
   icon: React.ReactNode
   color: string
@@ -402,14 +401,8 @@ const SNAP_OPTIONS: SnapOptionDef[] = [
 /* ── 화면 보기 (하단): 거리 표시 + 스냅 ── */
 function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleConfig }) {
   const editor = useEditor()
-  const [snapModes, setSnapModes] = useState(() => ({
-    endpoint: getSnapMode('endpoint'),
-    midpoint: getSnapMode('midpoint'),
-    intersection: getSnapMode('intersection'),
-    perpendicular: getSnapMode('perpendicular'),
-    extension: getSnapMode('extension'),
-    ortho: getSnapEnabled(),
-  }))
+  // ScaleRuler 의 같은 패널과 'bimova:settings' 로 동기화한다
+  const [snapModes, setSnapModes] = useState(getSnapUiState)
   const [distText, setDistText] = useState<string | null>(null)
   const [zoom, setZoom] = useState(100)
 
@@ -460,17 +453,16 @@ function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleC
     return () => document.removeEventListener('mousedown', handler)
   }, [snapOpen])
 
+  // 설정이 바뀌면 (ScaleRuler 쪽 토글 포함) 다시 읽는다
+  useEffect(() => {
+    const sync = () => setSnapModes(getSnapUiState())
+    window.addEventListener('bimova:settings', sync)
+    return () => window.removeEventListener('bimova:settings', sync)
+  }, [])
+
+  // 저장만 하면 'bimova:settings' 가 동기적으로 돌아 위 effect 가 상태를 다시 읽는다.
   const toggleSnap = (opt: SnapOptionDef) => {
-    if (opt.mode === 'ortho') {
-      const next = !snapModes.ortho
-      setSnapModes(prev => ({ ...prev, ortho: next }))
-      setSnapEnabled(next)
-    } else {
-      const mode = opt.mode as SnapMode
-      const next = !snapModes[mode]
-      setSnapModes(prev => ({ ...prev, [mode]: next }))
-      setSnapMode(mode, next)
-    }
+    setSnapUiMode(opt.mode, !snapModes[opt.mode])
   }
 
   const anySnapActive = Object.values(snapModes).some(Boolean)
@@ -507,7 +499,7 @@ function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleC
         {snapOpen && (
           <div className="rbar-snap-popup">
             {SNAP_OPTIONS.map(opt => {
-              const active = opt.mode === 'ortho' ? snapModes.ortho : snapModes[opt.mode as SnapMode]
+              const active = snapModes[opt.mode]
               return (
                 <label
                   key={opt.mode}

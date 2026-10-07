@@ -8,6 +8,7 @@ import {
   getSnapEnabled, setSnapEnabled,
   getSnapMode, setSnapMode, getActiveSnapModes,
   getWheelBehavior, getWheelMode, setWheelMode,
+  getSnapUiState, setSnapUiMode,
 } from '../../lib/settings'
 import { scopedSet } from '../../lib/scopedStorage'
 
@@ -223,6 +224,42 @@ describe('wheel behavior', () => {
     for (const v of ['auto', 'pan', 'zoom', '', 'garbage']) {
       scopedSet('bimova_wheel_behavior', v)
       expect(['pan', 'zoom']).toContain(getWheelBehavior())
+    }
+  })
+})
+
+describe('snap UI state', () => {
+  // ScaleRuler 와 RBar 가 같은 패널을 각자 들고 있어서, 한쪽에서 토글하면
+  // 다른 쪽 체크박스가 옛 값을 그대로 보여줬다. 둘 다 getSnapUiState() 로
+  // 읽고 'bimova:settings' 이벤트로 다시 읽게 만든 뒤의 계약을 못박는다.
+  it('ortho 는 개별 스냅이 아니라 직교 각도 스냅을 가리킨다', () => {
+    setSnapUiMode('ortho', false)
+    expect(getSnapEnabled()).toBe(false)
+    expect(getSnapUiState().ortho).toBe(false)
+    // 개별 스냅은 건드리지 않는다
+    expect(getSnapUiState().endpoint).toBe(getSnapMode('endpoint'))
+
+    setSnapUiMode('ortho', true)
+    expect(getSnapEnabled()).toBe(true)
+  })
+
+  it('개별 스냅 토글이 상태에 그대로 반영된다', () => {
+    setSnapUiMode('perpendicular', true)
+    expect(getSnapUiState().perpendicular).toBe(true)
+    setSnapUiMode('perpendicular', false)
+    expect(getSnapUiState().perpendicular).toBe(false)
+  })
+
+  it('저장할 때 bimova:settings 를 쏜다 (패널 간 동기화 신호)', () => {
+    let fired = 0
+    const bump = () => { fired++ }
+    window.addEventListener('bimova:settings', bump)
+    try {
+      setSnapUiMode('midpoint', false)
+      setSnapUiMode('ortho', false)
+      expect(fired).toBe(2)
+    } finally {
+      window.removeEventListener('bimova:settings', bump)
     }
   })
 })
