@@ -1993,6 +1993,18 @@ function computeBBox(segs: RawSeg[], pLoPct: number, pHiPct: number) {
 }
 
 /** 퍼센타일 범위 + 패딩 기반 아웃라이어 필터 */
+/**
+ * 아웃라이어 패스 하나가 지울 수 있는 최대 비율.
+ *
+ * 진짜 쓰레기 — 원점이나 1e9 에 박힌 고아 도형 — 는 늘 한 줌이다. 한 패스가
+ * 전체의 1% 를 지우겠다고 하면 그건 쓰레기를 걷어내는 게 아니라 도면 가장자리를
+ * 자르고 있는 것이다. 판정 기준이 "5~95 퍼센타일 bbox" 라서, 모델공간에 시트를
+ * 가로로 늘어놓은 도면에선 Y 양끝이 통째로 퍼센타일 밖으로 밀려난다. 실제로
+ * 리비전 구름의 위아래 호가 그렇게 사라졌다 (44212 → 43087, 2.5%). 좌우 호는
+ * Y 중간대라 살아남아서, 구름이 "{ }" 처럼 양옆만 남은 모양이 됐다.
+ */
+const MAX_OUTLIER_DROP_RATIO = 0.01
+
 function filterOutliersPass(segs: RawSeg[], pLo: number, pHi: number, padMul: number): RawSeg[] {
   const { minX, maxX, minY, maxY, n } = computeBBox(segs, pLo, pHi)
   if (n < 200) return segs
@@ -2004,7 +2016,12 @@ function filterOutliersPass(segs: RawSeg[], pLo: number, pHi: number, padMul: nu
            sx2 >= minX - padX && sx2 <= maxX + padX &&
            sy2 >= minY - padY && sy2 <= maxY + padY
   })
-  return filtered.length >= segs.length * 0.5 ? filtered : segs
+  if (filtered.length < segs.length * (1 - MAX_OUTLIER_DROP_RATIO)) {
+    console.warn(`[CAD V2] 아웃라이어 패스 거부: ${segs.length - filtered.length}개를 지우려 함 ` +
+                 `(한도 ${Math.floor(segs.length * MAX_OUTLIER_DROP_RATIO)}개) — 멀쩡한 도형일 가능성이 높아 통째로 건너뜀`)
+    return segs
+  }
+  return filtered
 }
 
 /** 폴리라인 → RawSeg 변환 (Y-flip, 스케일, DEFPOINTS 제외, ACI 색상, 선종류) */
@@ -2165,7 +2182,7 @@ function removeOutlierSegments(segs: RawSeg[]): RawSeg[] {
       return s.x1 >= loX && s.x1 <= hiX && sx2 >= loX && sx2 <= hiX &&
              s.y1 >= loY && s.y1 <= hiY && sy2 >= loY && sy2 <= hiY
     })
-    if (filtered3.length >= finalSegs.length * 0.5) {
+    if (filtered3.length >= finalSegs.length * (1 - MAX_OUTLIER_DROP_RATIO)) {
       finalSegs = filtered3
       if (finalSegs.length < before3) console.log(`[CAD V2] 아웃라이어 3차(IQR): ${before3} → ${finalSegs.length}개`)
     }
