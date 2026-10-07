@@ -143,6 +143,14 @@ export default function CadPreview({
   const sizeMB = (fileSize / 1e6).toFixed(1)
   const fmt = isDwg ? 'DWG' : 'DXF'
 
+  // 복사해서 정렬한다. 전엔 JSX 안에서 layouts.sort() 를 바로 불렀는데,
+  // layouts 는 useState 배열이라 렌더 중에 state 를 제자리에서 뒤엎는 꼴이었다.
+  // (extractLayoutsAndViewports 가 이미 정렬해서 주지만 그걸 믿고 쓰진 않는다)
+  const layoutNames = [...layouts]
+    .sort((a, b) => a.tabOrder - b.tabOrder)
+    .map(l => l.name)
+    .join(', ')
+
   return (
     <div className="cad-layer-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="cad-layer-dialog">
@@ -153,7 +161,7 @@ export default function CadPreview({
 
         {layouts.length > 1 && (
           <div className="cad-layout-selector" style={{ fontSize: 12, color: '#888', padding: '4px 8px' }}>
-            📑 {layouts.length}개 레이아웃 감지 ({layouts.sort((a, b) => a.tabOrder - b.tabOrder).map(l => l.name).join(', ')})
+            📑 {layouts.length}개 레이아웃 감지 ({layoutNames})
             → 각각 별도 페이지로 가져옵니다
           </div>
         )}
