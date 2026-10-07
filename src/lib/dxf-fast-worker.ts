@@ -766,6 +766,110 @@ function parseGroupCodes(text: string): { type: string; codes: Map<number, strin
 // ACI color + trueColor → dxf-shared.ts에서 import
 // aciToHex/trueColorToHex → aciToHex/trueColorToHex로 통합
 
+// ===== MULTILEADER entity parser =====
+
+/**
+ * MULTILEADER(MLEADER) 의 지시선들을 꺼낸다.
+ *
+ * MLEADER 는 group code 를 Map 으로 모아서는 못 읽는다. 지시선 꼭짓점도 10/20,
+ * 텍스트 기준점도 10/20, 랜딩 포인트도 10/20 이라 Map 에 담는 순간 셋이 한
+ * 배열에 섞인다. 예전 구현은 그 배열을 통째로 이어 붙였다 — 화살표가 하나뿐인
+ * 단순한 MLEADER 는 우연히 맞았지만, 여러 개면 서로 다른 지시선이 한 줄로
+ * 연결되면서 엉뚱한 선이 생기고 일부는 아예 못 그렸다.
+ *
+ * 그래서 chunk 를 순서대로 걸으며 CONTEXT_DATA{ / LEADER{ / LEADER_LINE{ 의
+ * 중괄호 구조를 그대로 따라간다. 경계 판정은 group code 가 아니라 **값**
+ * ("LEADER{" 같은 리터럴)으로 한다 — 304 처럼 한 코드가 두 용도로 쓰이는
+ * 자리가 있어서 코드만 보면 틀린다.
+ *
+ * @returns 지시선 하나당 폴리라인 하나
+ */
+export function parseMultiLeaderLines(chunk: string): number[][][] {
+  const lines = chunk.split('\n')
+  const pairs: Array<{ code: number; value: string }> = []
+  for (let i = 1; i < lines.length - 1; i += 2) {
+    const code = parseInt(lines[i].trim())
+    if (isNaN(code)) continue
+    pairs.push({ code, value: lines[i + 1]?.trim() ?? '' })
+  }
+
+  const out: number[][][] = []
+  let inLeader = false
+  let inLine = false
+  let verts: number[][] = []
+  // 아래 셋은 LEADER{ 안에서 LEADER_LINE{ **앞에** 나오므로, 선을 닫을 때쯤이면
+  // 이미 채워져 있다. 한 LEADER 의 모든 지시선이 같은 랜딩을 공유한다.
+  let landing: number[] | null = null
+  let dogX = 0, dogY = 0, dogLen = 0
+
+  const flushLine = () => {
+    const pts = verts
+    verts = []
+    if (pts.length === 0) return
+    if (landing) {
+      const last = pts[pts.length - 1]
+      if (Math.abs(last[0] - landing[0]) + Math.abs(last[1] - landing[1]) > 1e-9) {
+        pts.push([landing[0], landing[1]])
+      }
+      // 랜딩에서 글씨 쪽으로 뻗는 가로 꺾임(dogleg). 이게 빠지면 지시선이
+      // 글씨에 닿지 않고 허공에서 끝나 보인다.
+      if (dogLen > 0 && (dogX !== 0 || dogY !== 0)) {
+        const tip = pts[pts.length - 1]
+        pts.push([tip[0] + dogX * dogLen, tip[1] + dogY * dogLen])
+      }
+    }
+    if (pts.length >= 2) out.push(pts)
+  }
+
+  for (let i = 0; i < pairs.length; i++) {
+    const { code, value } = pairs[i]
+
+    if (value === 'LEADER{') {
+      inLeader = true; inLine = false
+      landing = null; dogX = 0; dogY = 0; dogLen = 0
+      continue
+    }
+    if (value === 'LEADER_LINE{') { inLine = true; verts = []; continue }
+    if (value === '}') {
+      if (inLine) { flushLine(); inLine = false }
+      else if (inLeader) { inLeader = false }
+      continue
+    }
+    if (!inLeader) continue
+
+    // x 는 이 쌍, y 는 바로 다음 쌍(코드 +10)에 들어 있다.
+    const nextVal = (want: number): number | null => {
+      const nx = pairs[i + 1]
+      if (!nx || nx.code !== want) return null
+      const v = parseFloat(nx.value)
+      return isFinite(v) ? v : null
+    }
+
+    if (inLine) {
+      if (code === 10) {
+        const x = parseFloat(value)
+        const y = nextVal(20)
+        if (isFinite(x) && y !== null) verts.push([x, y])
+      }
+    } else if (code === 10) {
+      const x = parseFloat(value)
+      const y = nextVal(20)
+      if (isFinite(x) && y !== null) landing = [x, y]
+    } else if (code === 11) {
+      const x = parseFloat(value)
+      const y = nextVal(21)
+      if (isFinite(x) && y !== null) { dogX = x; dogY = y }
+    } else if (code === 41) {
+      // LEADER{ 안의 41 은 dogleg 길이다 (CONTEXT_DATA 바로 밑의 41 은 글자
+      // 높이라서, inLeader 안에서만 읽는 게 중요하다).
+      const v = parseFloat(value)
+      if (isFinite(v)) dogLen = v
+    }
+  }
+
+  return out
+}
+
 // ===== HATCH entity parser =====
 
 /** Parse a HATCH entity from its group-code text chunk → HatchData or null */
@@ -1143,26 +1247,8 @@ function codesToPolyline(type: string, codes: Map<number, string[]>, ez: number)
       }
       return poly
     }
-    case 'MULTILEADER': {
-      // MULTILEADER: 리더선 꼭짓점 추출 (code 10/20, 마지막 direction 벡터 제외)
-      const xs = codes.get(10) || []
-      const ys = codes.get(20) || []
-      const n = Math.min(xs.length, ys.length)
-      if (n < 2) return null
-      // 마지막 좌표가 방향벡터(~1.0, ~1.0)면 제외
-      let count = n
-      if (count > 2) {
-        const lx = Math.abs(parseFloat(xs[count - 1]))
-        const ly = Math.abs(parseFloat(ys[count - 1]))
-        if (lx <= 1.01 && ly <= 1.01) count--
-      }
-      if (count < 2) return null
-      const poly: number[][] = []
-      for (let i = 0; i < count; i++) {
-        poly.push([parseFloat(xs[i]), parseFloat(ys[i])])
-      }
-      return poly
-    }
+    // MULTILEADER 는 여기서 처리하지 않는다. 꼭짓점/기준점/랜딩이 전부 10/20 이라
+    // Map 으로는 구분이 안 된다 — parseMultiLeaderLines() 가 chunk 를 순서대로 읽는다.
     case 'IMAGE': {
       // IMAGE: 바운딩박스 사각형 (래스터 이미지 위치 표시)
       const ix = parseFloat(codes.get(10)?.[0] ?? '0')
@@ -1967,6 +2053,30 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
       // 타입과 무관하게 덩치로 한 번 더 막는다 — 정상 엔티티는 수 KB 를 넘지
       // 않으므로 1MB 는 "이건 도형이 아니다" 로 봐도 된다.
       if (eEnd - eStart > MAX_ENTITY_CHARS) {
+        sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
+      }
+
+      // ── MULTILEADER: 중괄호 구조를 순서대로 읽어야 해서 전용 경로 ──
+      // 지시선 하나당 폴리라인 하나가 나오므로 generic path(엔티티당 하나)로는 안 된다.
+      if (type === 'MULTILEADER' || type === 'MLEADER') {
+        const leaderLines = parseMultiLeaderLines(dxfText.substring(eStart, eEnd))
+        if (leaderLines.length > 0) {
+          const { lt, lw, tr } = extractLtLwTr(eStart, eEnd, entityLayer)
+          const entityLt = resolveLinetype(lt, entityLayer)
+          const c62 = idxIn(dxfText, GC62, eStart, eEnd)
+          const resolvedColor = resolveColor(c62, eStart, eEnd, entityLayer)
+          for (const vertices of leaderLines) {
+            if (output.length >= MAX_POLYLINES) break
+            output.push({
+              vertices,
+              layer: entityLayer,
+              colorNumber: resolvedColor,
+              linetypeName: entityLt || undefined,
+              lineweight: lw,
+              transparency: tr,
+            })
+          }
+        }
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
