@@ -162,7 +162,7 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
           serverUpdatedAtRef.current = result.updatedAt
         }
       } catch { /* Supabase 실패 */ }
-      const saved = resolveSnapshot(projectId, server, loadSnapshot(projectId))
+      const saved = resolveSnapshot(projectId, server, await loadSnapshot(projectId))
       if (saved) {
         try { ed.loadSnapshot(saved as TLEditorSnapshot) } catch { /* ignore corrupt */ }
       }
@@ -238,35 +238,54 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
       } catch { /* ignore thumbnail errors */ }
     }
 
+    // 로컬(IndexedDB) 저장은 비동기다 — 앞의 쓰기가 끝나기 전에 다음 걸
+    // 시작하면 순서가 뒤집혀 낡은 스냅샷이 최신을 덮어쓸 수 있다. 한 번에
+    // 하나만 돌리고, 그 사이에 들어온 건 **가장 마지막 것만** 이어서 쓴다
+    // (중간 것들은 어차피 더 새 것에 덮일 테니 버려도 된다).
+    let localWriteInFlight = false
+    let queuedSnapshot: object | null = null
+
+    const persistLocal = async (snapshot: object) => {
+      if (localWriteInFlight) { queuedSnapshot = snapshot; return }
+      localWriteInFlight = true
+      try {
+        let next: object | null = snapshot
+        while (next) {
+          const ok = await saveSnapshot(projectId, next)
+          if (ok) {
+            // updatedAt 은 성공했을 때만 올린다 — 실패했는데 올리면
+            // resolveSnapshot() 이 낡은 로컬을 "최신"으로 착각한다.
+            touchProject(projectId)
+            quotaFailedAt = 0
+          } else {
+            quotaFailedAt = Date.now()
+            if (!quotaWarned) {
+              quotaWarned = true
+              toast('이 기기에 도면을 캐시하지 못했습니다. 작업은 서버에 저장되지만, 오프라인에서는 열 수 없습니다.', 'error')
+            }
+          }
+          next = queuedSnapshot
+          queuedSnapshot = null
+        }
+      } finally {
+        localWriteInFlight = false
+      }
+    }
+
     const saver = createDebouncedSaver(reason => {
       // 서버 동기화용 스냅샷은 로컬 저장 성공 여부와 무관하게 항상 갱신한다.
       const snapshot = editor.getSnapshot()
       latestSnapshot = snapshot
 
-      // 용량 초과 뒤에는 로컬 저장을 잠깐 쉰다.
-      //
-      // 전엔 1.5초마다 계속 다시 시도했다. 대형 CAD 스냅샷은 수 MB 라
-      // JSON.stringify 만으로도 무거운데, 그걸 작업하는 동안 1.5초마다 만들어
-      // 던지고 버렸다 — 화면이 눈에 띄게 걸린다. 공간이 나면 다시 되도록
+      // 저장 실패 뒤에는 로컬 저장을 잠깐 쉰다. 공간이 나면 다시 되도록
       // 영구 포기는 안 하고 간격만 벌린다.
       //
       // 언마운트/탭 종료(flush) 는 마지막 기회라 그땐 무조건 시도한다.
-      const now = Date.now()
-      const backingOff = reason === 'timer' && now - quotaFailedAt < QUOTA_RETRY_MS
-      if (!backingOff) {
-        if (saveSnapshot(projectId, snapshot)) {
-          // updatedAt 은 성공했을 때만 올린다 — 실패했는데 올리면
-          // resolveSnapshot() 이 낡은 로컬을 "최신"으로 착각한다.
-          touchProject(projectId)
-          quotaFailedAt = 0
-        } else {
-          quotaFailedAt = now
-          if (!quotaWarned) {
-            quotaWarned = true
-            toast('이 기기의 저장 공간이 부족해 로컬 저장에 실패했습니다. 오래된 프로젝트를 정리해주세요.', 'error')
-          }
-        }
-      }
+      // IndexedDB 쓰기가 pagehide 뒤에 완주한다는 보장은 없지만, 1.5초마다
+      // 쓰고 있으니 여기서 잃을 수 있는 건 최대 1.5초 분량이고, 같은 내용이
+      // 5초 서버 동기화로도 올라간다.
+      const backingOff = reason === 'timer' && Date.now() - quotaFailedAt < QUOTA_RETRY_MS
+      if (!backingOff) void persistLocal(snapshot)
 
       // flush 는 언마운트/탭 종료 직전이다 — 무거운 썸네일은 건너뛴다
       if (reason === 'timer') void updateThumbnail()

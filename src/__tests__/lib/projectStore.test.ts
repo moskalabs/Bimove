@@ -75,11 +75,13 @@ describe('deleteProject', () => {
     expect(getProjects().find(x => x.id === p.id)).toBeUndefined()
   })
 
-  it('also removes snapshot data', () => {
+  it('also removes snapshot data', async () => {
     const p = createProject('Snap')
-    saveSnapshot(p.id, { data: 'test' })
+    await saveSnapshot(p.id, { data: 'test' })
     deleteProject(p.id)
-    expect(loadSnapshot(p.id)).toBeNull()
+    // deleteProject 는 스냅샷 삭제를 기다리지 않는다 (void) — 한 틱 넘긴다
+    await Promise.resolve()
+    expect(await loadSnapshot(p.id)).toBeNull()
   })
 
   it('is a no-op for non-existent id', () => {
@@ -128,27 +130,38 @@ describe('touchProject', () => {
 })
 
 describe('loadSnapshot / saveSnapshot', () => {
-  it('returns null for non-existent project', () => {
-    expect(loadSnapshot('no-such-id')).toBeNull()
+  it('returns null for non-existent project', async () => {
+    expect(await loadSnapshot('no-such-id')).toBeNull()
   })
 
-  it('saves and loads snapshot', () => {
+  it('saves and loads snapshot', async () => {
     const p = createProject('snap test')
     const data = { shapes: [{ id: '1' }], version: 2 }
-    saveSnapshot(p.id, data)
-    expect(loadSnapshot(p.id)).toEqual(data)
+    await saveSnapshot(p.id, data)
+    expect(await loadSnapshot(p.id)).toEqual(data)
   })
 
-  it('handles corrupted snapshot gracefully', () => {
+  // 레거시 폴백 경로. 깨진 JSON 은 되살릴 수 없으니 자리만 차지하지 않게 치운다.
+  it('handles corrupted snapshot gracefully', async () => {
     localStorage.setItem('bimova_project_bad-id', 'INVALID JSON')
-    expect(loadSnapshot('bad-id')).toBeNull()
+    expect(await loadSnapshot('bad-id')).toBeNull()
+    expect(localStorage.getItem('bimova_project_bad-id')).toBeNull()
   })
 
-  it('overwrites previous snapshot', () => {
+  it('overwrites previous snapshot', async () => {
     const p = createProject('overwrite')
-    saveSnapshot(p.id, { v: 1 })
-    saveSnapshot(p.id, { v: 2 })
-    expect(loadSnapshot(p.id)).toEqual({ v: 2 })
+    await saveSnapshot(p.id, { v: 1 })
+    await saveSnapshot(p.id, { v: 2 })
+    expect(await loadSnapshot(p.id)).toEqual({ v: 2 })
+  })
+
+  // JSON 왕복이 없는 게 IndexedDB 로 간 이유 중 하나다. tldraw 스냅샷은
+  // 중첩이 깊어서, 직렬화 한 번이 수 MB 짜리 문자열을 만들었다.
+  it('중첩 구조를 JSON 왕복 없이 보존한다', async () => {
+    const p = createProject('deep')
+    const data = { store: { 'shape:a': { props: { segs: [[0, 1], [2, 3]] } } } }
+    await saveSnapshot(p.id, data)
+    expect(await loadSnapshot(p.id)).toEqual(data)
   })
 })
 

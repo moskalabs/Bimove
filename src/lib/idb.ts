@@ -18,10 +18,13 @@ import { scopedKey } from './scopedStorage'
 const DB_NAME = 'bimova'
 
 /** 스키마 버전. 스토어를 추가하면 올린다 (STORES 도 같이). */
-const DB_VERSION = 1
+const DB_VERSION = 2
 
-/** 이 DB 가 가진 오브젝트 스토어 전부. onupgradeneeded 가 없는 것만 만든다. */
-const STORES = ['versions'] as const
+/** 이 DB 가 가진 오브젝트 스토어 전부. onupgradeneeded 가 없는 것만 만든다.
+ *
+ *  versions  — 버전 히스토리 (메타 목록 + 스냅샷 본문)
+ *  snapshots — 프로젝트 현재 도면 (projectId 하나당 레코드 하나) */
+const STORES = ['versions', 'snapshots'] as const
 export type IdbStore = (typeof STORES)[number]
 
 export function idbAvailable(): boolean {
@@ -157,8 +160,13 @@ export async function requestPersistentStorage(): Promise<boolean> {
   }
 }
 
-/** 테스트용 — 캐시된 연결을 버린다. */
-export function _resetIdbForTest() {
+/** 테스트용 — 캐시된 연결을 **닫고** 버린다.
+ *
+ *  닫는 게 중요하다. 핸들을 열어둔 채로 deleteDatabase 를 부르면 onblocked
+ *  에 걸려 영원히 기다린다 (실제 브라우저에서 다른 탭이 잡고 있을 때와 같다). */
+export async function _resetIdbForTest() {
+  const open = dbPromise
   dbPromise = null
   persistRequested = false
+  try { (await open)?.close() } catch { /* 열리지도 않았다 */ }
 }

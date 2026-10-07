@@ -1,44 +1,23 @@
 /**
  * 버전 히스토리 — IndexedDB 저장.
  *
- * fake-indexeddb 로 진짜 IDB 를 돌린다. 메타/본문을 따로 쓰는 구조라
- * "목록에는 있는데 본문이 없는" 유령 레코드가 생기지 않는지가 핵심이다.
+ * fake-indexeddb 로 진짜 IDB 를 돌린다 (전역 setup.ts). 메타/본문을 따로 쓰는
+ * 구조라 "목록에는 있는데 본문이 없는" 유령 레코드가 생기지 않는지가 핵심이다.
  */
-import 'fake-indexeddb/auto'
 import { describe, it, expect, beforeEach } from 'vitest'
 import {
   saveVersion, listVersions, getVersion,
   deleteVersion, clearVersions, renameVersion,
   _resetVersionMigrationForTest,
 } from '../../lib/versions'
-import { idbKeys, _resetIdbForTest } from '../../lib/idb'
+import { idbKeys } from '../../lib/idb'
 import { setCurrentUserId } from '../../lib/scopedStorage'
 
 const PID = 'test-project-1'
 const SNAPSHOT = { shapes: [{ id: '1', type: 'wall' }] }
 
-/** fake-indexeddb 는 테스트 간에 DB 가 남는다 — 직접 비운다. */
-async function wipeIdb() {
-  const keys = await idbKeys('versions')
-  if (keys.length === 0) return
-  await new Promise<void>(resolve => {
-    const req = indexedDB.open('bimova')
-    req.onsuccess = () => {
-      const db = req.result
-      const tx = db.transaction('versions', 'readwrite')
-      const os = tx.objectStore('versions')
-      for (const k of keys) os.delete(k)
-      tx.oncomplete = () => { db.close(); resolve() }
-      tx.onerror = () => { db.close(); resolve() }
-    }
-    req.onerror = () => resolve()
-  })
-}
-
-beforeEach(async () => {
+beforeEach(() => {
   setCurrentUserId(null)
-  await wipeIdb()
-  _resetIdbForTest()
   _resetVersionMigrationForTest()
 })
 

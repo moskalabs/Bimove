@@ -100,24 +100,49 @@ describe('resolveSnapshot', () => {
 })
 
 describe('saveSnapshot 실패 보고', () => {
-  it('저장에 성공하면 true', () => {
+  it('저장에 성공하면 true', async () => {
     const p = createProject('ok')
-    expect(saveSnapshot(p.id, { v: 1 })).toBe(true)
-    expect(loadSnapshot(p.id)).toEqual({ v: 1 })
+    expect(await saveSnapshot(p.id, { v: 1 })).toBe(true)
+    expect(await loadSnapshot(p.id)).toEqual({ v: 1 })
   })
 
-  it('용량 초과면 false — 조용히 삼키지 않는다', () => {
-    const p = createProject('용량 초과')
-    const original = localStorage.setItem
-    localStorage.setItem = () => {
-      const err = new Error('QuotaExceededError') as Error & { name: string }
-      err.name = 'QuotaExceededError'
-      throw err
-    }
-    try {
-      expect(saveSnapshot(p.id, { big: 'x'.repeat(100) })).toBe(false)
-    } finally {
-      localStorage.setItem = original
-    }
+  // 저장이 안 됐는데 true 를 주면 touchProject() 가 updatedAt 을 올려버리고,
+  // 그 다음 로드에서 resolveSnapshot() 이 없는 로컬을 "최신"으로 착각해
+  // 서버의 멀쩡한 스냅샷을 버린다. 실패는 반드시 false 로 와야 한다.
+  it('쓸 수 없는 값이면 false — 조용히 삼키지 않는다', async () => {
+    const p = createProject('쓰기 실패')
+    // structured clone 이 함수를 못 넘긴다 → DataCloneError
+    expect(await saveSnapshot(p.id, { fn: () => 1 })).toBe(false)
+    expect(await loadSnapshot(p.id)).toBeNull()
+  })
+})
+
+// ── 레거시 localStorage → IndexedDB 이사 ──
+//
+// 한의 기기에는 이미 localStorage 에 도면이 들어있다. 업데이트하자마자
+// "프로젝트를 열었는데 빈 캔버스" 가 되면 안 된다.
+describe('레거시 스냅샷 폴백', () => {
+  it('localStorage 에만 있던 도면도 읽어온다', async () => {
+    const p = createProject('옛 도면')
+    localStorage.setItem(`bimova_project_${p.id}`, JSON.stringify({ v: 'legacy' }))
+    expect(await loadSnapshot(p.id)).toEqual({ v: 'legacy' })
+  })
+
+  it('읽으면서 IndexedDB 로 옮기고 localStorage 쪽을 비운다', async () => {
+    const p = createProject('이사')
+    const key = `bimova_project_${p.id}`
+    localStorage.setItem(key, JSON.stringify({ v: 'legacy' }))
+
+    await loadSnapshot(p.id)
+    expect(localStorage.getItem(key)).toBeNull()
+    // 이제 localStorage 없이도 읽힌다 = IndexedDB 에 들어갔다
+    expect(await loadSnapshot(p.id)).toEqual({ v: 'legacy' })
+  })
+
+  it('IndexedDB 에 이미 있으면 옛 것을 끌어오지 않는다', async () => {
+    const p = createProject('최신 우선')
+    await saveSnapshot(p.id, { v: 'new' })
+    localStorage.setItem(`bimova_project_${p.id}`, JSON.stringify({ v: 'legacy' }))
+    expect(await loadSnapshot(p.id)).toEqual({ v: 'new' })
   })
 })

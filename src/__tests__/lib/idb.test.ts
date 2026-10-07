@@ -5,33 +5,17 @@
  * 검증하기 위해서다. 메모리 가짜로 대체하면 정작 틀리기 쉬운 부분
  * (oncomplete 를 안 기다려서 커밋 전에 "저장됐다"고 보고하는 것) 을 못 잡는다.
  */
-import 'fake-indexeddb/auto'
 import { describe, it, expect, beforeEach } from 'vitest'
-import { idbGet, idbSet, idbDelete, idbKeys, idbAvailable, _resetIdbForTest } from '../../lib/idb'
+import { idbGet, idbSet, idbDelete, idbKeys, idbAvailable } from '../../lib/idb'
 import { setCurrentUserId } from '../../lib/scopedStorage'
 
-beforeEach(async () => {
-  _resetIdbForTest()
+// DB 비우기는 전역 setup.ts 가 한다 (매 테스트마다 deleteDatabase).
+beforeEach(() => {
   setCurrentUserId(null)
-  // 스토어를 비운다 (fake-indexeddb 는 테스트 간에 DB 가 남는다)
-  for (const k of await idbKeys('versions')) {
-    await new Promise<void>(resolve => {
-      const req = indexedDB.open('bimova')
-      req.onsuccess = () => {
-        const db = req.result
-        const tx = db.transaction('versions', 'readwrite')
-        tx.objectStore('versions').delete(k)
-        tx.oncomplete = () => { db.close(); resolve() }
-        tx.onerror = () => { db.close(); resolve() }
-      }
-      req.onerror = () => resolve()
-    })
-  }
-  _resetIdbForTest()
 })
 
 describe('idbAvailable', () => {
-  it('fake-indexeddb 환경에서 true', () => {
+  it('IndexedDB 가 있으면 true', () => {
     expect(idbAvailable()).toBe(true)
   })
 })

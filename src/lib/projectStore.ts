@@ -1,5 +1,6 @@
 import { scopedGet, scopedSet, scopedRemove } from './scopedStorage'
 import { clearVersions } from './versions'
+import { idbGet, idbSet, idbDelete, requestPersistentStorage } from './idb'
 
 export type Project = {
   id: string
@@ -10,7 +11,14 @@ export type Project = {
 }
 
 const LIST_KEY = 'bimova_projects_v1'
-const snapshotKey = (id: string) => `bimova_project_${id}`
+
+// 프로젝트 **목록**은 계속 localStorage 다. 수십 KB 밖에 안 되고, 동기로
+// 읽을 수 있는 게 UI 에서 훨씬 편하다 (getProjects() 호출부가 수십 군데다).
+// IndexedDB 로 옮긴 건 **도면 본문** 뿐이다 — 거기만 수 MB 라 터졌다.
+//
+// 레거시 localStorage 키. 이제 읽기 전용 폴백이다 — loadSnapshot 이 여기서
+// 찾으면 IndexedDB 로 옮기고 치운다. 새로 쓰는 일은 없다.
+const legacySnapshotKey = (id: string) => `bimova_project_${id}`
 
 export function getProjects(): Project[] {
   try { return JSON.parse(scopedGet(LIST_KEY) ?? '[]') } catch { return [] }
@@ -35,7 +43,10 @@ export function createProject(name: string): Project {
 
 export function deleteProject(id: string) {
   saveProjectList(getProjects().filter(p => p.id !== id))
-  scopedRemove(snapshotKey(id))
+  scopedRemove(legacySnapshotKey(id))
+  // 도면 본문도 정리. 비동기지만 기다리지 않는다 — 프로젝트는 이미 목록에서
+  // 빠졌고, 남은 스냅샷 레코드는 아무도 못 찾는다.
+  void idbDelete('snapshots', id)
   // 버전 히스토리도 함께 정리. IndexedDB 라 비동기지만 기다리지 않는다 —
   // 프로젝트는 이미 목록에서 빠졌고, 남은 버전 레코드는 아무도 못 찾는다.
   // (clearVersions 가 레거시 localStorage 키도 같이 치운다.)
@@ -54,11 +65,34 @@ export function touchProject(id: string) {
   ))
 }
 
-export function loadSnapshot(id: string): object | null {
+/**
+ * 도면 본문 읽기. IndexedDB 우선, 없으면 레거시 localStorage.
+ *
+ * 레거시에서 찾았으면 그 자리에서 IndexedDB 로 옮긴다 — **복사 → 확인 →
+ * 그 다음에만 삭제**. 복사가 실패하면 localStorage 쪽을 그대로 두고 값은
+ * 돌려준다. 다음에 또 시도하면 된다. 순서를 반대로 하면 옮기다 만 상태에서
+ * 도면이 통째로 사라진다.
+ */
+export async function loadSnapshot(id: string): Promise<object | null> {
+  const stored = await idbGet<object>('snapshots', id)
+  if (stored) return stored
+
+  const raw = scopedGet(legacySnapshotKey(id))
+  if (!raw) return null
+  let parsed: object
   try {
-    const raw = scopedGet(snapshotKey(id))
-    return raw ? JSON.parse(raw) : null
-  } catch { return null }
+    parsed = JSON.parse(raw) as object
+  } catch {
+    // 깨진 JSON 은 되살릴 방법이 없다. 자리만 차지하므로 치운다.
+    console.warn(`[projectStore] 옛 스냅샷이 깨져 있어 버린다 (${id})`)
+    scopedRemove(legacySnapshotKey(id))
+    return null
+  }
+  if (await idbSet('snapshots', id, parsed)) {
+    scopedRemove(legacySnapshotKey(id))
+    console.log(`[projectStore] 옛 스냅샷을 IndexedDB 로 옮겼다 (${id})`)
+  }
+  return parsed
 }
 
 /**
@@ -96,10 +130,16 @@ export function resolveSnapshot(
   return server.snapshot
 }
 
-/** 스냅샷 저장. 실패(용량 초과/직렬화 불가)하면 false — 호출한 쪽에서 알려줄 수 있게. */
-export function saveSnapshot(id: string, snapshot: object): boolean {
-  try { return scopedSet(snapshotKey(id), JSON.stringify(snapshot)) }
-  catch { return false }
+/**
+ * 스냅샷 저장. 실패하면 false — 호출한 쪽에서 알려줄 수 있게.
+ *
+ * IndexedDB 라 JSON.stringify 가 없다 (structured clone). 한의 37.5MB DXF 는
+ * 스냅샷이 수 MB 였는데, 전엔 저장할 때마다 그걸 메인 스레드에서 동기로
+ * 문자열로 만들었다가 5MB 한도에 걸려 QuotaExceededError 가 났다.
+ */
+export async function saveSnapshot(id: string, snapshot: object): Promise<boolean> {
+  void requestPersistentStorage()
+  return idbSet('snapshots', id, snapshot)
 }
 
 export function saveThumbnail(id: string, dataUrl: string) {
@@ -108,12 +148,15 @@ export function saveThumbnail(id: string, dataUrl: string) {
   saveProjectList(updated)
 }
 
-/** One-time migration: moves old single-project data into project list. */
+/** One-time migration: moves old single-project data into project list.
+ *
+ *  레거시 키로 그대로 옮긴다 — 동기라서 여기서 가장 단순하고, 첫 로드 때
+ *  loadSnapshot 이 알아서 IndexedDB 로 옮겨준다. */
 export function migrateOldData() {
   const OLD_KEY = 'bimova_snapshot_v1'
   const old = localStorage.getItem(OLD_KEY)
   if (!old || getProjects().length > 0) return
   const project = createProject('기존 프로젝트')
-  scopedSet(snapshotKey(project.id), old)
+  scopedSet(legacySnapshotKey(project.id), old)
   localStorage.removeItem(OLD_KEY)
 }
