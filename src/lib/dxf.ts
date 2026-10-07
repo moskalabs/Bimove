@@ -359,6 +359,7 @@ export type DxfHatch = {
   pathData: string       // closed SVG path (boundary)
   patternName: string    // "SOLID", "ANSI31", "AR-CONC" 등
   patternScale: number   // 패턴 축척 (기본 1)
+  solidFill: boolean     // gc 70: 1 = 단색 채움
   patternAngle: number   // 패턴 회전 (도, 기본 0)
   color?: string
   layer?: string
@@ -735,6 +736,7 @@ export function parseDxfHatches(
     const patternName = (e.patternName as string) ?? (e.name as string) ?? 'SOLID'
     const patternScale = (e.patternScale as number) ?? 1
     const patternAngle = (e.patternAngle as number) ?? 0
+    const solidFill = (e.solidFill as boolean) ?? ((e.fillType as string) === 'SOLID')
 
     // 각 boundary를 SVG path로 변환
     const svgParts: string[] = []
@@ -762,6 +764,7 @@ export function parseDxfHatches(
         patternName: patternName.toUpperCase(),
         patternScale,
         patternAngle,
+        solidFill,
         color,
         layer,
         cx: sumX / ptCount,
@@ -1173,6 +1176,7 @@ function parseRawHatches(
     let patternName = 'SOLID'
     let patternScale = 1
     let patternAngle = 0
+    let solidFill = false
     let numBoundaryPaths = 0
 
     // HATCH 헤더 파싱 (91코드 = boundary path 수 전까지)
@@ -1184,6 +1188,7 @@ function parseRawHatches(
       else if (c === 2) patternName = v
       else if (c === 41) patternScale = parseFloat(v) || 1
       else if (c === 52) patternAngle = parseFloat(v) || 0
+      else if (c === 70) solidFill = (parseInt(v) || 0) === 1
       i++
     }
 
@@ -1428,6 +1433,7 @@ function parseRawHatches(
         patternName: patternName.toUpperCase(),
         patternScale,
         patternAngle,
+        solidFill,
         color,
         layer,
         cx: sumX / ptCount,
@@ -1952,7 +1958,7 @@ export function getLastImportReport(): SkipReport {
 /** 좌표 변환된 텍스트 */
 type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string; attachPt?: number; width?: number; fontName?: string }
 /** 좌표 변환된 해치 */
-type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; color?: string; layer: string; cx: number; cy: number }
+type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; solidFill?: boolean; color?: string; layer: string; cx: number; cy: number }
 
 const COORD_LIMIT = 1e8
 const MAX_FINAL_SEGS = 100_000
@@ -2294,6 +2300,7 @@ function transformWorkerHatches(workerHatches: HatchData[], textScale: number): 
         patternName: h.patternName,
         patternScale: h.patternScale,
         patternAngle: h.patternAngle,
+        solidFill: h.solidFill,
         color: h.color,
         layer: h.layer,
         cx: h.cx * textScale,
@@ -2442,6 +2449,7 @@ export function buildOrphanHatchShapes(
   const localHatches = parsed.map(({ hh, pts, dim }) => ({
     d: pts.map(([cmd, x, y]) => `${cmd}${(x - hMinX).toFixed(1)},${(y - hMinY).toFixed(1)}`).join(''),
     p: hh.patternName, s: hh.patternScale, a: hh.patternAngle, c: hh.color,
+    f: hh.solidFill ? 1 : 0,
     dim: +dim.toFixed(1),
   }))
 
@@ -2856,7 +2864,7 @@ export async function commitCadImportV2(
 
         // 해치 수집: 이 클러스터 바운딩박스 내의 HATCH
         const hatchMargin = 50
-        const localHatches: Array<{ d: string; p: string; s: number; a: number; c?: string; dim?: number }> = []
+        const localHatches: Array<{ d: string; p: string; s: number; a: number; c?: string; f?: number; dim?: number }> = []
         for (let hi = 0; hi < pxHatches.length; hi++) {
           if (assignedHatchIdx.has(hi)) continue
           const hh = pxHatches[hi]
@@ -2876,6 +2884,7 @@ export async function commitCadImportV2(
             const hDim = Math.max(hMaxX2 - hMinX2, hMaxY2 - hMinY2, 10)
             localHatches.push({
               d: localPath, p: hh.patternName, s: hh.patternScale, a: hh.patternAngle, c: hh.color,
+              f: hh.solidFill ? 1 : 0,
               dim: +hDim.toFixed(1),
             })
             assignedHatchIdx.add(hi)

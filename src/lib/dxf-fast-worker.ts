@@ -50,6 +50,7 @@ export interface HatchData {
   patternName: string    // "SOLID", "ANSI31", etc.
   patternScale: number
   patternAngle: number
+  solidFill: boolean     // gc 70: 1 = 단색 채움 (패턴명과 무관)
   color?: string         // hex color
   layer: string
   cx: number; cy: number // centroid
@@ -902,6 +903,7 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
   let patternName = 'SOLID'
   let patternScale = 1
   let patternAngle = 0
+  let solidFill = false
   let numBoundaryPaths = 0
 
   // Parse header fields until group code 91 (boundary path count)
@@ -914,6 +916,7 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
     else if (c === 2) patternName = v
     else if (c === 41) patternScale = parseFloat(v) || 1
     else if (c === 52) patternAngle = parseFloat(v) || 0
+    else if (c === 70) solidFill = (parseInt(v) || 0) === 1
     pi++
   }
   if (pi < pairs.length && pairs[pi].code === 91) {
@@ -1143,6 +1146,7 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
     patternName: patternName.toUpperCase(),
     patternScale,
     patternAngle,
+    solidFill,
     color,
     layer,
     cx: sumX / ptCount,

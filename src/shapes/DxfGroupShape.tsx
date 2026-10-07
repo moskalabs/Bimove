@@ -62,11 +62,16 @@ export type DxfGroupShapeProps = {
   thickness: number
   segCount: number // 세그먼트 수 (정보용)
   textsJson: string // JSON: Array<{ x, y, t, h, r?, c? }>
-  hatchesJson: string // JSON: Array<{ d, p, s, a, c? }> (pathData, pattern, scale, angle, color)
+  hatchesJson: string // JSON: Array<{ d, p, s, a, c?, f? }> (pathData, pattern, scale, angle, color, solidFill)
 }
 
 type DxfTextEntry = { x: number; y: number; t: string; h: number; r?: number; c?: string; ap?: number; mw?: number; f?: string }
-type DxfHatchEntry = { d: string; p: string; s: number; a: number; c?: string; dim?: number }
+type DxfHatchEntry = { d: string; p: string; s: number; a: number; c?: string; f?: number; dim?: number }
+
+/** 단색 채움인지: DXF gc 70 이 1 이거나 패턴명이 SOLID 계열 (예: "SOLID,_O"). */
+function isSolidHatch(h: DxfHatchEntry): boolean {
+  return h.f === 1 || h.p.toUpperCase().split(',')[0] === 'SOLID'
+}
 
 /** DXF 패턴명 → SVG pattern 생성 */
 function dxfHatchPatternDef(
@@ -509,7 +514,7 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
         ? (darkMode ? (isNearBlack(h.c) ? '#aaa' : h.c) : darkenForLightBg(h.c))
         : (darkMode ? '#aaa' : '#666')
     const patId = `hatch-${shape.id}-${i}`
-    const isSolid = h.p.toUpperCase() === 'SOLID'
+    const isSolid = isSolidHatch(h)
     return {
       id: patId,
       def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor, h.dim ?? Math.max(shape.props.w, shape.props.h)),
@@ -543,12 +548,10 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
               fill={hd.color} stroke="none" opacity={0.85} pointerEvents="none" />
           )
         }
-        // 패턴 해치: 배경색 + 패턴 오버레이
+        // 패턴 해치: 패턴만 (단색 배경을 깔면 큰 해치가 회색 덩어리로 보인다)
         return (
-          <g key={`h${i}`} pointerEvents="none">
-            <path d={h.d} fill={hd.color} stroke="none" opacity={0.4} />
-            <path d={h.d} fill={`url(#${hd.id})`} stroke="none" opacity={0.85} />
-          </g>
+          <path key={`h${i}`} d={h.d} fill={`url(#${hd.id})`} stroke="none"
+            opacity={0.85} pointerEvents="none" />
         )
       })}
       {shape.props.pathData && (
@@ -779,7 +782,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
     const svgHatchDefs = hatches.map((h, i) => {
       const hColor = h.c ? darkenForLightBg(h.c) : '#666'
       const patId = `hatch-svg-${shape.id}-${i}`
-      const isSolid = h.p.toUpperCase() === 'SOLID'
+      const isSolid = isSolidHatch(h)
       return { id: patId, def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor, h.dim ?? Math.max(shape.props.w, shape.props.h)), isSolid, color: hColor }
     })
 
@@ -795,12 +798,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
           if (hd.isSolid) {
             return <path key={`h${i}`} d={h.d} fill={hd.color} stroke="none" opacity={0.85} />
           }
-          return (
-            <g key={`h${i}`}>
-              <path d={h.d} fill={hd.color} stroke="none" opacity={0.4} />
-              <path d={h.d} fill={`url(#${hd.id})`} stroke="none" opacity={0.85} />
-            </g>
-          )
+          return <path key={`h${i}`} d={h.d} fill={`url(#${hd.id})`} stroke="none" opacity={0.85} />
         })}
         {shape.props.pathData && (
           <path
