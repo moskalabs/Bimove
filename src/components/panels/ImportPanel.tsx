@@ -139,10 +139,12 @@ export function ImportPanel() {
 
           if (i === 0) {
             // 첫 번째 레이아웃 (보통 Model Space) → 현재 페이지 사용, 이름 변경
-            const page = editor.getPage(modelPageId)
-            if (page) {
-              editor.store.put([{ ...page, name: displayName }])
-            }
+            //
+            // store.put 으로 레코드를 직접 밀어넣고 있었다. 공식 API 를 우회하면
+            // 히스토리(run) 를 안 타서 되돌리기에 안 잡히고, 읽기전용 검사도
+            // 건너뛴다. renamePage → updatePage 가 둘 다 처리하고 없는 페이지도
+            // 알아서 무시한다.
+            editor.renamePage(modelPageId, displayName)
           } else {
             // Paper Space 레이아웃 → 새 페이지 생성
             const newPageId = PageRecordType.createId()
