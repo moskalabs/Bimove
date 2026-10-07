@@ -3,12 +3,12 @@
  * INSERT/BLOCK expansion, TEXT/MTEXT collection.
  *
  * parseDxfSegments is the public API for segment extraction.
- * For INSERT/BLOCK + TEXT we go through parseCadFile → commitCadImport pipeline
- * using inline DXF strings.
+ * For INSERT/BLOCK + TEXT we parse inline DXF strings through the whole
+ * parseDxfText pipeline.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import DxfParser from 'dxf-parser'
-import { parseDxfSegments, parseDxfHatches, commitCadImport, detectDxfEncoding, reverseDoubleEncodingIfNeeded, type CadParseResult, type DxfSeg } from '../../lib/dxf'
+import { parseDxfSegments, parseDxfHatches, detectDxfEncoding, reverseDoubleEncodingIfNeeded, type CadParseResult, type DxfSeg } from '../../lib/dxf'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -18,36 +18,6 @@ function parseEntities(
   layerDefs: Record<string, { lineweight?: number; colorIndex?: number; color?: number }> = {},
 ): DxfSeg[] {
   return parseDxfSegments(entities, layerDefs)
-}
-
-function createMockEditor(opts: {
-  pxPerMm?: number
-  viewportWidth?: number
-  viewportHeight?: number
-} = {}) {
-  const pxPerMm = opts.pxPerMm ?? 1
-  const vpW = opts.viewportWidth ?? 1200
-  const vpH = opts.viewportHeight ?? 800
-  const createdShapes: unknown[] = []
-  let camera = { x: 0, y: 0, z: 1 }
-  const currentShapes: unknown[] = []
-
-  return {
-    getInstanceState: () => ({ meta: { unit: 'mm', pxPerMm } }),
-    getViewportScreenBounds: () => ({ width: vpW, height: vpH }),
-    createShapes: (shapes: unknown[]) => { createdShapes.push(...shapes); currentShapes.push(...shapes) },
-    getCurrentPageShapes: () => currentShapes,
-    setCamera: (cam: { x: number; y: number; z: number }) => { camera = { ...cam } },
-    getCamera: () => camera,
-    selectAll: vi.fn(),
-    getSelectedShapeIds: () => createdShapes.map((_s, i) => `shape:${i}`),
-    zoomToFit: vi.fn(),
-    zoomToSelection: vi.fn(),
-    select: vi.fn(),
-    selectNone: vi.fn(),
-    _getCamera: () => camera,
-    _getCreatedShapes: () => createdShapes,
-  }
 }
 
 /** Helper: parse DXF text string into CadParseResult */
@@ -670,13 +640,9 @@ describe('parseDxfSegments: max segments', () => {
   })
 })
 
-// ─── commitCadImport with DXF text (INSERT/BLOCK via full pipeline) ────────
+// ─── DXF 텍스트 → 세그먼트 전체 파이프라인 (INSERT/BLOCK 포함) ──────────────
 
-describe('commitCadImport: DXF full pipeline', () => {
-  beforeEach(() => {
-    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => setTimeout(cb, 0))
-  })
-
+describe('parseDxfText: DXF full pipeline', () => {
   it('correctly processes a simple rectangle DXF', () => {
     const dxf = `0
 SECTION
@@ -761,12 +727,8 @@ ENDSEC
 0
 EOF`
 
-    const editor = createMockEditor()
     const result = parseDxfText(dxf)
-    const allLayers = new Set(result.layers.map(l => l.name))
-
-    const count = commitCadImport(editor as never, result, allLayers)
-    expect(count).toBe(4)
+    expect(result._segs.length).toBe(4)
   })
 
   it('correctly handles ARC entities through full pipeline', () => {
@@ -805,13 +767,7 @@ ENDSEC
 0
 EOF`
 
-    const editor = createMockEditor()
     const result = parseDxfText(dxf)
-    const allLayers = new Set(result.layers.map(l => l.name))
-
-    const count = commitCadImport(editor as never, result, allLayers)
-    expect(count).toBeGreaterThan(0)
-    // DXF parser may approximate ARC differently
     expect(result._segs.length).toBeGreaterThan(0)
   })
 
