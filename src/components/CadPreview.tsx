@@ -552,6 +552,9 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
 
   // ── 2. BLOCKS 섹션에서 *Paper_Space 블록 내 VIEWPORT 파싱 ──
   const viewportsByLayout = new Map<string, DxfViewport[]>()
+  /** 레이아웃별로 VIEWPORT 엔티티를 **몇 개 봤는지**. 아래의 `continue` 들이
+   *  조용히 버리면 "뷰포트 없음" 과 구분이 안 돼서, 본 개수를 따로 센다. */
+  const vpSeen = new Map<string, number>()
   const SEC_BLOCKS = `\n${gc(0)}\nSECTION\n${gc(2)}\nBLOCKS\n`
   const blkIdx = dxfText.indexOf(SEC_BLOCKS)
   if (blkIdx >= 0) {
@@ -607,6 +610,10 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
           continue
         }
         if (type === 'ENDBLK') { currentLayoutName = ''; continue }
+        if (type === 'VIEWPORT') {
+          const key = currentLayoutName || '(블록→레이아웃 매핑 없음)'
+          vpSeen.set(key, (vpSeen.get(key) ?? 0) + 1)
+        }
         if (type !== 'VIEWPORT' || !currentLayoutName) continue
 
         const num = (code: number): number => {
@@ -617,7 +624,13 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
         const vpWidth = num(40)      // paper space 폭
         const vpHeight = num(41)     // paper space 높이
         const viewHeight = num(45)   // model space view height
-        if (viewHeight <= 0 || vpHeight <= 0) continue
+        if (viewHeight <= 0 || vpHeight <= 0) {
+          console.warn(`[CadPreview] VIEWPORT "${currentLayoutName}": 크기를 못 읽어 버림 ` +
+            `(41=${vpHeight}, 45=${viewHeight}) — 코드: ` +
+            [...vals.entries()].sort((a, b) => a[0] - b[0])
+              .map(([c, v]) => `${c}=${v.trim()}`).join(' '))
+          continue
+        }
 
         // 오토캐드는 레이아웃마다 "종이 자신"을 가리키는 의사 뷰포트를 하나
         // 넣는다. 이건 도면을 비추는 창이 아니라서, 여기의 12/22/45 를 모델공간
@@ -687,6 +700,22 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
       // 종이 자신을 가리키는 의사 뷰포트는 위에서 group code 69 == 1 로 이미
       // 걸러낸다. 69 가 없는 파일이면 clip 이 넓어져 모델공간이 통째로 들어오는데,
       // 그건 페이지가 사라지는 것보다 낫다.
+
+      // 본 개수 vs 쓴 개수. 0 이면 "파일에 아예 없다" 와 "위에서 걸러냈다" 중
+      // 어느 쪽인지 바로 보인다.
+      const vpKeys = new Set([...vpSeen.keys(), ...viewportsByLayout.keys()])
+      console.log('[CadPreview] 레이아웃별 VIEWPORT(발견→사용): ' +
+        [...vpKeys].map(k => `${k} ${vpSeen.get(k) ?? 0}→${viewportsByLayout.get(k)?.length ?? 0}`).join(', '))
+      for (const l of layouts) {
+        if (l.isModelSpace) continue
+        if ((viewportsByLayout.get(l.name)?.length ?? 0) > 0) continue
+        const seen = vpSeen.get(l.name) ?? 0
+        console.warn(seen === 0
+          ? `[CadPreview] ⚠ 레이아웃 "${l.name}": 블록 안에 VIEWPORT 엔티티가 하나도 없음 ` +
+            `→ clip 없이 모델공간 전체를 쓴다`
+          : `[CadPreview] ⚠ 레이아웃 "${l.name}": VIEWPORT ${seen}개를 봤지만 전부 걸러짐 ` +
+            `(의사 뷰포트/크기 불량) → clip 없이 모델공간 전체를 쓴다`)
+      }
     }
   }
 
