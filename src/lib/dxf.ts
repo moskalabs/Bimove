@@ -19,7 +19,9 @@ const ACI_TO_HEX = ACI_TABLE
 // 역호환: 파서가 배열이면 구형, 객체+T키면 신형으로 자동 판별
 type LocalTextEntry = { x: number; y: number; t: string; h: number; r?: number; c?: string; ap?: number; mw?: number; f?: string }
 
-function packTextsJson(texts: LocalTextEntry[]): string {
+/** textsJson 직렬화 — 폰트/색상을 테이블로 빼서 중복을 없앤다.
+ *  unpackTextsJson 과 왕복이 맞아야 한다 (dxfTextsJson.test.ts 가 지킨다). */
+export function packTextsJson(texts: LocalTextEntry[]): string {
   if (texts.length === 0) return ''
   // 폰트/색상 고유값 수집
   const fontSet = new Map<string, number>()
