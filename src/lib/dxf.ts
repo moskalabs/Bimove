@@ -1992,38 +1992,6 @@ function computeBBox(segs: RawSeg[], pLoPct: number, pHiPct: number) {
   return { minX, maxX, minY, maxY, n: cnt }
 }
 
-/** 퍼센타일 범위 + 패딩 기반 아웃라이어 필터 */
-/**
- * 아웃라이어 패스 하나가 지울 수 있는 최대 비율.
- *
- * 진짜 쓰레기 — 원점이나 1e9 에 박힌 고아 도형 — 는 늘 한 줌이다. 한 패스가
- * 전체의 1% 를 지우겠다고 하면 그건 쓰레기를 걷어내는 게 아니라 도면 가장자리를
- * 자르고 있는 것이다. 판정 기준이 "5~95 퍼센타일 bbox" 라서, 모델공간에 시트를
- * 가로로 늘어놓은 도면에선 Y 양끝이 통째로 퍼센타일 밖으로 밀려난다. 실제로
- * 리비전 구름의 위아래 호가 그렇게 사라졌다 (44212 → 43087, 2.5%). 좌우 호는
- * Y 중간대라 살아남아서, 구름이 "{ }" 처럼 양옆만 남은 모양이 됐다.
- */
-const MAX_OUTLIER_DROP_RATIO = 0.01
-
-function filterOutliersPass(segs: RawSeg[], pLo: number, pHi: number, padMul: number): RawSeg[] {
-  const { minX, maxX, minY, maxY, n } = computeBBox(segs, pLo, pHi)
-  if (n < 200) return segs
-  const padX = (maxX - minX || 1) * padMul, padY = (maxY - minY || 1) * padMul
-  const filtered = segs.filter((s) => {
-    const sx1 = s.x1, sy1 = s.y1, sx2 = s.x1 + s.dx, sy2 = s.y1 + s.dy
-    return sx1 >= minX - padX && sx1 <= maxX + padX &&
-           sy1 >= minY - padY && sy1 <= maxY + padY &&
-           sx2 >= minX - padX && sx2 <= maxX + padX &&
-           sy2 >= minY - padY && sy2 <= maxY + padY
-  })
-  if (filtered.length < segs.length * (1 - MAX_OUTLIER_DROP_RATIO)) {
-    console.warn(`[CAD V2] 아웃라이어 패스 거부: ${segs.length - filtered.length}개를 지우려 함 ` +
-                 `(한도 ${Math.floor(segs.length * MAX_OUTLIER_DROP_RATIO)}개) — 멀쩡한 도형일 가능성이 높아 통째로 건너뜀`)
-    return segs
-  }
-  return filtered
-}
-
 /** 폴리라인 → RawSeg 변환 (Y-flip, 스케일, DEFPOINTS 제외, ACI 색상, 선종류) */
 function polylinesToSegments(polylines: PolylineData[], scale: number): RawSeg[] {
   const segs: RawSeg[] = []
@@ -2117,78 +2085,75 @@ function filterAndCleanSegments(rawSegsAll: RawSeg[]): RawSeg[] {
   return finalSegs
 }
 
-/** 3-pass 아웃라이어 제거 (percentile + IQR) */
-/** 전체 범위가 핵심 범위보다 이 배수 넘게 크면 "멀리 떨어진 쓰레기가 있다" 로 본다. */
-const OUTLIER_SPAN_RATIO = 3
+/** 본체와 쓰레기를 가르는 "빈 공간" 의 크기 — 사분위 범위(IQR) 대비 배수.
+ *  도면 본체는 좌표가 촘촘해서 내부 간격이 사실상 0 이므로 넉넉히 잡아도 된다. */
+const OUTLIER_GAP_RATIO = 0.25
+/** 간격 기준으로도 이만큼 넘게 지우겠다면 전제가 틀린 것이다 — 통째로 포기한다. */
+const MAX_OUTLIER_DROP_RATIO = 0.5
 
 /**
- * 아웃라이어 패스를 돌릴 가치가 있는지 먼저 본다.
+ * 한 축에서 "도면 본체" 가 차지하는 구간을 찾는다.
  *
- * 이 필터의 목적은 원점이나 1e9 같은 엉뚱한 자리에 박힌 쓰레기 도형을 걷어내는
- * 것이다. 그런데 판정 기준이 "5~95 퍼센타일 bbox + 패딩" 이라, 쓰레기가 하나도
- * 없는 도면에서도 가장자리 도형을 잘라낸다. 모델공간에 시트를 여러 장 늘어놓은
- * 실제 도면에서 리비전 구름의 아래쪽 호들이 통째로 사라졌다 (44212 → 43087).
- * 글씨는 다른 경로로 걸러져서 살아남는 바람에, 주석만 남고 가리키는 선이 없는
- * 더 이상한 그림이 됐다.
+ * 예전 방식(5~95 퍼센타일 bbox + 패딩)은 가장자리를 잘라내는 거라 멀쩡한 도형을
+ * 먹었다. 모델공간에 시트를 가로로 늘어놓은 도면에선 Y 양끝이 퍼센타일 밖으로
+ * 밀려나서, 리비전 구름의 위아래 호가 통째로 사라지고 좌우 호만 남아 "{ }" 모양이
+ * 됐다. 반대로 한도를 걸어 막아놓으니 이번엔 멀리 떨어진 쓰레기가 살아남아 bbox 를
+ * 부풀렸고, 도면이 시트 한가운데 티끌만 하게 들어갔다.
  *
- * 진짜 쓰레기가 섞여 있으면 전체 범위가 핵심 범위보다 **압도적으로** 크다.
- * 그 정도가 아니면 지울 게 없다는 뜻이므로 패스를 통째로 건너뛴다.
+ * 진짜 쓰레기의 특징은 "가장자리에 있다" 가 아니라 "뚝 떨어져 있다" 다. 그래서
+ * 좌표를 정렬해놓고 사분위 범위 바깥으로 걸어나가다가 좌표 사이에 큰 빈 공간이
+ * 나오면 거기서 자른다. 본체는 연속이라 안 잘리고, 떨어진 덩어리만 떨어져 나간다.
  */
-function hasFarOutliers(segs: RawSeg[]): boolean {
-  if (segs.length === 0) return false
-  const core = computeBBox(segs, 0.05, 0.95)
-  const full = computeBBox(segs, 0, 1)
-  const coreX = (core.maxX - core.minX) || 1
-  const coreY = (core.maxY - core.minY) || 1
-  return (full.maxX - full.minX) > coreX * OUTLIER_SPAN_RATIO ||
-         (full.maxY - full.minY) > coreY * OUTLIER_SPAN_RATIO
+function coreRange(sorted: Float64Array): [number, number] {
+  const n = sorted.length
+  const q1i = Math.floor(n * 0.25), q3i = Math.floor(n * 0.75)
+  const gapLimit = (sorted[q3i] - sorted[q1i]) * OUTLIER_GAP_RATIO
+  if (!(gapLimit > 0)) return [sorted[0], sorted[n - 1]]
+  let hi = sorted[n - 1]
+  for (let i = q3i; i < n - 1; i++) {
+    if (sorted[i + 1] - sorted[i] > gapLimit) { hi = sorted[i]; break }
+  }
+  let lo = sorted[0]
+  for (let i = q1i; i > 0; i--) {
+    if (sorted[i] - sorted[i - 1] > gapLimit) { lo = sorted[i]; break }
+  }
+  return [lo, hi]
 }
 
-function removeOutlierSegments(segs: RawSeg[]): RawSeg[] {
-  if (!hasFarOutliers(segs)) {
-    console.log(`[CAD V2] 멀리 떨어진 아웃라이어 없음 — 필터 건너뜀 (${segs.length}개 유지)`)
+/** 도면 본체에서 뚝 떨어진 세그먼트를 걷어낸다 (빈 공간 간격 기준) */
+export function removeOutlierSegments(segs: RawSeg[]): RawSeg[] {
+  const cnt = segs.length * 2
+  if (cnt < 400) return segs
+
+  const xs = new Float64Array(cnt), ys = new Float64Array(cnt)
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i]
+    xs[i * 2] = s.x1; xs[i * 2 + 1] = s.x1 + s.dx
+    ys[i * 2] = s.y1; ys[i * 2 + 1] = s.y1 + s.dy
+  }
+  xs.sort(); ys.sort()
+  const [loX, hiX] = coreRange(xs)
+  const [loY, hiY] = coreRange(ys)
+
+  if (loX === xs[0] && hiX === xs[cnt - 1] && loY === ys[0] && hiY === ys[cnt - 1]) {
+    console.log(`[CAD V2] 뚝 떨어진 아웃라이어 없음 — 필터 건너뜀 (${segs.length}개 유지)`)
     return segs
   }
 
-  let finalSegs = segs
+  const kept = segs.filter(s => {
+    const x2 = s.x1 + s.dx, y2 = s.y1 + s.dy
+    return s.x1 >= loX && s.x1 <= hiX && x2 >= loX && x2 <= hiX &&
+           s.y1 >= loY && s.y1 <= hiY && y2 >= loY && y2 <= hiY
+  })
 
-  // 1차 + 2차: percentile 기반
-  const before1 = finalSegs.length
-  finalSegs = filterOutliersPass(finalSegs, 0.05, 0.95, 0.5)
-  if (finalSegs.length < before1) console.log(`[CAD V2] 아웃라이어 1차: ${before1} → ${finalSegs.length}개`)
-  const before2 = finalSegs.length
-  finalSegs = filterOutliersPass(finalSegs, 0.05, 0.95, 0.3)
-  if (finalSegs.length < before2) console.log(`[CAD V2] 아웃라이어 2차: ${before2} → ${finalSegs.length}개`)
-
-  // 3차: IQR 기반
-  if (finalSegs.length > 100) {
-    const before3 = finalSegs.length
-    const cnt3 = finalSegs.length * 2
-    const xs3 = new Float64Array(cnt3), ys3 = new Float64Array(cnt3)
-    for (let i = 0; i < finalSegs.length; i++) {
-      xs3[i * 2] = finalSegs[i].x1; xs3[i * 2 + 1] = finalSegs[i].x1 + finalSegs[i].dx
-      ys3[i * 2] = finalSegs[i].y1; ys3[i * 2 + 1] = finalSegs[i].y1 + finalSegs[i].dy
-    }
-    const q1x = nthElement(new Float64Array(xs3), Math.floor(cnt3 * 0.25))
-    const q3x = nthElement(new Float64Array(xs3), Math.floor(cnt3 * 0.75))
-    const q1y = nthElement(new Float64Array(ys3), Math.floor(cnt3 * 0.25))
-    const q3y = nthElement(new Float64Array(ys3), Math.floor(cnt3 * 0.75))
-    const iqrX = (q3x - q1x) || 1, iqrY = (q3y - q1y) || 1
-    const fenceX = iqrX * 3, fenceY = iqrY * 3
-    const loX = q1x - fenceX, hiX = q3x + fenceX
-    const loY = q1y - fenceY, hiY = q3y + fenceY
-    const filtered3 = finalSegs.filter(s => {
-      const sx2 = s.x1 + s.dx, sy2 = s.y1 + s.dy
-      return s.x1 >= loX && s.x1 <= hiX && sx2 >= loX && sx2 <= hiX &&
-             s.y1 >= loY && s.y1 <= hiY && sy2 >= loY && sy2 <= hiY
-    })
-    if (filtered3.length >= finalSegs.length * (1 - MAX_OUTLIER_DROP_RATIO)) {
-      finalSegs = filtered3
-      if (finalSegs.length < before3) console.log(`[CAD V2] 아웃라이어 3차(IQR): ${before3} → ${finalSegs.length}개`)
-    }
+  if (kept.length < segs.length * (1 - MAX_OUTLIER_DROP_RATIO)) {
+    console.warn(`[CAD V2] 아웃라이어 필터 거부: ${segs.length - kept.length}개를 지우려 함 — 전제가 틀린 듯해 건너뜀`)
+    return segs
   }
 
-  return finalSegs
+  console.log(`[CAD V2] 아웃라이어 제거(간격 기준): ${segs.length} → ${kept.length}개 ` +
+              `(본체 X ${loX.toFixed(0)}~${hiX.toFixed(0)}, Y ${loY.toFixed(0)}~${hiY.toFixed(0)})`)
+  return kept
 }
 
 /** Worker 텍스트 → px 좌표 변환 (Y-flip + scale)
