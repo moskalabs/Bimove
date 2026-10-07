@@ -1875,9 +1875,15 @@ function runFastWorker(
       reject(new Error(`DXF 파싱 타임아웃 (${(timeoutMs / 1000).toFixed(0)}초)`))
     }, timeoutMs)
 
+    // 워커 모듈이 평가되어 핸들러가 돌았는지. onerror 가 "청크 로딩 실패" 인지
+    // "워커 안의 런타임 에러" 인지 가르는 유일한 확정 신호다.
+    let booted = false
+
     worker.onmessage = (e: MessageEvent<WorkerOut>) => {
       const msg = e.data
-      if (msg.type === 'progress') {
+      if (msg.type === 'boot') {
+        booted = true
+      } else if (msg.type === 'progress') {
         onProgress?.(`${msg.phase} (${msg.percent}%)`)
       } else if (msg.type === 'result') {
         clearTimeout(timeout)
@@ -1899,20 +1905,27 @@ function runFastWorker(
       clearTimeout(timeout)
       worker.terminate()
 
-      // 모듈 스크립트 **로딩 자체**가 실패하면 ErrorEvent.message 가 비어 있다
-      // (워커 안에서 터진 런타임 에러는 message 가 채워진다). 배포가 갈려
-      // 예전 탭이 사라진 워커 청크를 요청한 경우가 이것이다 — Vercel 이 없는
-      // 경로에 index.html 을 돌려주므로 브라우저가 MIME 로 거부한다.
-      // 실제 로그: `Failed to load module script: ... "text/html"` 뒤에
-      // `Worker 에러: undefined`.
-      //
+      // 모듈 스크립트 **로딩 자체**가 실패한 경우. 배포가 갈려 예전 탭이 사라진
+      // 워커 청크를 요청하면 이렇게 된다 — Vercel 이 없는 경로에 index.html 을
+      // 돌려주므로 브라우저가 MIME 로 거부한다. 실제 로그:
+      // `Failed to load module script: ... "text/html"` 뒤에 `Worker 에러: undefined`.
       // lazyWithReload 는 React.lazy 만 감싸서 워커를 커버하지 못한다.
-      if (!err.message) {
-        if (reloadForStaleChunk()) return  // 리로드 중 — 일부러 settle 하지 않는다
+      //
+      // 판별은 `err.message` 가 비었는지가 **아니라** boot ack 수신 여부로 한다.
+      // 메시지가 비는 에러는 로딩 실패만이 아니다 (cross-origin 으로 가려진
+      // 런타임 에러 등). 그걸 로딩 실패로 오인하면 멀쩡한 작업 중에 페이지를
+      // 새로고침해서 저장 안 된 편집을 날린다.
+      if (!booted) {
+        // 말없이 새로고침하지 않는다 — 임포트 도중이라 날아갈 게 있다.
+        const reloading = reloadForStaleChunk({
+          confirm: 'DXF 파서를 불러오지 못했습니다 (배포가 갱신된 것 같아요).\n'
+            + '새로고침하면 저장되지 않은 변경이 사라질 수 있습니다. 새로고침할까요?',
+        })
+        if (reloading) return  // 리로드 중 — 일부러 settle 하지 않는다
         reject(new Error('DXF 파서(Worker) 를 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.'))
         return
       }
-      reject(new Error(`Worker 에러: ${err.message}`))
+      reject(new Error(`Worker 에러: ${err.message || '(메시지 없음)'}`))
     }
 
     worker.postMessage({ type: 'parse', dxfText, selectedLayers })

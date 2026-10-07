@@ -19,10 +19,15 @@ function markReload(): void {
  * 쿨다운 안에 또 불리면 아무것도 하지 않고 false 를 돌려주니, 호출자는
  * 그때 에러를 그대로 올려야 한다.
  *
+ * `confirm` 을 주면 리로드 전에 사용자에게 묻는다. 작업 중(CAD 임포트 등)에
+ * 말없이 새로고침하면 저장 안 된 편집이 날아가기 때문이다. 거절하면 아무것도
+ * 하지 않고 false 를 돌려준다 — 쿨다운도 찍지 않으니 나중에 다시 시도할 수 있다.
+ *
  * @returns 리로드를 시작했으면 true (페이지가 곧 사라진다)
  */
-export function reloadForStaleChunk(): boolean {
+export function reloadForStaleChunk(opts?: { confirm?: string }): boolean {
   if (Date.now() - lastReloadAt() <= RELOAD_COOLDOWN_MS) return false
+  if (opts?.confirm && !window.confirm(opts.confirm)) return false
   markReload()
   window.location.reload()
   return true

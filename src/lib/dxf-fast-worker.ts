@@ -81,6 +81,9 @@ export interface LayerInfo {
 export type SkipReport = Record<string, number>
 
 export type WorkerOut =
+  /** 모듈이 실제로 평가되어 핸들러가 돌기 시작했다는 신호. 메인 스레드가
+   *  "청크 로딩 실패" 와 "워커 안의 런타임 에러" 를 구분하는 데 쓴다. */
+  | { type: 'boot' }
   | { type: 'progress'; phase: string; percent: number }
   | { type: 'result'; polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo>; skipped: SkipReport }
   | { type: 'error'; message: string }
@@ -2229,6 +2232,10 @@ self.onmessage = (e: MessageEvent<ParseRequest>) => {
 
   const post = (msg: WorkerOut) => (self as unknown as Worker).postMessage(msg)
   const progress = (phase: string, percent: number) => post({ type: 'progress', phase, percent })
+
+  // 파싱보다 **먼저** 보낸다. 이 한 줄이 도달했다는 사실만으로 모듈 로딩은
+  // 성공했다고 확정할 수 있다 — 뒤에 어떤 에러가 터지든 청크 404 는 아니다.
+  post({ type: 'boot' })
 
   try {
     const result = parseDxfFast(e.data.dxfText, e.data.selectedLayers, progress)
