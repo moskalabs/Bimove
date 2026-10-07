@@ -235,6 +235,11 @@ export default function CadPreview({
  * 1단계: TABLES 섹션에서 LAYER 정의 추출 (색상 포함)
  * 2단계: ENTITIES 섹션에서 그룹코드 8 (레이어명) 스캔하여 엔티티 수 집계
  */
+/** 레이어 개수를 세며 훑을 엔티티 수 상한 (바이트 제한 대신).
+ *  여기서 끊기면 레이어별 개수는 추정치가 되고, 뒤쪽에만 나오는 레이어는
+ *  **발견조차 못 한다** — 그래서 끊긴 경우 테이블 정의 레이어는 버리지 않는다. */
+const MAX_ENTITIES_SCAN = 200_000
+
 function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
   // 0. \r\n → \n 정규화 (필수 — 패턴 매칭에 \n 통일 필요)
   const hadCR = rawDxfText.indexOf('\r') >= 0
@@ -306,7 +311,6 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
     const entEnd = dxfText.indexOf(ENDSEC, bodyStart)
     if (entEnd > bodyStart) {
       const sectionLen = entEnd - bodyStart
-      const MAX_ENTITIES_SCAN = 50_000  // 엔티티 수 기반 제한 (바이트 제한 대신)
       let entityScanned = 0
 
       let sepPos = bodyStart - 1
@@ -407,9 +411,25 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
   const allNames = new Set([...layerDefs.keys(), ...layerCounts.keys()])
   const result: LayerInfo[] = []
 
+  let keptUnscanned = 0
   for (const name of allNames) {
     const count = layerCounts.get(name) || 0
-    if (count === 0) continue // 엔티티 없는 레이어 스킵
+
+    // 엔티티가 0개면 보통 안 쓰는 레이어라 뺀다. 그런데 스캔이 중간에 끊겼으면
+    // "안 쓴다" 를 알 수가 없다 — 앞쪽 일부만 보고 판단한 것이기 때문이다.
+    //
+    // 실제로 이 때문에 도면이 통째로 사라진 적이 있다. ENTITIES 에 엔티티가
+    // 395,122개인데 50,000개만 보고 끊겨서, 뒤쪽에만 나오는 레이어 12개가
+    // 목록에서 빠졌다(테이블 44개 → 목록 32개). 목록에 없으면 선택이 안 되고,
+    // 워커는 선택 안 된 레이어의 엔티티를 전부 건너뛴다. 그 레이어들에 있던
+    // 건축 평면/천정이 임포트에서 통째로 누락됐다.
+    //
+    // 그래서 스캔이 끊긴 경우엔 **테이블에 정의된 레이어를 남긴다.** 정의도
+    // 없고 엔티티도 0 이면 그건 진짜 없는 것이다.
+    if (count === 0) {
+      if (!extrapolated || !layerDefs.has(name)) continue
+      keptUnscanned++
+    }
 
     const aci = layerDefs.get(name) ?? 7
     result.push({
@@ -421,6 +441,12 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
       approx: extrapolated,
     })
   }
+
+  if (keptUnscanned > 0) {
+    console.warn(`[CadPreview] 스캔이 ${MAX_ENTITIES_SCAN}개에서 끊겨 레이어 개수는 추정치다. ` +
+      `스캔 범위에 안 나온 테이블 정의 레이어 ${keptUnscanned}개를 그대로 살림`)
+  }
+  console.log(`[CadPreview] 레이어: 테이블 ${layerDefs.size}개, 엔티티에서 발견 ${layerCounts.size}개 → 목록 ${result.length}개`)
 
   return result.sort((a, b) => b.segCount - a.segCount)
 }
