@@ -1649,17 +1649,43 @@ export async function parseCadFile(
   }
 }
 
+const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
+
+/** 세그먼트를 공간 격자로 쪼갠다 — 연결성 클러스터링이 실패했을 때의 폴백.
+ *
+ * 연결성으로 못 쪼갠 덩어리를 그대로 두면 클릭 한 번에 도면 절반이 잡힌다.
+ * 의미 단위는 아니지만, 적어도 화면 한 구석씩은 따로 집히게 만든다.
+ * `targetPerCell` 은 셀 하나에 들어갈 세그먼트 수 목표치다. */
+function partitionSegsByGrid(segs: RawSeg[], targetPerCell: number): RawSeg[][] {
+  const cells = Math.max(2, Math.ceil(Math.sqrt(segs.length / targetPerCell)))
+  let sMinX = Infinity, sMinY = Infinity, sMaxX = -Infinity, sMaxY = -Infinity
+  for (const s of segs) {
+    sMinX = Math.min(sMinX, s.x1, s.x1 + s.dx); sMinY = Math.min(sMinY, s.y1, s.y1 + s.dy)
+    sMaxX = Math.max(sMaxX, s.x1, s.x1 + s.dx); sMaxY = Math.max(sMaxY, s.y1, s.y1 + s.dy)
+  }
+  const cellW = (sMaxX - sMinX || 1) / cells
+  const cellH = (sMaxY - sMinY || 1) / cells
+  const grid = new Map<string, RawSeg[]>()
+  for (const s of segs) {
+    const cx = Math.floor((s.x1 - sMinX) / cellW)
+    const cy = Math.floor((s.y1 - sMinY) / cellH)
+    const key = `${cx},${cy}`
+    let cell = grid.get(key)
+    if (!cell) { cell = []; grid.set(key, cell) }
+    cell.push(s)
+  }
+  return [...grid.values()]
+}
+
 /** 연결된 세그먼트끼리 클러스터링 (Union-Find)
  *  endpoint가 SNAP_TOL 이내이면 같은 그룹으로 판정.
  *  방/벽 단위로 개별 선택 가능하도록 분리. */
-function clusterConnectedSegs(segs: RawSeg[]): RawSeg[][] {
+function clusterConnectedSegs(segs: RawSeg[], deadline = Infinity): RawSeg[][] {
   if (segs.length <= 1) return [segs]
 
   const SNAP_TOL = 5 // px 단위 endpoint 근접 허용치
   const MAX_BUCKET = 30 // 버킷당 최대 세그먼트 수 (O(n²) 방지)
-  const TIME_BUDGET = 2000 // 최대 2초
   const n = segs.length
-  const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now()
 
   // Union-Find
   const parent = new Int32Array(n)
@@ -1683,11 +1709,10 @@ function clusterConnectedSegs(segs: RawSeg[]): RawSeg[][] {
   let timedOut = false
 
   for (let i = 0; i < n; i++) {
-    // 시간 예산 체크 (매 500개마다)
-    if ((i & 511) === 0 && i > 0) {
-      const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0
-      if (elapsed > TIME_BUDGET) { timedOut = true; break }
-    }
+    // 시간 예산 체크 (매 500개마다). 예산은 **호출자가 레이어 전체에 대해**
+    // 하나로 쥔다 — 레이어 그룹이 수십 개라 호출마다 2초씩 주면 임포트가
+    // 통째로 멈춘다.
+    if ((i & 511) === 0 && i > 0 && nowMs() > deadline) { timedOut = true; break }
 
     const s = segs[i]
     const x1 = s.x1, y1 = s.y1, x2 = s.x1 + s.dx, y2 = s.y1 + s.dy
@@ -1729,7 +1754,7 @@ function clusterConnectedSegs(segs: RawSeg[]): RawSeg[][] {
   }
 
   if (timedOut) {
-    console.warn(`[CAD] clusterConnectedSegs 시간 초과 (${n}개 세그먼트, ${((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0).toFixed(0)}ms) → 단일 그룹 반환`)
+    console.warn(`[CAD] clusterConnectedSegs 시간 초과 (${n}개 세그먼트) → 단일 그룹 반환`)
     return [segs]
   }
 
@@ -2711,33 +2736,22 @@ export async function commitCadImportV2(
     })
 
     const groupShapes: unknown[] = []
+    // 연결성 클러스터링 전체에 주는 예산. 레이어 그룹마다 따로 주면 합이 분 단위가 된다.
+    const clusterDeadline = nowMs() + 4000
+    // 한 덩어리가 이것보다 크면 "선택 단위"로 너무 크다고 보고 격자로 더 쪼갠다.
+    const MAX_SEGS_PER_CLUSTER = 400
     for (const [, { layer, color: groupColor, dashArray: groupDashArray, segs }] of layerGroups) {
-      // 대형 레이어: 공간 분할로 서브클러스터 생성 (O(n²) 클러스터링 대신)
-      let clusters: RawSeg[][]
-      if (segs.length > 2000) {
-        // 그리드 기반 공간 분할: 전체 bbox를 셀로 나누어 각 셀을 클러스터로 사용
-        const GRID_CELLS = Math.max(4, Math.ceil(Math.sqrt(segs.length / 500)))
-        let sMinX = Infinity, sMinY = Infinity, sMaxX = -Infinity, sMaxY = -Infinity
-        for (const s of segs) {
-          sMinX = Math.min(sMinX, s.x1); sMinY = Math.min(sMinY, s.y1)
-          sMaxX = Math.max(sMaxX, s.x1 + s.dx); sMaxY = Math.max(sMaxY, s.y1 + s.dy)
-        }
-        const cellW = (sMaxX - sMinX || 1) / GRID_CELLS
-        const cellH = (sMaxY - sMinY || 1) / GRID_CELLS
-        const grid = new Map<string, RawSeg[]>()
-        for (const s of segs) {
-          const cx = Math.floor((s.x1 - sMinX) / cellW)
-          const cy = Math.floor((s.y1 - sMinY) / cellH)
-          const key = `${cx},${cy}`
-          let cell = grid.get(key)
-          if (!cell) { cell = []; grid.set(key, cell) }
-          cell.push(s)
-        }
-        clusters = [...grid.values()]
-      } else if (segs.length > 800) {
-        clusters = [segs] // 800~2000: 단일 클러스터 (대부분 3000 이내)
-      } else {
-        clusters = clusterConnectedSegs(segs)
+      // 레이어가 커도 연결성으로 쪼갠다.
+      //
+      // 예전엔 800개 넘으면 통째로 한 클러스터, 2000개 넘으면 4x4 격자였다.
+      // clusterConnectedSegs 가 O(n²) 이던 시절의 상한인데, 지금은 격자 해싱 +
+      // union-find 라 O(n) 이다. 상한만 남아서 클릭 한 번에 레이어 절반이
+      // 통째로 잡히고 있었다 — 도면에서 선 하나를 못 고르는 체감의 원인.
+      let clusters = clusterConnectedSegs(segs, clusterDeadline)
+      // 연결성으로도 안 쪼개지는 덩어리(격자 밀집·시간 초과)는 격자로 한 번 더.
+      if (clusters.some(c => c.length > MAX_SEGS_PER_CLUSTER)) {
+        clusters = clusters.flatMap(c =>
+          c.length > MAX_SEGS_PER_CLUSTER ? partitionSegsByGrid(c, MAX_SEGS_PER_CLUSTER / 4) : [c])
       }
 
       for (const cluster of clusters) {
