@@ -132,13 +132,25 @@ export function setDarkMode(v: boolean) {
 
 const WHEEL_BEHAVIOR_KEY = 'bimova_wheel_behavior'
 
-/** 휠/터치패드 동작.
+/** 휠/터치패드 동작. tldraw cameraOptions.wheelBehavior 에 그대로 들어간다.
  *
  *  tldraw 는 ctrl 이 눌려 있으면 이 값을 뒤집는다 (Editor.js):
  *    behavior = ctrlKey ? (wheelBehavior === 'pan' ? 'zoom' : 'pan') : wheelBehavior
  *
- *  터치패드는 두 손가락 스크롤을 ctrl 없이, 핀치를 `ctrlKey: true` 로 보낸다.
- *  따라서 'zoom' 으로 두면 스크롤이 확대, 핀치가 이동이 되어 정확히 뒤집힌다. */
+ *  한 가지 덜 알려진 점 — 확대 쪽으로 갈 때 쓰는 delta 가 다르다.
+ *  wheelBehavior 가 'zoom' 이면 deltaY 를, 'pan' 인데 ctrl 로 뒤집혀 온
+ *  경우엔 deltaZ 를 쓴다. 입력장치별로 값이 들어오는 축이 다르니 중요하다.
+ *
+ *  마우스: 휠은 deltaY 만 보낸다 → 'zoom' 이어야 그냥 굴려서 확대/축소가 된다
+ *  (오토캐드 방식). ctrl 을 같이 누르면 'pan' 으로 뒤집혀 이동이 되는데,
+ *  이건 부수효과일 뿐 의도한 조작이 아니다.
+ *
+ *  터치패드: 두 손가락 스크롤은 ctrl 없이, 핀치는 `ctrlKey: true` + deltaZ 로
+ *  온다 → 'pan' 이어야 스크롤=이동, 핀치=확대가 된다. 'zoom' 으로 두면
+ *  스크롤이 확대, 핀치가 이동이 되어 정확히 반대로 움직인다.
+ *
+ *  즉 마우스와 터치패드가 원하는 값이 서로 반대다. 그래서 기본값이 'auto' 고,
+ *  App.tsx 의 handleWheel 이 휠 이벤트 모양을 보고 둘 중 하나를 고른다. */
 export type WheelBehavior = 'pan' | 'zoom'
 
 /** 설정에 저장되는 값.

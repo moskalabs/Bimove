@@ -409,10 +409,19 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
       }
     }
 
-    // 마우스 휠 vs 터치패드 자동 감지 → wheelBehavior 동적 전환
-    // - 마우스 휠: zoom (오토캐드 방식)
-    // - 터치패드 스크롤: pan (한 손 두 손가락 스크롤 = 이동)
-    // - 터치패드 핀치: zoom (브라우저가 ctrlKey + 작은 deltaY로 전달)
+    // 마우스 휠 vs 터치패드 자동 감지 → wheelBehavior 동적 전환.
+    // 여기서 고르는 건 tldraw 에 넘길 **설정값**이고, 실제 동작은 tldraw 가
+    // ctrl 여부로 한 번 더 뒤집는다 (settings.ts 의 WheelBehavior 주석 참고).
+    //
+    //   마우스 휠           → 'zoom'  : 그냥 굴려서 확대/축소 (오토캐드 방식)
+    //   터치패드 두손가락   → 'pan'   : 스크롤 = 이동
+    //   터치패드 핀치       → 'pan'   : ctrl 이 붙어 오므로 tldraw 가 zoom 으로 뒤집는다
+    //
+    // 의도한 조작은 "그냥 휠 굴리면 확대" 다 — Ctrl+휠이 아니다.
+    // 마우스에서 Ctrl+휠은 아무 일도 안 일어난다. ctrl 때문에 'pan' → 'zoom' 으로
+    // 뒤집히지만, 뒤집혀 들어간 zoom 분기는 deltaY 가 아니라 deltaZ 를 읽고
+    // 마우스는 deltaZ 를 0 으로 보내기 때문이다. wheelBehavior 로는 우회할 수
+    // 없는 구조라 그냥 둔다 (휠만으로 확대가 되니 손해도 없다).
     //
     // 설정에서 '이동'/'확대' 를 직접 고르면 감지는 손을 뗀다 (getWheelMode() !== 'auto').
     // 전엔 감지가 무조건 덮어써서 설정 토글이 아무 효과도 없었다.
@@ -424,13 +433,13 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
     const handleWheel = (e: WheelEvent) => {
       if (getWheelMode() !== 'auto') return
       if (!(e.target as HTMLElement)?.closest('.tl-container')) return
-      // ctrlKey + 작은 delta → 터치패드 핀치 → 'pan' (tldraw가 ctrl 감지해서 flip → zoom)
-      // deltaMode 1 → 마우스 라인 스크롤 → 'zoom'
-      // deltaMode 0 + 큰 정수값 → 마우스 픽셀 스크롤 → 'zoom'
-      // 그 외 (작은/소수점 delta) → 터치패드 스크롤 → 'pan'
+      // ctrlKey → 터치패드 핀치 (또는 Ctrl+휠)
+      // deltaMode 1 → 마우스 라인 스크롤
+      // deltaMode 0 + 큰 정수값 → 마우스 픽셀 스크롤
+      // 그 외 (작은/소수점 delta) → 터치패드 두손가락 스크롤
       let want: 'pan' | 'zoom'
       if (e.ctrlKey) {
-        want = 'pan'  // 핀치 → tldraw가 ctrl로 flip → 결과적으로 zoom
+        want = 'pan'  // tldraw 가 ctrl 로 뒤집어 결과적으로 확대가 된다
       } else if (e.deltaMode === 1) {
         want = 'zoom' // 마우스 라인 모드
       } else if (Math.abs(e.deltaY) >= 50 && e.deltaY % 1 === 0) {
