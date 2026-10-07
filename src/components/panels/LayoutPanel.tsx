@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { PageRecordType } from 'tldraw'
+import type { TLPageId } from 'tldraw'
 import { Plus } from 'lucide-react'
 import { useEditor } from '../../context/EditorContext'
 
@@ -45,12 +46,23 @@ export function prepareSvgForThumb(svgStr: string): string {
   return svg
 }
 
-async function generateThumb(editor: ReturnType<typeof useEditor>): Promise<string | null> {
+/**
+ * 지정한 페이지의 썸네일을 뽑는다.
+ *
+ * tldraw 는 shape id 만 있으면 현재 페이지가 아니어도 SVG 를 그려준다
+ * (getSvgJsx 는 current page 를 보지 않는다). 예전엔 getCurrentPageShapes() 로
+ * 현재 페이지만 그려서, 임포트가 만든 레이아웃이 한 번 열어보기 전까지
+ * 배치 패널에 "빈 페이지" 로 남아 있었다.
+ */
+async function generateThumbForPage(
+  editor: ReturnType<typeof useEditor>,
+  pageId: TLPageId,
+): Promise<string | null> {
   if (!editor) return null
-  const shapes = editor.getCurrentPageShapes()
-  if (shapes.length === 0 || shapes.length > 2000) return null
+  const ids = [...editor.getPageShapeIds(pageId)]
+  if (ids.length === 0 || ids.length > 2000) return null
   try {
-    const result = await editor.getSvgString(shapes, {
+    const result = await editor.getSvgString(ids, {
       padding: 16,
       background: true,
     })
@@ -61,6 +73,11 @@ async function generateThumb(editor: ReturnType<typeof useEditor>): Promise<stri
     console.warn('[thumb] fail:', e)
   }
   return null
+}
+
+async function generateThumb(editor: ReturnType<typeof useEditor>): Promise<string | null> {
+  if (!editor) return null
+  return generateThumbForPage(editor, editor.getCurrentPageId())
 }
 
 export function LayoutPanel() {
@@ -92,6 +109,26 @@ export function LayoutPanel() {
     })
   }, [editor])
 
+  /* ── 아직 썸네일이 없는 페이지들을 채운다 ── */
+  const fillMissingThumbs = useCallback(async () => {
+    if (!editor) return
+    let changed = false
+    for (const page of editor.getPages()) {
+      if (thumbCache.current.get(page.id)) continue
+      const svg = await generateThumbForPage(editor, page.id)
+      if (!svg) continue
+      thumbCache.current.set(page.id, svg)
+      changed = true
+    }
+    if (!changed) return
+    setPages(editor.getPages().map((p, i) => ({
+      id: p.id,
+      name: p.name,
+      index: i + 1,
+      svgHtml: thumbCache.current.get(p.id) ?? null,
+    })))
+  }, [editor])
+
   /* ── 현재 페이지 썸네일만 갱신 ── */
   const refreshCurrentThumb = useCallback(async () => {
     if (!editor) return
@@ -120,7 +157,9 @@ export function LayoutPanel() {
       if (retryRef.current) clearTimeout(retryRef.current)
       retryRef.current = setTimeout(() => refreshRef.current(), 2000)
     }
-  }, [editor])
+
+    void fillMissingThumbs()
+  }, [editor, fillMissingThumbs])
 
   useEffect(() => { refreshRef.current = refreshCurrentThumb }, [refreshCurrentThumb])
 
@@ -169,6 +208,7 @@ export function LayoutPanel() {
       if (curPageCount !== prevPageCount) {
         prevPageCount = curPageCount
         syncPageList()
+        void fillMissingThumbs()
         return
       }
 
@@ -185,7 +225,7 @@ export function LayoutPanel() {
       if (debounceRef.current) clearTimeout(debounceRef.current)
       if (retryRef.current) clearTimeout(retryRef.current)
     }
-  }, [editor, refreshCurrentThumb, syncPageList, focusPage])
+  }, [editor, refreshCurrentThumb, syncPageList, focusPage, fillMissingThumbs])
 
   const switchPage = (pageId: string) => {
     if (!editor || pageId === currentPageId) return
