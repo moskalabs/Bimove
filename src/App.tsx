@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef, lazy, Suspense } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import { Tldraw } from 'tldraw'
 import type { Editor, TLEditorSnapshot } from 'tldraw'
 import 'tldraw/tldraw.css'
+import { lazyWithReload } from './lib/lazyWithReload'
 import { TopBar } from './components/TopBar'
 import { LBar } from './components/LBar'
 import { RBar } from './components/RBar'
@@ -17,8 +18,8 @@ import { ProjectsPage } from './components/ProjectsPage'
 import { AuthPage } from './components/AuthPage'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { ToastProvider, useToast } from './context/ToastContext'
-const Viewer3D = lazy(() => import('./components/Viewer3D').then(m => ({ default: m.Viewer3D })))
-const CadPreview = lazy(() => import('./components/CadPreview'))
+const Viewer3D = lazyWithReload(() => import('./components/Viewer3D').then(m => ({ default: m.Viewer3D })))
+const CadPreview = lazyWithReload(() => import('./components/CadPreview'))
 import { WallShapeUtil } from './shapes/WallShape'
 import { DxfGroupShapeUtil } from './shapes/DxfGroupShape'
 import { DoorShapeUtil } from './shapes/DoorShape'

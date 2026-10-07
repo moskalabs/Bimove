@@ -1,4 +1,4 @@
-import { useState, Suspense, lazy } from 'react'
+import { useState, Suspense } from 'react'
 import { PageRecordType } from 'tldraw'
 import { useEditor } from '../../context/EditorContext'
 import { useToast } from '../../context/ToastContext'
@@ -6,9 +6,10 @@ import { uploadImage } from '../../lib/project'
 import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2 } from '../../lib/dxf'
 import type { DxfLayout, ViewportClip } from '../../lib/dxf-shared'
 import type { LayoutImportInfo } from '../CadPreview'
+import { lazyWithReload } from '../../lib/lazyWithReload'
 import { importPdf } from '../../lib/pdfImport'
 
-const CadPreview = lazy(() => import('../CadPreview'))
+const CadPreview = lazyWithReload(() => import('../CadPreview'))
 
 interface PreviewData {
   dxfText: string
