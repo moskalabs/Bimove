@@ -578,6 +578,9 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
       // 45(view height) / 69(뷰포트 ID) 를 못 읽는다.
       const blkLines = dxfText.substring(blkBody, blkEnd).split('\n')
       let currentLayoutName = ''
+      /** 현재 블록 안에서 몇 번째 VIEWPORT 인지 (1-based). DXF 는 레이아웃
+       *  블록의 **첫** VIEWPORT 를 종이 의사 뷰포트로 쓴다. */
+      let vpIndexInBlock = 0
       let k = 0
       while (k + 1 < blkLines.length) {
         if (blkLines[k].trim() !== '0') { k += 2; continue }
@@ -608,10 +611,12 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
             console.log(`[CadPreview] BLOCK "${blockName}" owner=${ownerHandle ?? '-'} ` +
               `→ layout "${currentLayoutName || '(매핑 없음)'}"`)
           }
+          vpIndexInBlock = 0
           continue
         }
-        if (type === 'ENDBLK') { currentLayoutName = ''; continue }
+        if (type === 'ENDBLK') { currentLayoutName = ''; vpIndexInBlock = 0; continue }
         if (type === 'VIEWPORT') {
+          vpIndexInBlock++
           const key = currentLayoutName || '(블록→레이아웃 매핑 없음)'
           vpSeen.set(key, (vpSeen.get(key) ?? 0) + 1)
         }
@@ -642,13 +647,20 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
         // 구조로도 본다 — 의사 뷰포트는 **모델을 1:1 로 비춘다**. 즉 모델공간
         // view height(45) 가 종이 높이(41) 와 같고 view target(17/27) 이 원점이다.
         // 진짜 뷰포트는 축척이 걸려 있어 둘이 크게 다르다 (이 파일은 292 vs 29173).
+        //
+        // 기하 조건만으로는 **1:1 축척으로 원점 근처를 비추는 정상 뷰포트**도
+        // 같이 죽는다 (상세도를 원점에 그린 도면). 그래서 "블록 안 첫 번째" 를
+        // AND 로 묶었다 — DXF 는 레이아웃 블록의 첫 VIEWPORT 를 종이 의사
+        // 뷰포트로 쓴다. 이 조건은 기존보다 엄격해지기만 하므로, 지금 걸러지던
+        // 의사 뷰포트를 놓칠 일은 없다 (실제 파일도 의사 → 진짜 순서였다).
         const isPaperPseudoVp =
           num(69) === 1 ||
-          (Math.abs(viewHeight - vpHeight) < vpHeight * 0.01 &&
+          (vpIndexInBlock === 1 &&
+           Math.abs(viewHeight - vpHeight) < vpHeight * 0.01 &&
            num(17) === 0 && num(27) === 0)
         if (isPaperPseudoVp) {
           console.log(`[CadPreview] VIEWPORT "${currentLayoutName}": 종이 의사 뷰포트로 보고 건너뜀 ` +
-            `(id=${num(69)}, 41=${vpHeight.toFixed(0)}, 45=${viewHeight.toFixed(0)})`)
+            `(블록 내 ${vpIndexInBlock}번째, id=${num(69)}, 41=${vpHeight.toFixed(0)}, 45=${viewHeight.toFixed(0)})`)
           continue
         }
 

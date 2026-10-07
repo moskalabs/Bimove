@@ -266,3 +266,76 @@ describe('extractLayoutsAndViewports', () => {
     ])
   })
 })
+
+describe('의사 뷰포트 판별 — 기하 휴리스틱의 범위', () => {
+  /** id 가 1 이 아닌(DWG→DXF 변환기가 0 으로 쓰는) 종이 의사 뷰포트 */
+  function pseudoViewportNoId() {
+    return dxf(
+      0, 'VIEWPORT',
+      69, 0,
+      12, 210, 22, 148.5,
+      17, 0, 27, 0,          // view target = 원점
+      40, 420, 41, 297,
+      45, 297,               // 45 ≈ 41 → 1:1
+    )
+  }
+
+  /** 1:1 축척으로 원점 근처를 비추는 **정상** 뷰포트 (상세도) */
+  function unityScaleRealViewport() {
+    return dxf(
+      0, 'VIEWPORT',
+      69, 0,
+      12, 100, 22, 60,
+      17, 0, 27, 0,
+      40, 180, 41, 120,
+      45, 120,               // 역시 45 ≈ 41 — 기하 조건만으로는 의사와 구분 불가
+    )
+  }
+
+  it('id 가 0 이어도 블록 안 첫 뷰포트면 의사로 보고 버린다', () => {
+    const dxfText = buildDxf(
+      [layoutEntity('Model', 0), layoutEntity('평면도', 1)],
+      [{ name: '*Paper_Space', entities: [pseudoViewportNoId()] }],
+    )
+    const { viewportsByLayout } = extractLayoutsAndViewports(dxfText)
+    expect(viewportsByLayout.get('평면도') ?? []).toHaveLength(0)
+  })
+
+  it('의사 뷰포트 뒤에 오는 1:1 정상 뷰포트는 살린다', () => {
+    const dxfText = buildDxf(
+      [layoutEntity('Model', 0), layoutEntity('평면도', 1)],
+      [{ name: '*Paper_Space', entities: [pseudoViewportNoId(), unityScaleRealViewport()] }],
+    )
+    const { viewportsByLayout } = extractLayoutsAndViewports(dxfText)
+    const vps = viewportsByLayout.get('평면도') ?? []
+    expect(vps).toHaveLength(1)
+    // 12/22 ± view 크기의 절반 — 180x120 이 아니라 41(=120) 기준 폭 180
+    expect(vps[0].clipMinX).toBeCloseTo(100 - 90, 3)
+    expect(vps[0].clipMaxY).toBeCloseTo(60 + 60, 3)
+  })
+
+  it('블록이 바뀌면 "첫 뷰포트" 카운트가 다시 시작된다', () => {
+    const dxfText = buildDxf(
+      [layoutEntity('Model', 0), layoutEntity('평면도', 1), layoutEntity('천정도', 2)],
+      [
+        { name: '*Paper_Space', entities: [pseudoViewportNoId(), unityScaleRealViewport()] },
+        { name: '*Paper_Space0', entities: [pseudoViewportNoId(), unityScaleRealViewport()] },
+      ],
+    )
+    const { viewportsByLayout } = extractLayoutsAndViewports(dxfText)
+    expect(viewportsByLayout.get('평면도') ?? []).toHaveLength(1)
+    expect(viewportsByLayout.get('천정도') ?? []).toHaveLength(1)
+  })
+
+  it('code 69 == 1 이면 몇 번째든 의사로 본다', () => {
+    const dxfText = buildDxf(
+      [layoutEntity('Model', 0), layoutEntity('평면도', 1)],
+      [{ name: '*Paper_Space', entities: [
+        realViewport({ id: 2, cx: 5000, cy: 3000, w: 400, h: 280, viewH: 28000 }),
+        pseudoViewport(),
+      ] }],
+    )
+    const { viewportsByLayout } = extractLayoutsAndViewports(dxfText)
+    expect(viewportsByLayout.get('평면도') ?? []).toHaveLength(1)
+  })
+})
