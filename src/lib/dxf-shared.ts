@@ -122,10 +122,12 @@ export interface DxfLayout {
   tabOrder: number       // code 71
   paperWidth: number     // code 44 (mm)
   paperHeight: number    // code 45 (mm)
-  extMinX?: number       // code 14 — Model Space EXTMIN X
-  extMinY?: number       // code 24 — Model Space EXTMIN Y
-  extMaxX?: number       // code 15 — Model Space EXTMAX X
-  extMaxY?: number       // code 25 — Model Space EXTMAX Y
+  // 아래 네 개는 **종이공간 limits** 다 (code 14/24 = min, 15/25 = max).
+  // 모델공간 범위가 아니다 — 모델 좌표 clip 으로 쓰면 안 된다.
+  extMinX?: number       // code 14 — paper space limits min X
+  extMinY?: number       // code 24 — paper space limits min Y
+  extMaxX?: number       // code 15 — paper space limits max X
+  extMaxY?: number       // code 25 — paper space limits max Y
 }
 
 /** VIEWPORT의 Model Space 클리핑 영역 */

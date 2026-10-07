@@ -426,7 +426,9 @@ function aciToHex(aci: number): string {
  * DXF에서 Layout + Viewport 정보 경량 추출.
  * OBJECTS 섹션의 LAYOUT 엔티티 + BLOCKS 섹션의 *Paper_Space 내 VIEWPORT 엔티티.
  */
-function extractLayoutsAndViewports(rawDxfText: string): {
+// 진짜 집은 lib/dxf-shared.ts 다. 멀티 레이아웃 작업이 정리되면 옮긴다.
+// eslint-disable-next-line react-refresh/only-export-components
+export function extractLayoutsAndViewports(rawDxfText: string): {
   layouts: DxfLayout[]
   viewportsByLayout: Map<string, DxfViewport[]>
 } {
@@ -435,7 +437,6 @@ function extractLayoutsAndViewports(rawDxfText: string): {
     : rawDxfText
   const padded = detectPadding(dxfText)
   const gc = makeGcFormatter(padded)
-  const SEP = `\n${gc(0)}\n`
 
   // ── 1. OBJECTS 섹션에서 LAYOUT 파싱 ──
   const layouts: DxfLayout[] = []
@@ -446,78 +447,51 @@ function extractLayoutsAndViewports(rawDxfText: string): {
     const objBody = objIdx + SEC_OBJECTS.length
     const objEnd = dxfText.indexOf(ENDSEC, objBody)
     if (objEnd > objBody) {
-      const GC1 = `\n${gc(1)}\n`
-      const GC14 = `\n${gc(14)}\n`
-      const GC15 = `\n${gc(15)}\n`
-      const GC24 = `\n${gc(24)}\n`
-      const GC25 = `\n${gc(25)}\n`
-      const GC70 = `\n${gc(70)}\n`
-      const GC71 = `\n${gc(71)}\n`
-      const GC44 = `\n${gc(44)}\n`
-      const GC45 = `\n${gc(45)}\n`
-      const LAYOUT_MARKER = `${SEP.slice(0, -1)}\nLAYOUT\n`
+      const objLines = dxfText.substring(objBody, objEnd).split('\n')
 
-      // AcDbLayout 서브클래스 뒤의 코드만 읽어야 안전
-      let pos = objBody
-      while (true) {
-        pos = dxfText.indexOf(LAYOUT_MARKER, pos)
-        if (pos < 0 || pos >= objEnd) break
-        const lStart = pos
-        const nextEntity = dxfText.indexOf(SEP, pos + LAYOUT_MARKER.length)
-        const lEnd = (nextEntity >= 0 && nextEntity < objEnd) ? nextEntity : objEnd
+      // (그룹코드, 값) 쌍 단위로 걷는다.
+      //
+      // 전엔 줄바꿈+"0"+줄바꿈 을 indexOf 해서 엔티티 경계를 찾았다. 그런데
+      // 그룹코드의 **값** 이 0 이면 거기서 끊긴다. LAYOUT 은 code 70(flag)
+      // 이 0 인 게 흔해서, 그 뒤의 71(탭 순서) / 44,45(종이 크기) 를 통째로
+      // 놓쳤다. 탭 순서가 전부 0 이 되면 *Paper_Space ↔ 레이아웃 매핑이
+      // 어긋나서 엉뚱한 페이지에 clip 이 붙는다.
+      let i = 0
+      while (i + 1 < objLines.length) {
+        if (objLines[i].trim() !== '0' || objLines[i + 1].trim() !== 'LAYOUT') { i += 2; continue }
 
-        // AcDbLayout 서브클래스 확인
-        const acDbIdx = dxfText.indexOf('AcDbLayout', lStart)
-        if (acDbIdx < 0 || acDbIdx >= lEnd) { pos = lStart + 10; continue }
-
-        // AcDbLayout 뒤에서 group code 파싱
-        const afterAcDb = acDbIdx
-        const nameIdx = dxfText.indexOf(GC1, afterAcDb)
-        if (nameIdx < 0 || nameIdx >= lEnd) { pos = lStart + 10; continue }
-        const name = dxfText.substring(nameIdx + GC1.length).split('\n', 1)[0].trim()
-
-        const flagIdx = dxfText.indexOf(GC70, afterAcDb)
-        const flags = (flagIdx >= 0 && flagIdx < lEnd)
-          ? parseInt(dxfText.substring(flagIdx + GC70.length).split('\n', 1)[0]) || 0
-          : 0
-
-        const tabIdx = dxfText.indexOf(GC71, afterAcDb)
-        const tabOrder = (tabIdx >= 0 && tabIdx < lEnd)
-          ? parseInt(dxfText.substring(tabIdx + GC71.length).split('\n', 1)[0]) || 0
-          : 0
-
-        const pwIdx = dxfText.indexOf(GC44, afterAcDb)
-        const paperW = (pwIdx >= 0 && pwIdx < lEnd)
-          ? parseFloat(dxfText.substring(pwIdx + GC44.length).split('\n', 1)[0]) || 0
-          : 0
-
-        const phIdx = dxfText.indexOf(GC45, afterAcDb)
-        const paperH = (phIdx >= 0 && phIdx < lEnd)
-          ? parseFloat(dxfText.substring(phIdx + GC45.length).split('\n', 1)[0]) || 0
-          : 0
-
-        // EXTMIN/EXTMAX (Model Space 범위): code 14/24, 15/25
-        const readGC = (pat: string): number | undefined => {
-          const idx = dxfText.indexOf(pat, afterAcDb)
-          if (idx < 0 || idx >= lEnd) return undefined
-          const val = parseFloat(dxfText.substring(idx + pat.length).split('\n', 1)[0])
-          return isFinite(val) ? val : undefined
+        // AcDbLayout 서브클래스 안의 코드만 읽는다. 앞의 AcDbPlotSettings
+        // 에도 같은 번호(44/45 등)가 있어서 섞으면 엉뚱한 값이 들어온다.
+        const vals = new Map<number, string>()
+        let inAcDbLayout = false
+        let j = i + 2
+        while (j + 1 < objLines.length && objLines[j].trim() !== '0') {
+          const code = parseInt(objLines[j].trim())
+          const value = objLines[j + 1]
+          if (code === 100) inAcDbLayout = value.trim() === 'AcDbLayout'
+          else if (inAcDbLayout && !Number.isNaN(code) && !vals.has(code)) vals.set(code, value)
+          j += 2
         }
-        const extMinX = readGC(GC14)
-        const extMinY = readGC(GC24)
-        const extMaxX = readGC(GC15)
-        const extMaxY = readGC(GC25)
+        i = j
+
+        const name = vals.get(1)?.trim()
+        if (!name) continue
+
+        const num = (code: number): number | undefined => {
+          const raw = vals.get(code)
+          if (raw === undefined) return undefined
+          const v = parseFloat(raw)
+          return isFinite(v) ? v : undefined
+        }
 
         layouts.push({
           name,
-          isModelSpace: (flags & 1) !== 0,
-          tabOrder,
-          paperWidth: paperW,
-          paperHeight: paperH,
-          extMinX, extMinY, extMaxX, extMaxY,
+          isModelSpace: ((num(70) ?? 0) & 1) !== 0,
+          tabOrder: num(71) ?? 0,
+          paperWidth: num(44) ?? 0,
+          paperHeight: num(45) ?? 0,
+          extMinX: num(14), extMinY: num(24), extMaxX: num(15), extMaxY: num(25),
         })
-
-        pos = lEnd
       }
     }
   }
@@ -541,62 +515,69 @@ function extractLayoutsAndViewports(rawDxfText: string): {
       const blockToLayout = new Map<string, string>()
       if (paperLayouts.length > 0) {
         blockToLayout.set('*Paper_Space', paperLayouts[0].name)
-        for (let i = 1; i < paperLayouts.length; i++) {
-          blockToLayout.set(`*Paper_Space${i - 1}`, paperLayouts[i].name)
+        for (let n = 1; n < paperLayouts.length; n++) {
+          blockToLayout.set(`*Paper_Space${n - 1}`, paperLayouts[n].name)
         }
       }
 
-      const GC2 = `\n${gc(2)}\n`
-      // GC10, GC20 reserved for future entity position parsing
-      const GC12 = `\n${gc(12)}\n`
-      const GC22 = `\n${gc(22)}\n`
-      const GC40 = `\n${gc(40)}\n`
-      const GC41 = `\n${gc(41)}\n`
-      const GC45 = `\n${gc(45)}\n`
-
-      const chunks = ('\n' + dxfText.substring(blkBody, blkEnd)).split(SEP)
+      // 여기도 쌍 단위로 걷는다. VIEWPORT 는 code 68(status) 이 0 인 경우가
+      // 흔해서, 줄바꿈+"0"+줄바꿈 으로 자르면 엔티티가 중간에 끊기고 그 뒤의
+      // 45(view height) / 69(뷰포트 ID) 를 못 읽는다.
+      const blkLines = dxfText.substring(blkBody, blkEnd).split('\n')
       let currentLayoutName = ''
+      let k = 0
+      while (k + 1 < blkLines.length) {
+        if (blkLines[k].trim() !== '0') { k += 2; continue }
+        const type = blkLines[k + 1].trim()
 
-      for (const chunk of chunks) {
-        const type = chunk.split('\n', 1)[0].trim()
+        const vals = new Map<number, string>()
+        let m = k + 2
+        while (m + 1 < blkLines.length && blkLines[m].trim() !== '0') {
+          const code = parseInt(blkLines[m].trim())
+          if (!Number.isNaN(code) && !vals.has(code)) vals.set(code, blkLines[m + 1])
+          m += 2
+        }
+        k = m
 
         if (type === 'BLOCK') {
-          const ni = chunk.indexOf(GC2)
-          const blockName = ni >= 0 ? chunk.substring(ni + GC2.length).split('\n', 1)[0].trim() : ''
-          currentLayoutName = blockToLayout.get(blockName) || ''
-        } else if (type === 'ENDBLK') {
-          currentLayoutName = ''
-        } else if (type === 'VIEWPORT' && currentLayoutName) {
-          // VIEWPORT 파싱: model space view window
-          const floatVal = (pat: string): number => {
-            const i = chunk.indexOf(pat)
-            return i >= 0 ? parseFloat(chunk.substring(i + pat.length).split('\n', 1)[0]) || 0 : 0
-          }
-
-          const vpWidth = floatVal(GC40)
-          const vpHeight = floatVal(GC41)
-          const centerX = floatVal(GC12)   // model space center
-          const centerY = floatVal(GC22)   // model space center
-          const viewHeight = floatVal(GC45)  // model space view height
-
-          // 유효한 뷰포트만 (viewHeight > 0, paper border 뷰포트 제외)
-          if (viewHeight > 0 && vpHeight > 0) {
-            const viewWidth = viewHeight * (vpWidth / vpHeight)
-            const vp: DxfViewport = {
-              layoutName: currentLayoutName,
-              centerX, centerY,
-              viewWidth, viewHeight,
-              clipMinX: centerX - viewWidth / 2,
-              clipMinY: centerY - viewHeight / 2,
-              clipMaxX: centerX + viewWidth / 2,
-              clipMaxY: centerY + viewHeight / 2,
-            }
-
-            let arr = viewportsByLayout.get(currentLayoutName)
-            if (!arr) { arr = []; viewportsByLayout.set(currentLayoutName, arr) }
-            arr.push(vp)
-          }
+          currentLayoutName = blockToLayout.get(vals.get(2)?.trim() ?? '') || ''
+          continue
         }
+        if (type === 'ENDBLK') { currentLayoutName = ''; continue }
+        if (type !== 'VIEWPORT' || !currentLayoutName) continue
+
+        const num = (code: number): number => {
+          const v = parseFloat(vals.get(code) ?? '')
+          return isFinite(v) ? v : 0
+        }
+
+        // group code 69 = 뷰포트 ID. 오토캐드는 모든 레이아웃에 ID 1 인
+        // "종이공간 의사 뷰포트"를 자동으로 넣는다. 이건 도면을 비추는 창이
+        // 아니라 종이 자신을 가리키므로, 여기의 12/22/45 를 모델공간 clip 으로
+        // 쓰면 걸리는 도형이 없어 페이지가 통째로 빈다.
+        if (num(69) === 1) continue
+
+        const vpWidth = num(40)      // paper space 폭
+        const vpHeight = num(41)     // paper space 높이
+        const centerX = num(12)      // model space view center
+        const centerY = num(22)
+        const viewHeight = num(45)   // model space view height
+        if (viewHeight <= 0 || vpHeight <= 0) continue
+
+        const viewWidth = viewHeight * (vpWidth / vpHeight)
+        const vp: DxfViewport = {
+          layoutName: currentLayoutName,
+          centerX, centerY,
+          viewWidth, viewHeight,
+          clipMinX: centerX - viewWidth / 2,
+          clipMinY: centerY - viewHeight / 2,
+          clipMaxX: centerX + viewWidth / 2,
+          clipMaxY: centerY + viewHeight / 2,
+        }
+
+        let arr = viewportsByLayout.get(currentLayoutName)
+        if (!arr) { arr = []; viewportsByLayout.set(currentLayoutName, arr) }
+        arr.push(vp)
       }
 
       // 각 레이아웃에서 paper border 뷰포트 제거 (가장 큰 viewHeight)
@@ -609,31 +590,12 @@ function extractLayoutsAndViewports(rawDxfText: string): {
     }
   }
 
-  // ── 3. Fallback: VIEWPORT 없는 레이아웃 → LAYOUT EXTMIN/EXTMAX로 합성 ──
-  for (const layout of layouts) {
-    if (layout.isModelSpace) continue
-    if (viewportsByLayout.has(layout.name) && viewportsByLayout.get(layout.name)!.length > 0) continue
-
-    const extW = (layout.extMaxX ?? 0) - (layout.extMinX ?? 0)
-    const extH = (layout.extMaxY ?? 0) - (layout.extMinY ?? 0)
-    if (extW > 1 && extH > 1) {
-      const minX = layout.extMinX ?? 0
-      const minY = layout.extMinY ?? 0
-      const maxX = layout.extMaxX ?? 0
-      const maxY = layout.extMaxY ?? 0
-      viewportsByLayout.set(layout.name, [{
-        layoutName: layout.name,
-        centerX: (minX + maxX) / 2,
-        centerY: (minY + maxY) / 2,
-        viewWidth: extW,
-        viewHeight: extH,
-        clipMinX: minX,
-        clipMinY: minY,
-        clipMaxX: maxX,
-        clipMaxY: maxY,
-      }])
-    }
-  }
+  // VIEWPORT 를 한 개도 찾지 못한 레이아웃은 clip 없이 남긴다.
+  //
+  // 전엔 LAYOUT 의 EXTMIN/EXTMAX (group code 14/24/15/25) 로 clip 을 합성했는데,
+  // 이 네 개는 **종이공간 limits** 다 — 모델공간 범위가 아니다. A3 레이아웃이면
+  // (0,0)~(420,297) 짜리 상자가 나오고, 원점에서 먼 좌표에 그려진 도면은 거기
+  // 하나도 걸리지 않아 페이지가 통째로 빈다.
 
   return { layouts, viewportsByLayout }
 }

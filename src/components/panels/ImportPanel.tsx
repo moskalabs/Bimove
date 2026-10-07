@@ -4,7 +4,7 @@ import { useEditor } from '../../context/EditorContext'
 import { useToast } from '../../context/ToastContext'
 import { uploadImage } from '../../lib/project'
 import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2 } from '../../lib/dxf'
-import type { ViewportClip } from '../../lib/dxf-shared'
+import type { DxfLayout, ViewportClip } from '../../lib/dxf-shared'
 import type { LayoutImportInfo } from '../CadPreview'
 import { importPdf } from '../../lib/pdfImport'
 
@@ -99,14 +99,41 @@ export function ImportPanel() {
     await new Promise(r => requestAnimationFrame(r))
 
     try {
-      if (layoutInfo && layoutInfo.layouts.length > 1) {
+      // 페이지를 만들 레이아웃을 먼저 가려낸다.
+      //
+      // 뷰포트를 못 찾은 paper space 레이아웃은 **페이지를 아예 만들지 않는다.**
+      // clip 없이 임포트하면 모델공간 전체가 그대로 복사돼서, 오토캐드에서 탭으로
+      // 나뉘어 있던 게 한 페이지에 다 쏟아진다. 빈 페이지보다 나쁘다.
+      const targets: { layout: DxfLayout; clip: ViewportClip | null }[] = []
+      if (layoutInfo) {
+        for (const layout of [...layoutInfo.layouts].sort((a, b) => a.tabOrder - b.tabOrder)) {
+          if (layout.isModelSpace) {
+            targets.push({ layout, clip: null })
+            continue
+          }
+          const vps = layoutInfo.viewportsByLayout.get(layout.name)
+          if (!vps || vps.length === 0) {
+            console.warn(`[Import] Layout "${layout.name}": 뷰포트 없음 → 페이지 생성 안 함`)
+            continue
+          }
+          const clip: ViewportClip = {
+            minX: Math.min(...vps.map(v => v.clipMinX)),
+            minY: Math.min(...vps.map(v => v.clipMinY)),
+            maxX: Math.max(...vps.map(v => v.clipMaxX)),
+            maxY: Math.max(...vps.map(v => v.clipMaxY)),
+          }
+          console.log(`[Import] Layout "${layout.name}" viewport clip: (${clip.minX.toFixed(0)},${clip.minY.toFixed(0)})~(${clip.maxX.toFixed(0)},${clip.maxY.toFixed(0)})`)
+          targets.push({ layout, clip })
+        }
+      }
+
+      if (targets.length > 1) {
         // ── Multi-layout import: AutoCAD 탭별 별도 페이지 생성 ──
         let totalCount = 0
-        const sortedLayouts = [...layoutInfo.layouts].sort((a, b) => a.tabOrder - b.tabOrder)
         const modelPageId = editor.getCurrentPageId()
 
-        for (let i = 0; i < sortedLayouts.length; i++) {
-          const layout = sortedLayouts[i]
+        for (let i = 0; i < targets.length; i++) {
+          const { layout, clip } = targets[i]
           // AutoCAD "Model" → 한국어 "모형" 매핑
           const displayName = layout.isModelSpace && layout.name === 'Model' ? '모형' : layout.name
 
@@ -123,22 +150,7 @@ export function ImportPanel() {
             editor.setCurrentPage(newPageId)
           }
 
-          // Paper Space 레이아웃은 viewport clip 적용 (Model Space 일부만 표시)
-          let clip: ViewportClip | null = null
-          if (!layout.isModelSpace) {
-            const vps = layoutInfo.viewportsByLayout.get(layout.name)
-            if (vps && vps.length > 0) {
-              clip = {
-                minX: Math.min(...vps.map(v => v.clipMinX)),
-                minY: Math.min(...vps.map(v => v.clipMinY)),
-                maxX: Math.max(...vps.map(v => v.clipMaxX)),
-                maxY: Math.max(...vps.map(v => v.clipMaxY)),
-              }
-              console.log(`[Import] Layout "${layout.name}" viewport clip: (${clip.minX.toFixed(0)},${clip.minY.toFixed(0)})~(${clip.maxX.toFixed(0)},${clip.maxY.toFixed(0)})`)
-            }
-          }
-
-          setLoading(`"${layout.name}" 임포트 중... (${i + 1}/${sortedLayouts.length})`)
+          setLoading(`"${layout.name}" 임포트 중... (${i + 1}/${targets.length})`)
           const count = await commitCadImportV2(
             editor, dxfText, selectedLayers,
             prev.fileName, prev.fileSize, prev.isDwg,
@@ -156,7 +168,7 @@ export function ImportPanel() {
         }, 400)
 
         const fmt = prev.isDwg ? 'DWG' : 'DXF'
-        toast(`"${prev.fileName}" ${fmt} 가져옴 (${sortedLayouts.length}개 레이아웃, ${totalCount.toLocaleString()}개 요소)`, 'success')
+        toast(`"${prev.fileName}" ${fmt} 가져옴 (${targets.length}개 레이아웃, ${totalCount.toLocaleString()}개 요소)`, 'success')
       } else {
         // ── Single-layout import (기존 동작) ──
         const count = await commitCadImportV2(
