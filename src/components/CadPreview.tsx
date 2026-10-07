@@ -535,6 +535,7 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
           blockToLayout.set(`*Paper_Space${n - 1}`, paperLayouts[n].name)
         }
       }
+      console.log(`[CadPreview] blockToLayout:`, [...blockToLayout].map(([b, l]) => `${b}→${l}`).join(', '))
 
       // 여기도 쌍 단위로 걷는다. VIEWPORT 는 code 68(status) 이 0 인 경우가
       // 흔해서, 줄바꿈+"0"+줄바꿈 으로 자르면 엔티티가 중간에 끊기고 그 뒤의
@@ -556,7 +557,13 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
         k = m
 
         if (type === 'BLOCK') {
-          currentLayoutName = blockToLayout.get(vals.get(2)?.trim() ?? '') || ''
+          const blockName = vals.get(2)?.trim() ?? ''
+          currentLayoutName = blockToLayout.get(blockName) || ''
+          // 종이공간 블록은 전부 찍는다. 이름↔레이아웃 매핑이 어긋나면
+          // 뷰포트를 통째로 못 찾아 페이지가 안 만들어진다 ("평면도" 가 그랬다).
+          if (blockName.startsWith('*')) {
+            console.log(`[CadPreview] BLOCK "${blockName}" → layout "${currentLayoutName || '(매핑 없음)'}"`)
+          }
           continue
         }
         if (type === 'ENDBLK') { currentLayoutName = ''; continue }
@@ -567,16 +574,29 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
           return isFinite(v) ? v : 0
         }
 
-        // group code 69 = 뷰포트 ID. 오토캐드는 모든 레이아웃에 ID 1 인
-        // "종이공간 의사 뷰포트"를 자동으로 넣는다. 이건 도면을 비추는 창이
-        // 아니라 종이 자신을 가리키므로, 여기의 12/22/45 를 모델공간 clip 으로
-        // 쓰면 걸리는 도형이 없어 페이지가 통째로 빈다.
-        if (num(69) === 1) continue
-
         const vpWidth = num(40)      // paper space 폭
         const vpHeight = num(41)     // paper space 높이
         const viewHeight = num(45)   // model space view height
         if (viewHeight <= 0 || vpHeight <= 0) continue
+
+        // 오토캐드는 레이아웃마다 "종이 자신"을 가리키는 의사 뷰포트를 하나
+        // 넣는다. 이건 도면을 비추는 창이 아니라서, 여기의 12/22/45 를 모델공간
+        // clip 으로 쓰면 엉뚱한 상자가 나오고 union 에 섞이면 clip 전체가 망가진다.
+        //
+        // 원래는 group code 69(뷰포트 ID) == 1 로만 걸렀는데, DWG→DXF 변환기가
+        // 69 를 0 으로 쓰는 파일이 있다 (실제 로그: `id=0 ... h=624`). 그래서
+        // 구조로도 본다 — 의사 뷰포트는 **모델을 1:1 로 비춘다**. 즉 모델공간
+        // view height(45) 가 종이 높이(41) 와 같고 view target(17/27) 이 원점이다.
+        // 진짜 뷰포트는 축척이 걸려 있어 둘이 크게 다르다 (이 파일은 292 vs 29173).
+        const isPaperPseudoVp =
+          num(69) === 1 ||
+          (Math.abs(viewHeight - vpHeight) < vpHeight * 0.01 &&
+           num(17) === 0 && num(27) === 0)
+        if (isPaperPseudoVp) {
+          console.log(`[CadPreview] VIEWPORT "${currentLayoutName}": 종이 의사 뷰포트로 보고 건너뜀 ` +
+            `(id=${num(69)}, 41=${vpHeight.toFixed(0)}, 45=${viewHeight.toFixed(0)})`)
+          continue
+        }
 
         // 12/22 는 **DCS**(디스플레이 좌표계) 기준 뷰 중심이지 WCS 가 아니다.
         // DCS 의 원점은 17/27 의 view target 이므로, 모델공간 중심은 둘을 더해야
@@ -602,6 +622,7 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
         console.log(`[CadPreview] VIEWPORT "${currentLayoutName}": ` +
           `id=${num(69)} paper=(${num(10).toFixed(0)},${num(20).toFixed(0)}) ${vpWidth.toFixed(0)}x${vpHeight.toFixed(0)} ` +
           `view=(${num(12).toFixed(0)},${num(22).toFixed(0)}) target=(${num(17).toFixed(0)},${num(27).toFixed(0)}) h=${viewHeight.toFixed(0)} ` +
+          `dir=(${num(16).toFixed(2)},${num(26).toFixed(2)},${num(36).toFixed(2)}) ucs=(${num(110).toFixed(0)},${num(120).toFixed(0)}) ` +
           `→ clip (${vp.clipMinX.toFixed(0)},${vp.clipMinY.toFixed(0)})~(${vp.clipMaxX.toFixed(0)},${vp.clipMaxY.toFixed(0)})`)
 
         let arr = viewportsByLayout.get(currentLayoutName)
