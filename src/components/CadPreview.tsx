@@ -599,18 +599,28 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
           clipMaxY: centerY + viewHeight / 2,
         }
 
+        console.log(`[CadPreview] VIEWPORT "${currentLayoutName}": ` +
+          `id=${num(69)} paper=(${num(10).toFixed(0)},${num(20).toFixed(0)}) ${vpWidth.toFixed(0)}x${vpHeight.toFixed(0)} ` +
+          `view=(${num(12).toFixed(0)},${num(22).toFixed(0)}) target=(${num(17).toFixed(0)},${num(27).toFixed(0)}) h=${viewHeight.toFixed(0)} ` +
+          `→ clip (${vp.clipMinX.toFixed(0)},${vp.clipMinY.toFixed(0)})~(${vp.clipMaxX.toFixed(0)},${vp.clipMaxY.toFixed(0)})`)
+
         let arr = viewportsByLayout.get(currentLayoutName)
         if (!arr) { arr = []; viewportsByLayout.set(currentLayoutName, arr) }
         arr.push(vp)
       }
 
-      // 각 레이아웃에서 paper border 뷰포트 제거 (가장 큰 viewHeight)
-      for (const [name, vps] of viewportsByLayout) {
-        if (vps.length > 1) {
-          const maxVH = Math.max(...vps.map(v => v.viewHeight))
-          viewportsByLayout.set(name, vps.filter(v => v.viewHeight < maxVH * 0.99))
-        }
-      }
+      // 예전엔 여기서 "paper border 뷰포트" 랍시고 viewHeight 가 가장 큰 것을
+      // 떨어냈다 (`filter(v => v.viewHeight < maxVH * 0.99)`). 두 가지가 틀렸다.
+      //
+      //  1. 같은 크기 뷰포트가 여럿이면 **전부** 날아간다. 실제로 "평면도" 가
+      //     뷰포트 0개가 되어 페이지 자체가 안 만들어졌다.
+      //  2. 레이아웃에서 제일 큰 뷰포트는 보통 **메인 뷰** 다. 그걸 떨어내면
+      //     남는 건 자잘한 것뿐이라 clip 이 도면에서 통째로 빗나간다 —
+      //     "천정도" 가 clip (-277,-192)~(1242,432) 로 44415 → 0 이 됐다.
+      //
+      // 종이 자신을 가리키는 의사 뷰포트는 위에서 group code 69 == 1 로 이미
+      // 걸러낸다. 69 가 없는 파일이면 clip 이 넓어져 모델공간이 통째로 들어오는데,
+      // 그건 페이지가 사라지는 것보다 낫다.
     }
   }
 
