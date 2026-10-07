@@ -4,10 +4,10 @@
 // 예전엔 그걸 경고 로그만 찍고 조용히 덮어써서, 상대가 한 작업이 흔적도 없이
 // 사라졌다. 이제는 덮어쓰기 전에 서버 내용을 로컬 버전으로 남긴다.
 //
-// 까다로운 부분은 "남겼다" 를 믿을 수 없다는 것. saveVersion → scopedSet 은
-// localStorage quota 초과를 조용히 삼키므로 예외가 올라오지 않는다.
-// 그래서 저장 후 읽어서 확인한다. 확인이 안 되면 'failed' — 호출부는
-// 덮어쓰기를 포기해야 한다.
+// 까다로운 부분은 "남겼다" 를 믿을 수 없다는 것. saveVersion 이 null 을
+// 돌려주면 실패지만, 그것만 믿지 않고 저장 후 읽어서 한 번 더 확인한다.
+// 확인이 안 되면 'failed' — 호출부는 덮어쓰기를 포기해야 한다.
+// (여기서 잘못 'saved' 를 주면 다른 기기 작업이 조용히 사라진다.)
 
 export type BackupResult =
   | 'saved'      // 백업 성공 → 덮어써도 된다
@@ -17,10 +17,10 @@ export type BackupResult =
 export interface ConflictBackupDeps {
   /** 서버의 현재 스냅샷을 읽는다 */
   loadRemote: (projectId: string) => Promise<{ snapshot: unknown } | null>
-  /** 로컬 버전 기록에 저장하고 저장된 버전을 돌려준다 */
-  saveVersion: (projectId: string, snapshot: object, label?: string) => { id: string }
-  /** 버전이 실제로 남아 있는지 확인 (quota 초과를 잡아내는 유일한 방법) */
-  getVersion: (projectId: string, versionId: string) => unknown
+  /** 로컬 버전 기록에 저장하고 저장된 버전을 돌려준다 (실패하면 null) */
+  saveVersion: (projectId: string, snapshot: object, label?: string) => Promise<{ id: string } | null>
+  /** 버전이 실제로 남아 있는지 확인 */
+  getVersion: (projectId: string, versionId: string) => Promise<unknown>
 }
 
 /** 충돌 백업 버전 라벨. 버전 목록에서 한눈에 구분되도록. */
@@ -50,9 +50,10 @@ export async function backupServerSnapshot(
     if (!remote?.snapshot) return 'failed'
     const when = serverUpdatedAt ? new Date(serverUpdatedAt) : new Date()
     if (isNaN(when.getTime())) return 'failed'
-    const saved = deps.saveVersion(projectId, remote.snapshot as object, conflictBackupLabel(when))
-    // quota 초과는 예외를 던지지 않는다 → 읽어서 확인
-    if (!deps.getVersion(projectId, saved.id)) return 'failed'
+    const saved = await deps.saveVersion(projectId, remote.snapshot as object, conflictBackupLabel(when))
+    if (!saved) return 'failed'
+    // 저장했다는 말만 믿지 않고 읽어서 확인한다
+    if (!(await deps.getVersion(projectId, saved.id))) return 'failed'
     return 'saved'
   } catch (err) {
     console.warn('[supabase-sync] 충돌 백업 실패', err)

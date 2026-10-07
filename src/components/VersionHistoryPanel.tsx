@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Editor, TLStoreSnapshot } from 'tldraw'
-import { listVersions, deleteVersion, renameVersion } from '../lib/versions'
+import { listVersions, getVersion, deleteVersion, renameVersion } from '../lib/versions'
 import { listMergedVersions, type MergedVersion } from '../lib/versionSync'
 import {
   fetchProjectVersionMetas, fetchProjectVersionSnapshot,
@@ -73,16 +73,21 @@ export function VersionHistoryPanel({ editor, projectId, onClose, onRestored }: 
     if (hit.snapshot) return hit.snapshot
     setBusyId(id)
     try {
-      const snap = await fetchProjectVersionSnapshot(id)
+      // 로컬에 있으면 로컬에서. 목록은 메타만 들고 있어서 본문은 여기서 처음 읽는다
+      // (스냅샷 하나가 수 MB 라 패널 여는 것만으로 다 읽을 수는 없다).
+      const snap = hit.local
+        ? (await getVersion(projectId, id))?.snapshot ?? null
+        : await fetchProjectVersionSnapshot(id)
       if (snap) setVersions(prev => prev.map(v => v.id === id ? { ...v, snapshot: snap } : v))
+      else if (!hit.local) alert('서버에서 이 버전을 찾지 못했습니다.')
       return snap
     } catch (err) {
-      alert('서버에서 이 버전을 불러오지 못했습니다: ' + String(err))
+      alert('이 버전을 불러오지 못했습니다: ' + String(err))
       return null
     } finally {
       setBusyId(null)
     }
-  }, [versions])
+  }, [versions, projectId])
 
   // 두 개 선택되면 diff 계산 (derived state via useMemo로 변환했으면 좋겠지만
   // useEffect로 두는 게 컴포넌트 의도와 맞아서 disable 처리)
@@ -127,7 +132,7 @@ export function VersionHistoryPanel({ editor, projectId, onClose, onRestored }: 
 
   const handleDelete = async (v: MergedVersion) => {
     if (!confirm(`이 버전을 삭제할까요?`)) return
-    if (v.local) deleteVersion(projectId, v.id)
+    if (v.local) await deleteVersion(projectId, v.id)
     // 서버에서도 지워야 한다 — 로컬만 지우면 다음에 패널을 열 때
     // 서버 목록에서 그대로 다시 나타난다.
     if (v.remote) {
@@ -148,7 +153,7 @@ export function VersionHistoryPanel({ editor, projectId, onClose, onRestored }: 
   const commitRename = async (v: MergedVersion) => {
     const label = editLabel.trim() || null
     setEditingId(null)
-    if (v.local) renameVersion(projectId, v.id, editLabel)
+    if (v.local) await renameVersion(projectId, v.id, editLabel)
     if (v.remote) {
       try {
         await renameProjectVersion(v.id, label)

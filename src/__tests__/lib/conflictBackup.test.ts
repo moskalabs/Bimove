@@ -15,18 +15,18 @@ import {
 const SNAP = { store: { 'shape:1': {} } }
 const SERVER_AT = '2026-10-02T09:54:00.000Z'
 
-/** 정상 동작하는 localStorage 를 흉내낸 deps */
+/** 정상 동작하는 IndexedDB 를 흉내낸 deps */
 function okDeps(overrides: Partial<ConflictBackupDeps> = {}): ConflictBackupDeps {
   const stored = new Map<string, object>()
   let n = 0
   return {
     loadRemote: vi.fn(async () => ({ snapshot: SNAP })),
-    saveVersion: vi.fn((_p: string, snapshot: object) => {
+    saveVersion: vi.fn(async (_p: string, snapshot: object) => {
       const id = `v${++n}`
       stored.set(id, snapshot)
       return { id }
     }),
-    getVersion: vi.fn((_p: string, id: string) => stored.get(id) ?? null),
+    getVersion: vi.fn(async (_p: string, id: string) => stored.get(id) ?? null),
     ...overrides,
   }
 }
@@ -55,13 +55,24 @@ describe('backupServerSnapshot', () => {
     expect(deps.saveVersion).not.toHaveBeenCalled()
   })
 
-  it('localStorage 가 꽉 차서 조용히 안 써지면 failed', async () => {
-    // scopedSet 이 quota 예외를 삼키므로 saveVersion 은 성공한 척 반환한다.
-    // 읽어서 확인하는 것만이 이걸 잡아낸다.
-    const deps = okDeps({ getVersion: vi.fn(() => null) })
+  it('저장은 됐다는데 읽어보니 없으면 failed', async () => {
+    // 메타만 써지고 본문이 날아간 경우 등. saveVersion 의 반환값만 믿으면
+    // 못 잡는다 — 읽어서 확인하는 것만이 이걸 잡아낸다.
+    const deps = okDeps({ getVersion: vi.fn(async () => null) })
     const r = await backupServerSnapshot('p1', SERVER_AT, undefined, deps)
 
     expect(r).toBe('failed')
+  })
+
+  // IndexedDB 쓰기가 실패하면 saveVersion 이 null 을 돌려준다 (던지지 않는다).
+  // 그걸 그냥 통과시키면 getVersion(null.id) 에서 터지거나, 더 나쁘게는
+  // 'saved' 로 보고해서 상대 작업을 덮어쓴다.
+  it('saveVersion 이 null 을 돌려주면 failed', async () => {
+    const deps = okDeps({ saveVersion: vi.fn(async () => null) })
+    const r = await backupServerSnapshot('p1', SERVER_AT, undefined, deps)
+
+    expect(r).toBe('failed')
+    expect(deps.getVersion).not.toHaveBeenCalled()
   })
 
   it('서버 스냅샷을 못 읽으면 failed', async () => {
@@ -78,7 +89,7 @@ describe('backupServerSnapshot', () => {
   })
 
   it('saveVersion 이 throw 해도 failed', async () => {
-    const deps = okDeps({ saveVersion: vi.fn(() => { throw new Error('quota') }) })
+    const deps = okDeps({ saveVersion: vi.fn(async () => { throw new Error('quota') }) })
     expect(await backupServerSnapshot('p1', SERVER_AT, undefined, deps)).toBe('failed')
   })
 

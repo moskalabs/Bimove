@@ -38,7 +38,7 @@ import { ProjectContext } from './context/ProjectContext'
 import { loadSnapshot, saveSnapshot, saveThumbnail, touchProject, resolveSnapshot } from './lib/projectStore'
 import { createDebouncedSaver } from './lib/debouncedSave'
 import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, saveProjectVersion } from './lib/supabaseSync'
-import { saveVersion, getVersion } from './lib/versions'
+import { saveVersion, getVersion, type Version } from './lib/versions'
 import { pushVersion } from './lib/versionSync'
 import { backupServerSnapshot } from './lib/conflictBackup'
 import { dwgToDxfBytes, decodeDxfBytes, commitCadImportV2 } from './lib/dxf'
@@ -56,12 +56,23 @@ initDarkAttr()
  * 버전 기록이 통째로 사라졌다. 서버 테이블과 그걸 쓰는 함수는 있었지만
  * 아무도 부르지 않는 죽은 코드였다.
  *
- * 서버 쓰기는 기다리지 않는다 — 실패해도 로컬 버전은 남았고,
- * 호출부(자동 저장/충돌 백업)는 동기 반환값이 필요하다.
+ * 서버 쓰기는 기다리지 않는다 — 네트워크를 기다리느라 자동 저장이
+ * 밀릴 이유가 없다.
+ *
+ * 로컬 저장이 실패해도(용량 초과 등) 서버에는 올린다. 서버가 더 오래
+ * 남는 사본이라, 로컬에 못 넣었다고 같이 버릴 이유가 없다. 다만 반환값은
+ * **로컬에 남았을 때만** 버전을 준다 — 충돌 백업이 이 값을 보고
+ * "덮어써도 되나" 를 판단하기 때문이다.
  */
-function saveVersionSynced(projectId: string, snapshot: object, label?: string) {
-  const v = saveVersion(projectId, snapshot, label)
-  void pushVersion(projectId, v, saveProjectVersion)
+async function saveVersionSynced(projectId: string, snapshot: object, label?: string) {
+  const v = await saveVersion(projectId, snapshot, label)
+  const forServer: Version = v ?? {
+    id: crypto.randomUUID(),
+    timestamp: Date.now(),
+    label: label?.trim() || undefined,
+    snapshot,
+  }
+  void pushVersion(projectId, forServer, saveProjectVersion)
   return v
 }
 
@@ -324,13 +335,13 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
     const AUTO_VERSION_MS = 5 * 60 * 1000
     const autoVersionTimer = window.setInterval(() => {
       if (!dirtySinceAuto) return
-      try {
-        saveVersionSynced(projectId, editor.store.getStoreSnapshot(), '자동저장')
-        dirtySinceAuto = false
-      } catch (err) {
-        console.warn('[auto-version] failed', err)
-        toast('자동 버전 저장에 실패했습니다.', 'error')
-      }
+      // 비동기라 try/catch 로는 못 잡는다 — catch 를 붙여야 한다.
+      dirtySinceAuto = false
+      void saveVersionSynced(projectId, editor.store.getStoreSnapshot(), '자동저장')
+        .catch(err => {
+          console.warn('[auto-version] failed', err)
+          toast('자동 버전 저장에 실패했습니다.', 'error')
+        })
     }, AUTO_VERSION_MS)
 
     return () => {

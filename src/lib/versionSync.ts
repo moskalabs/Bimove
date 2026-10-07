@@ -8,15 +8,16 @@
 // supabase를 직접 import 하지 않고 deps로 받는다 — conflictBackup.ts 와
 // 같은 이유로, 네트워크 없이 병합 규칙만 테스트할 수 있어야 한다.
 
-import type { Version } from './versions'
+import type { Version, VersionMeta } from './versions'
 
 export type MergedVersion = {
   id: string
   timestamp: number
   label?: string
   /**
-   * 로컬에 있으면 스냅샷이 들어있다. 서버에만 있으면 null —
-   * 복원하거나 비교할 때 그때 받아온다.
+   * 스냅샷 본문. 목록 단계에서는 로컬/서버 양쪽 다 null 이다 — 수십 MB 를
+   * 패널 여는 것만으로 읽을 이유가 없다. 복원하거나 비교할 때 그때 받아온다
+   * (로컬이면 getVersion, 서버면 fetchProjectVersionSnapshot).
    */
   snapshot: object | null
   local: boolean
@@ -24,7 +25,7 @@ export type MergedVersion = {
 }
 
 export interface VersionSyncDeps {
-  listLocal: (projectId: string) => Version[]
+  listLocal: (projectId: string) => Promise<VersionMeta[]>
   fetchRemoteMetas: (projectId: string) => Promise<{ id: string; timestamp: number; label?: string }[]>
 }
 
@@ -50,13 +51,13 @@ export async function listMergedVersions(
 ): Promise<MergeResult> {
   const byId = new Map<string, MergedVersion>()
 
-  for (const v of deps.listLocal(projectId)) {
+  for (const v of await deps.listLocal(projectId)) {
     if (!Number.isFinite(v.timestamp)) continue
     byId.set(v.id, {
       id: v.id,
       timestamp: v.timestamp,
       label: v.label,
-      snapshot: v.snapshot,
+      snapshot: null,
       local: true,
       remote: false,
     })

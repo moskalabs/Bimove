@@ -1,4 +1,5 @@
 import { scopedGet, scopedSet, scopedRemove } from './scopedStorage'
+import { clearVersions } from './versions'
 
 export type Project = {
   id: string
@@ -35,11 +36,10 @@ export function createProject(name: string): Project {
 export function deleteProject(id: string) {
   saveProjectList(getProjects().filter(p => p.id !== id))
   scopedRemove(snapshotKey(id))
-  // 버전 히스토리도 함께 정리
-  try {
-    const versionsKey = `bimova_versions_${id}`
-    scopedRemove(versionsKey)
-  } catch { /* ignore */ }
+  // 버전 히스토리도 함께 정리. IndexedDB 라 비동기지만 기다리지 않는다 —
+  // 프로젝트는 이미 목록에서 빠졌고, 남은 버전 레코드는 아무도 못 찾는다.
+  // (clearVersions 가 레거시 localStorage 키도 같이 치운다.)
+  void clearVersions(id)
 }
 
 export function renameProject(id: string, name: string) {
