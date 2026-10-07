@@ -187,7 +187,7 @@ export function VersionHistoryPanel({ editor, projectId, onClose, onRestored }: 
         ) : versions.length === 0 ? (
           <p style={{ color: '#888', textAlign: 'center', padding: 32 }}>
             아직 저장된 버전이 없어. <br />
-            "저장" 버튼을 누르거나 자동 저장을 기다려.
+            도면을 고치면 5분마다 자동으로 저장돼.
           </p>
         ) : (
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, overflowY: 'auto', flex: 1 }}>
