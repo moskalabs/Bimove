@@ -2683,11 +2683,17 @@ export async function commitCadImportV2(
     }
 
     // 레이어별 세그먼트 수 로그
-    const layerCounts: string[] = []
-    for (const [, { layer, segs }] of layerGroups) {
-      layerCounts.push(`${layer}:${segs.length}`)
+    //
+    // **레이어 이름으로 합쳐서** 찍는다. 위 그루핑 키는 색/선종류/굵기/투명도까지
+    // 포함하므로 한 레이어가 여러 그룹으로 쪼개진다. 그룹을 그대로 나열하면
+    // `-S1:2166, -S1:1542` 처럼 같은 이름이 반복돼 중복 버그처럼 읽힌다.
+    const segsByLayer = new Map<string, number>()
+    for (const { layer, segs } of layerGroups.values()) {
+      segsByLayer.set(layer, (segsByLayer.get(layer) ?? 0) + segs.length)
     }
-    console.log(`[CAD V2] 레이어별 세그먼트: ${layerCounts.slice(0, 15).join(', ')}${layerCounts.length > 15 ? ` (+${layerCounts.length - 15}개)` : ''}`)
+    const layerCounts = [...segsByLayer].sort((a, b) => b[1] - a[1]).map(([l, n]) => `${l}:${n}`)
+    console.log(`[CAD V2] 레이어별 세그먼트 (${segsByLayer.size}개 레이어 / ${layerGroups.size}개 스타일 그룹): ` +
+      `${layerCounts.slice(0, 15).join(', ')}${layerCounts.length > 15 ? ` (+${layerCounts.length - 15}개)` : ''}`)
 
     const assignedTextIdx = new Set<number>()
     const assignedHatchIdx = new Set<number>()
