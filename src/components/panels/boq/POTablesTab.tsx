@@ -49,7 +49,7 @@ export function POTablesTab() {
       if (!cancelled) setLoaded(true)
     })()
     return () => { cancelled = true }
-  }, [projectId, loaded])
+  }, [projectId, loaded, toast])
 
   // 디바운스된 Supabase 동기화
   const syncToSupabase = useCallback((purchaseOrder: PurchaseOrder) => {

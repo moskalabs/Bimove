@@ -209,7 +209,9 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
         setLayerCount(count)
       })
     })
-    // 초기값
+    // 초기값 — 위 store.listen 구독의 씨딩이다. tldraw 인스턴스 상태를 한 번 읽어오는
+    // 것이지 파생 상태를 다시 계산하는 게 아니라서 캐스케이드가 나지 않는다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setGridOn(!!(editor.getInstanceState() as { isGridMode?: boolean }).isGridMode)
     for (const s of editor.getCurrentPageShapes()) {
       if ((s.meta as Record<string, unknown>)?.dxfLayer) { setLayerCount(1); break }

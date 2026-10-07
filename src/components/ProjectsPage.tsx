@@ -275,6 +275,9 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) =
   }
 
   useEffect(() => {
+    // loadProjects 는 async 라 setState 가 전부 await 뒤에서 일어난다 — 동기 호출이
+    // 아니라서 캐스케이드 렌더가 안 나는데, 룰이 함수 안을 못 봐서 경고한다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadProjects()
     // handle share link import
     void (async () => {

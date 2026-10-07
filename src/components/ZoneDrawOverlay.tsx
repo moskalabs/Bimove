@@ -39,6 +39,10 @@ export function ZoneDrawOverlay() {
 
   useEffect(() => {
     if (!editor || !active) return
+    // 카메라가 움직여도 리렌더는 안 나니까 스토어를 구독해서 좌표를 다시 계산한다.
+    // 이 첫 호출은 그 구독의 초기값 씨딩이다 — 룰이 말하는 "외부 시스템 구독" 쪽이고,
+    // 빼면 구독 후 첫 카메라 이동까지 오버레이 좌표가 비어 있다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     updateViewport()
     let raf = 0
     const unsub = editor.store.listen(() => {
