@@ -385,6 +385,18 @@ export type DxfGroupShape = TLBaseShape<'dxfgroup', DxfGroupShapeProps>
  *  (AutoCAD 도 그렇게 보여준다), 거기까지 지워버리면 글자가 있다는 사실
  *  자체를 알 수 없다. 이 도면들은 autoScale 때문에 텍스트가 대부분 4px 라서
  *  3px 기준이면 z<0.75 구간 전체에서 글자가 하나도 안 보였다. */
+/** DXF 텍스트 전용 색.
+ *
+ *  원래는 엔티티 색을 그대로 썼다 (밝은 배경이면 어둡게 보정해서). 그런데
+ *  도면 선들도 똑같은 보정을 거쳐 전부 비슷한 어두운 색이 되는 바람에, 글씨가
+ *  선 뭉치에 묻혀 안 읽혔다. 오토캐드가 검은 배경에서 글씨만 시안으로 또렷한
+ *  것과 같은 이유로, 여기서도 텍스트는 선과 겹치지 않는 한 가지 색으로 통일한다.
+ *
+ *  앰버를 고른 건 도면에 흔한 빨강/파랑/초록/시안/보라 어디와도 안 겹치면서
+ *  흰 배경과 검은 배경 양쪽에서 대비가 충분해서다. */
+const DXF_TEXT_COLOR_LIGHT = '#b45309'
+const DXF_TEXT_COLOR_DARK = '#fbbf24'
+
 const MIN_TEXT_SCREEN_PX = 1
 
 /** `[data-dxf-h]` 텍스트들의 visibility 를 현재 줌에 맞춰 갱신. 숨긴/보인 개수 반환. */
@@ -541,12 +553,10 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
         />
       )}
       {texts.map((t, i) => {
-        const defaultTextColor = darkMode ? '#bbb' : '#555'
+        // 흑백 모드에서는 색을 쓰지 않기로 한 약속을 지킨다.
         const textColor = grayscale
-          ? defaultTextColor
-          : t.c
-            ? (darkMode ? (isNearBlack(t.c) ? '#bbb' : t.c) : darkenForLightBg(t.c))
-            : defaultTextColor
+          ? (darkMode ? '#bbb' : '#555')
+          : (darkMode ? DXF_TEXT_COLOR_DARK : DXF_TEXT_COLOR_LIGHT)
         // MTEXT attachment point → SVG textAnchor + dominantBaseline
         // 1=TL 2=TC 3=TR 4=ML 5=MC 6=MR 7=BL 8=BC 9=BR
         const ap = t.ap || 1
@@ -710,7 +720,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
               x={t.x}
               y={t.y}
               fontSize={t.h}
-              fill={t.c ? darkenForLightBg(t.c) : '#555'}
+              fill={DXF_TEXT_COLOR_LIGHT}
               fontFamily={fontFamily}
               textAnchor={textAnchor}
               dominantBaseline={baseline}
