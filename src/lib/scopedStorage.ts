@@ -15,7 +15,7 @@ export function getCurrentUserId(): string | null {
 }
 
 /** 유저 스코프된 키 생성 */
-function scopedKey(key: string): string {
+export function scopedKey(key: string): string {
   return _userId ? `u:${_userId}:${key}` : key
 }
 
