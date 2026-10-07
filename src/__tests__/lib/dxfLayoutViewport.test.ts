@@ -17,13 +17,13 @@ function dxf(...pairs: (string | number)[]): string {
   return out.join('\n')
 }
 
-function layoutEntity(name: string, tabOrder: number, opts: { model?: boolean } = {}) {
+function layoutEntity(name: string, tabOrder: number, opts: { psltscale?: boolean } = {}) {
   return dxf(
     0, 'LAYOUT',
     100, 'AcDbPlotSettings',
     100, 'AcDbLayout',
     1, name,
-    70, opts.model ? 1 : 0,
+    70, opts.psltscale ? 1 : 0,   // 모델공간 플래그가 아니다 — PSLTSCALE 이다
     71, tabOrder,
     44, 420,
     45, 297,
@@ -83,7 +83,7 @@ describe('extractLayoutsAndViewports', () => {
   it('Model + 레이아웃 두 개를 탭 순서대로 읽는다', () => {
     const text = buildDxf([
       layoutEntity('배치2', 2),
-      layoutEntity('Model', 0, { model: true }),
+      layoutEntity('Model', 0),
       layoutEntity('배치1', 1),
     ], [])
 
@@ -95,7 +95,7 @@ describe('extractLayoutsAndViewports', () => {
 
   it('실제 뷰포트의 clip 은 model space 중심 ± view 크기', () => {
     const text = buildDxf([
-      layoutEntity('Model', 0, { model: true }),
+      layoutEntity('Model', 0),
       layoutEntity('배치1', 1),
     ], [
       { name: '*Paper_Space', entities: [
@@ -120,7 +120,7 @@ describe('extractLayoutsAndViewports', () => {
   // (0,0)~(420,297) 짜리 종이 상자로 모델을 잘라버렸다 → 페이지가 빈다.
   it('종이공간 의사 뷰포트(ID 1)만 있는 레이아웃은 clip 을 만들지 않는다', () => {
     const text = buildDxf([
-      layoutEntity('Model', 0, { model: true }),
+      layoutEntity('Model', 0),
       layoutEntity('배치1', 1),
     ], [
       { name: '*Paper_Space', entities: [pseudoViewport()] },
@@ -134,7 +134,7 @@ describe('extractLayoutsAndViewports', () => {
   // 전엔 여기서 EXTMIN/EXTMAX(종이 치수)로 clip 을 합성했다.
   it('뷰포트가 아예 없는 레이아웃도 종이 치수로 clip 을 합성하지 않는다', () => {
     const text = buildDxf([
-      layoutEntity('Model', 0, { model: true }),
+      layoutEntity('Model', 0),
       layoutEntity('배치1', 1),
     ], [])
 
@@ -144,7 +144,7 @@ describe('extractLayoutsAndViewports', () => {
 
   it('*Paper_Space / *Paper_Space0 가 탭 순서대로 레이아웃에 매핑된다', () => {
     const text = buildDxf([
-      layoutEntity('Model', 0, { model: true }),
+      layoutEntity('Model', 0),
       layoutEntity('배치1', 1),
       layoutEntity('배치2', 2),
     ], [
@@ -167,7 +167,7 @@ describe('extractLayoutsAndViewports', () => {
   // 어긋나 엉뚱한 페이지에 clip 이 붙는다.
   it('code 70 값이 0 이어도 탭 순서와 종이 크기를 읽는다', () => {
     const text = buildDxf([
-      layoutEntity('Model', 0, { model: true }),
+      layoutEntity('Model', 0),
       layoutEntity('배치1', 1),
       layoutEntity('배치2', 2),
     ], [])
@@ -191,7 +191,7 @@ describe('extractLayoutsAndViewports', () => {
       45, 500,
     ]
     const text = buildDxf([
-      layoutEntity('Model', 0, { model: true }),
+      layoutEntity('Model', 0),
       layoutEntity('배치1', 1),
     ], [
       { name: '*Paper_Space', entities: [dxf(...vpWithStatus)] },
@@ -203,9 +203,66 @@ describe('extractLayoutsAndViewports', () => {
     expect(vps![0].viewHeight).toBe(500)
   })
   it('레이아웃이 Model 하나뿐이면 빈 결과', () => {
-    const text = buildDxf([layoutEntity('Model', 0, { model: true })], [])
+    const text = buildDxf([layoutEntity('Model', 0)], [])
     const { layouts, viewportsByLayout } = extractLayoutsAndViewports(text)
     expect(layouts).toHaveLength(0)
     expect(viewportsByLayout.size).toBe(0)
+  })
+  // ── 모형 탭 판별 ──
+  //
+  // 핵심 회귀: 전엔 code 70 의 비트 1 을 모델공간 플래그로 읽었다. 실제로는
+  // PSLTSCALE 이라서, PSLTSCALE 가 켜진 종이 레이아웃이 모형으로 잡혔다.
+  // 그러면 ImportPanel 이 clip 없이 임포트해서 모델공간 전체가 그 페이지에
+  // 그대로 복사된다 — 오토캐드에서 탭으로 나뉘어 있던 게 페이지마다 똑같이
+  // 다 들어가던 증상이 이거다.
+  it('code 70 비트 1(PSLTSCALE) 이 켜진 종이 레이아웃을 모형으로 보지 않는다', () => {
+    const text = buildDxf([
+      layoutEntity('Model', 0),
+      layoutEntity('배치1', 1, { psltscale: true }),
+      layoutEntity('Layout1', 2, { psltscale: true }),
+    ], [])
+
+    const { layouts } = extractLayoutsAndViewports(text)
+    expect(layouts.map(l => [l.name, l.isModelSpace])).toEqual([
+      ['Model', true],
+      ['배치1', false],
+      ['Layout1', false],
+    ])
+  })
+
+  it("code 70 이 0 이어도 'Model' 은 모형이다", () => {
+    const text = buildDxf([
+      layoutEntity('Model', 0),
+      layoutEntity('배치1', 1),
+    ], [])
+
+    expect(extractLayoutsAndViewports(text).layouts[0].isModelSpace).toBe(true)
+  })
+
+  it("'MODEL' / '모형' 도 모형으로 받는다", () => {
+    for (const name of ['MODEL', '모형', ' model ']) {
+      const text = buildDxf([
+        layoutEntity(name, 0),
+        layoutEntity('배치1', 1),
+      ], [])
+      const { layouts } = extractLayoutsAndViewports(text)
+      expect(layouts.find(l => l.name.trim() === name.trim())?.isModelSpace).toBe(true)
+      expect(layouts.find(l => l.name === '배치1')?.isModelSpace).toBe(false)
+    }
+  })
+
+  // 모형이 하나도 없으면 모형 페이지가 아예 안 만들어진다 — 도면이 통째로
+  // 사라지는 쪽이라 전체 복사보다 나쁘다. 탭 순서 맨 앞을 모형으로 본다.
+  it('모형 이름이 하나도 없으면 탭 순서 맨 앞을 모형으로 본다', () => {
+    const text = buildDxf([
+      layoutEntity('배치1', 1),
+      layoutEntity('배치2', 2),
+    ], [])
+
+    const { layouts } = extractLayoutsAndViewports(text)
+    expect(layouts.map(l => [l.name, l.isModelSpace])).toEqual([
+      ['배치1', true],
+      ['배치2', false],
+    ])
   })
 })

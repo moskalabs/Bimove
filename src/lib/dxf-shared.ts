@@ -118,7 +118,8 @@ export function cleanMtextFormatting(text: string): string {
 /** AutoCAD Layout 정의 (OBJECTS 섹션의 LAYOUT 엔티티) */
 export interface DxfLayout {
   name: string           // "Model", "A4", "plan", "elv (01)" 등
-  isModelSpace: boolean  // code 70 flag & 1
+  /** 모형 탭인가. code 70 로는 알 수 없어서 이름으로 가린다 — isModelSpaceLayout() 참고. */
+  isModelSpace: boolean
   tabOrder: number       // code 71
   paperWidth: number     // code 44 (mm)
   paperHeight: number    // code 45 (mm)
@@ -128,6 +129,25 @@ export interface DxfLayout {
   extMinY?: number       // code 24 — paper space limits min Y
   extMaxX?: number       // code 15 — paper space limits max X
   extMaxY?: number       // code 25 — paper space limits max Y
+}
+
+/** 모형(Model) 탭인지 레이아웃 이름으로 판별한다.
+ *
+ *  전엔 `((code70 ?? 0) & 1) !== 0` 으로 봤는데, LAYOUT 의 code 70 은
+ *  모델공간 플래그가 아니다 — PSLTSCALE(비트 1) / LIMCHECK(비트 2) 다.
+ *  그래서 PSLTSCALE 가 켜진 종이 레이아웃이 모형으로 잡혔고, 뷰포트 clip
+ *  없이 모델공간 전체가 그 페이지에 그대로 복사됐다. 오토캐드에서 탭으로
+ *  나뉘어 있던 도면이 페이지마다 똑같이 다 들어가던 원인이다.
+ *
+ *  DXF 는 모형 레이아웃 이름을 'Model' 로 고정해서 쓴다 (한글판에서 탭이
+ *  '모형' 으로 보이는 건 화면 표시용이다). 손으로 고친 파일이나 다른 CAD
+ *  가 내보낸 것까지 감안해서 '모형' 도 같이 받는다.
+ *
+ *  정석은 code 330 으로 BLOCK_RECORD 를 따라가 *Model_Space 인지 보는
+ *  것이지만, 그러려면 핸들 테이블을 다 들고 있어야 한다. */
+export function isModelSpaceLayout(name: string): boolean {
+  const n = name.trim().toLowerCase()
+  return n === 'model' || n === '모형'
 }
 
 /** VIEWPORT의 Model Space 클리핑 영역 */

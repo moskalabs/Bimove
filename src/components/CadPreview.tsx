@@ -5,7 +5,7 @@
  * 기존 bimove UI 스타일(cad-layer-*)에 맞춤.
  */
 import { useEffect, useState, useMemo, useCallback } from 'react'
-import { aciToHex as aciToHexFull, detectPadding, makeGcFormatter, STRUCTURAL_KEYWORDS, type DxfLayout, type DxfViewport, type ViewportClip } from '../lib/dxf-shared'
+import { aciToHex as aciToHexFull, detectPadding, isModelSpaceLayout, makeGcFormatter, STRUCTURAL_KEYWORDS, type DxfLayout, type DxfViewport, type ViewportClip } from '../lib/dxf-shared'
 
 /** 기본 제외 레이어: viewport/paperspace 계열만 제외.
  * DEFPOINTS, TB-* 등은 실무에서 유용한 내용(라벨, 격자선)이
@@ -494,7 +494,7 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
 
         layouts.push({
           name,
-          isModelSpace: ((num(70) ?? 0) & 1) !== 0,
+          isModelSpace: isModelSpaceLayout(name),
           tabOrder: num(71) ?? 0,
           paperWidth: num(44) ?? 0,
           paperHeight: num(45) ?? 0,
@@ -509,6 +509,14 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
     return { layouts: [], viewportsByLayout: new Map() }
   }
   layouts.sort((a, b) => a.tabOrder - b.tabOrder)
+
+  // 이름으로 모형 탭을 못 찾았으면 탭 순서가 가장 앞인 걸 모형으로 본다.
+  // 하나도 모형이 아니면 모형 페이지가 아예 안 만들어지는데, 그건 전체를
+  // 복사하는 것보다 나쁘다 (도면이 통째로 사라진다).
+  if (!layouts.some(l => l.isModelSpace)) {
+    console.warn(`[CadPreview] 이름으로 모형 탭을 못 찾음 → "${layouts[0].name}" 을 모형으로 본다`)
+    layouts[0].isModelSpace = true
+  }
 
   // ── 2. BLOCKS 섹션에서 *Paper_Space 블록 내 VIEWPORT 파싱 ──
   const viewportsByLayout = new Map<string, DxfViewport[]>()
