@@ -4,6 +4,8 @@
  */
 import { useEffect, useMemo, useState, memo } from 'react'
 import {
+  Edge2d,
+  Group2d,
   Polygon2d,
   ShapeUtil,
   SVGContainer,
@@ -626,6 +628,53 @@ export function distPointToSeg(px: number, py: number, ax: number, ay: number, b
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy))
 }
 
+/** pathData 를 세그먼트 배열로 되돌린다.
+ *
+ * 생성 쪽(dxf.ts)이 `M x,y L x,y` 를 세그먼트마다 하나씩 이어 붙인 형태로만
+ * 쓰기 때문에 정규식 한 줄로 충분하다. 곡선·상대좌표는 나오지 않는다. */
+function parseSegPath(d: string): [number, number, number, number][] {
+  if (!d) return []
+  const out: [number, number, number, number][] = []
+  const re = /M(-?[\d.]+),(-?[\d.]+)L(-?[\d.]+),(-?[\d.]+)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(d)) !== null) {
+    out.push([+m[1], +m[2], +m[3], +m[4]])
+  }
+  return out
+}
+
+/** hatchesJson 을 안전하게 푼다 (깨진 JSON 은 조용히 버린다 — 렌더 쪽과 같은 취급). */
+function parseHatchesJson(json: string): DxfHatchEntry[] {
+  if (!json) return []
+  try {
+    const v: unknown = JSON.parse(json)
+    return Array.isArray(v) ? (v as DxfHatchEntry[]) : []
+  } catch { return [] }
+}
+
+/** 해치 경계 path 를 닫힌 링(점 배열)들로 쪼갠다.
+ *
+ * 생성 쪽이 `M`/`L`/`Z` 만 쓴다. `Z` 또는 다음 `M` 에서 링이 끊긴다. */
+function parseHatchRings(d: string): Vec[][] {
+  if (!d) return []
+  const rings: Vec[][] = []
+  let cur: Vec[] = []
+  const re = /([MLZ])(-?[\d.]+)?,?(-?[\d.]+)?/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(d)) !== null) {
+    const cmd = m[1]
+    if (cmd === 'Z') {
+      if (cur.length) { rings.push(cur); cur = [] }
+      continue
+    }
+    if (m[2] === undefined || m[3] === undefined) continue
+    if (cmd === 'M' && cur.length) { rings.push(cur); cur = [] }
+    cur.push(new Vec(+m[2], +m[3]))
+  }
+  if (cur.length) rings.push(cur)
+  return rings
+}
+
 export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
   static override type = 'dxfgroup' as const
 
@@ -643,30 +692,71 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
     return { w: 100, h: 100, pathData: '', thickness: 2, segCount: 0, textsJson: '', hatchesJson: '' }
   }
 
+  /** 클릭 판정은 **실제 선** 으로 한다.
+   *
+   * 예전엔 바운딩박스를 채운 Polygon2d 였다. 그러면 (1) 도형이 없는 빈 속을
+   * 눌러도 잡히고 (2) 큰 그룹의 박스가 그 안에 있는 작은 가구를 덮어서 위에
+   * 있는 걸 못 고른다. 쪼개기를 고쳐도 "엉뚱한 게 잡힌다" 는 체감이 남는
+   * 이유가 이쪽이었다.
+   *
+   * 해치(채움)는 속까지 눌러야 하므로 채워진 폴리곤으로 넣는다.
+   * 세그먼트도 해치도 없는 그룹(텍스트만 있는 라벨)은 박스를 그대로 쓴다 —
+   * 글자를 누를 면적이 그것밖에 없다. */
   getGeometry(shape: DxfGroupShape) {
-    return new Polygon2d({
-      points: [
-        new Vec(0, 0),
-        new Vec(shape.props.w, 0),
-        new Vec(shape.props.w, shape.props.h),
-        new Vec(0, shape.props.h),
-      ],
-      isFilled: true,
-    })
+    const parts: (Edge2d | Polygon2d)[] = []
+
+    for (const [x1, y1, x2, y2] of parseSegPath(shape.props.pathData)) {
+      parts.push(new Edge2d({ start: new Vec(x1, y1), end: new Vec(x2, y2) }))
+    }
+
+    for (const h of parseHatchesJson(shape.props.hatchesJson)) {
+      for (const ring of parseHatchRings(h.d)) {
+        if (ring.length >= 3) parts.push(new Polygon2d({ points: ring, isFilled: true }))
+      }
+    }
+
+    if (parts.length === 0) {
+      return new Polygon2d({
+        points: [
+          new Vec(0, 0),
+          new Vec(shape.props.w, 0),
+          new Vec(shape.props.w, shape.props.h),
+          new Vec(0, shape.props.h),
+        ],
+        isFilled: true,
+      })
+    }
+    return new Group2d({ children: parts })
   }
 
   component(shape: DxfGroupShape) {
     return <DxfGroupComponent shape={shape} />
   }
 
+  /** 선택 표시도 실제 선 위에 올린다.
+   *
+   * 박스를 그리면 선 하나를 골랐을 때도 "도면 한 덩어리가 잡혔다" 로 보인다.
+   * 실제로 잡힌 게 무엇인지 보여주는 게 맞다. 텍스트만 있는 라벨은 그릴 선이
+   * 없으니 박스를 쓴다. */
   indicator(shape: DxfGroupShape) {
+    if (!shape.props.pathData) {
+      return (
+        <rect
+          width={shape.props.w}
+          height={shape.props.h}
+          fill="none"
+          stroke="var(--color-selected)"
+          strokeWidth={1}
+        />
+      )
+    }
     return (
-      <rect
-        width={shape.props.w}
-        height={shape.props.h}
+      <path
+        d={shape.props.pathData}
         fill="none"
         stroke="var(--color-selected)"
         strokeWidth={1}
+        vectorEffect="non-scaling-stroke"
       />
     )
   }
