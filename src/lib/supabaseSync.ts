@@ -312,30 +312,6 @@ export async function renameProject(projectId: string, name: string) {
     .eq('id', projectId)
 }
 
-// ── 재질 프리셋 동기화 ──
-
-import type { MaterialPreset } from './materialPresets'
-
-export async function fetchMaterialPresets(userId: string): Promise<MaterialPreset[] | null> {
-  const { data } = await supabase
-    .from('material_presets')
-    .select('presets')
-    .eq('user_id', userId)
-    .single()
-  if (!data?.presets) return null
-  return data.presets as MaterialPreset[]
-}
-
-export async function syncMaterialPresets(userId: string, presets: MaterialPreset[]): Promise<void> {
-  await supabase
-    .from('material_presets')
-    .upsert({
-      user_id: userId,
-      presets,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id' })
-}
-
 // ── 프로젝트 버전 히스토리 동기화 ──
 //
 // 여기 함수들은 실패를 삼키지 않고 throw 한다 — 호출부(versionSync)가
