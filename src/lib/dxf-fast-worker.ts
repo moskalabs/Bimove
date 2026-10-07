@@ -107,6 +107,9 @@ const ARC_STEP  = 5       // degrees
 const MAX_POLYLINES = 200_000  // 폴리라인 수 제한 (성능 보호)
 const MAX_TEXTS = 20_000       // 텍스트 수 제한 (건축도면 표 포함)
 const MAX_HATCHES = 10_000     // 해치 수 제한 (블록 내부 해치 포함)
+/** 엔티티 하나의 최대 길이(문자). 넘으면 도형이 아니라고 보고 건너뛴다.
+ *  OLE2FRAME 같은 임베디드 바이너리가 20MB 로 들어와 워커를 터뜨린 적이 있다. */
+const MAX_ENTITY_CHARS = 1_000_000
 
 // ===== Geometry helpers =====
 
@@ -1944,12 +1947,26 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
       // ── Skip non-geometry entities that never produce polylines ──
       // OLE2FRAME/OLEFRAME can be 10-20MB+ of hex binary data; parsing them
       // via parseGroupCodes causes 300K+ array entries and potential OOM in web workers.
+      //
+      // LEADER/MULTILEADER 는 여기 있으면 안 된다. 지시선은 **기하 도형이고**
+      // entityToPolyline 이 이미 처리할 줄 안다 (case 'LEADER' / 'MULTILEADER').
+      // OLE2FRAME OOM 을 막는 커밋에서 "비기하 엔티티" 로 같이 묶여 들어가는
+      // 바람에, 주석 글씨는 나오는데 그게 어디를 가리키는지 알려주는 선이
+      // 통째로 사라졌다. 도면에서 지시선이 없으면 주석이 무의미하다.
       if (type === 'OLE2FRAME' || type === 'OLEFRAME' || type === 'IMAGE' ||
           type === 'WIPEOUT' || type === 'VIEWPORT' || type === 'ATTDEF' ||
-          type === 'LEADER' || type === 'MULTILEADER' || type === 'TOLERANCE' ||
+          type === 'TOLERANCE' ||
           type === 'ACAD_PROXY_ENTITY' || type === 'BODY' || type === 'REGION' ||
           type === '3DSOLID' || type === 'SURFACE' || type === 'HELIX' ||
           type === 'LIGHT' || type === 'MESH' || type === 'MLINE') {
+        sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
+      }
+
+      // 위 목록은 "이런 타입이 크더라" 는 경험칙이라, 모르는 타입이 거대한
+      // 바이너리를 들고 오면 그대로 뚫린다 (OLE2FRAME 때 당한 게 그거다).
+      // 타입과 무관하게 덩치로 한 번 더 막는다 — 정상 엔티티는 수 KB 를 넘지
+      // 않으므로 1MB 는 "이건 도형이 아니다" 로 봐도 된다.
+      if (eEnd - eStart > MAX_ENTITY_CHARS) {
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
