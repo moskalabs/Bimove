@@ -572,7 +572,9 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
             (ownerHandle && layoutByBlockRecord.get(ownerHandle)) ||
             blockToLayout.get(blockName) ||
             ''
-          if (blockName.startsWith('*')) {
+          // "*" 로 시작하는 블록에는 치수 블록(*D0, *D1 ... 수백 개)도 섞여 있다.
+          // 전부 찍으면 콘솔이 그걸로 덮여서 정작 볼 줄이 묻힌다.
+          if (/^\*(paper_space|model_space)/i.test(blockName)) {
             console.log(`[CadPreview] BLOCK "${blockName}" owner=${ownerHandle ?? '-'} ` +
               `→ layout "${currentLayoutName || '(매핑 없음)'}"`)
           }
