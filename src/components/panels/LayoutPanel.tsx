@@ -74,11 +74,36 @@ export function LayoutPanel() {
   // 직접 참조하면 선언되기 전의 바인딩을 읽는 셈이라, ref 를 한 번 거친다.
   const refreshRef = useRef<() => void>(() => {})
 
+  // 이미 카메라를 맞춰본 페이지. 두 번째부터는 한이 보던 위치를 그대로 둔다.
+  const focusedPages = useRef<Set<string>>(new Set())
+
+  /** 페이지 내용에 카메라를 맞춘다 (그 페이지를 처음 열 때만).
+   *
+   *  임포트는 페이지마다 zoomToFit 을 setTimeout(300ms) 으로 걸어두는데,
+   *  멀티 레이아웃이면 그 사이에 다음 페이지로 넘어가 버려서 "현재 페이지가
+   *  그대로인가" 검사에 걸려 건너뛴다. 결국 마지막 페이지만 맞춰지고 나머지는
+   *  기본 카메라(원점) 에 남아, 열면 빈 화면처럼 보인다. */
+  const focusPage = useCallback((pageId: string) => {
+    if (!editor || focusedPages.current.has(pageId)) return
+    focusedPages.current.add(pageId)
+    requestAnimationFrame(() => {
+      try { editor.zoomToFit({ animation: { duration: 0 } }) }
+      catch { /* 뷰포트가 아직 없으면 그냥 넘어간다 */ }
+    })
+  }, [editor])
+
   /* ── 현재 페이지 썸네일만 갱신 ── */
   const refreshCurrentThumb = useCallback(async () => {
     if (!editor) return
     const pageId = editor.getCurrentPageId()
     const svgHtml = await generateThumb(editor)
+
+    // generateThumb 는 await 를 탄다. 그 사이에 현재 페이지가 바뀌었으면 지금
+    // 만든 그림은 pageId 의 것이 아니다 — 남의 그림을 그 페이지 칸에 넣는 꼴이다.
+    // 멀티 레이아웃 임포트가 페이지를 연달아 만들 때 실제로 어긋나서, 배치
+    // 썸네일이 엉뚱하거나 거의 빈 그림으로 남았다.
+    if (editor.getCurrentPageId() !== pageId) return
+
     thumbCache.current.set(pageId, svgHtml)
 
     const allPages = editor.getPages()
@@ -132,6 +157,7 @@ export function LayoutPanel() {
         prevPageId = curPageId
         prevShapeCount = curShapeCount
         setCurrentPageId(curPageId)
+        focusPage(curPageId)
         if (!thumbCache.current.has(curPageId)) {
           refreshCurrentThumb()
         } else {
@@ -159,13 +185,14 @@ export function LayoutPanel() {
       if (debounceRef.current) clearTimeout(debounceRef.current)
       if (retryRef.current) clearTimeout(retryRef.current)
     }
-  }, [editor, refreshCurrentThumb, syncPageList])
+  }, [editor, refreshCurrentThumb, syncPageList, focusPage])
 
   const switchPage = (pageId: string) => {
     if (!editor || pageId === currentPageId) return
     generateThumb(editor).then(svg => {
       thumbCache.current.set(currentPageId, svg)
       editor.setCurrentPage(pageId as never)
+      focusPage(pageId)
     })
   }
 

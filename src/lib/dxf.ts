@@ -2784,15 +2784,18 @@ export async function commitCadImportV2(
     }
 
     // zoomToFit (select spread 대신 zoomToFit 사용 — spread 5000개는 V8 성능 문제)
-    // 멀티 레이아웃 임포트 시 다른 페이지로 넘어갈 수 있으므로 현재 페이지 확인
+    //
+    // 전엔 setTimeout(300ms) 으로 걸어두고 "그때도 같은 페이지인가" 를 검사했다.
+    // 멀티 레이아웃 임포트는 그 300ms 안에 다음 페이지를 만들고 넘어가 버려서,
+    // 마지막 페이지 말고는 전부 검사에 걸려 건너뛰었다 — 열어보면 카메라가
+    // 원점에 있어서 빈 화면처럼 보인다. 이제는 await 라서 루프가 기다린다.
     const zoomPageId1 = editor.getCurrentPageId()
-    setTimeout(() => {
-      try {
-        if (editor.getCurrentPageId() === zoomPageId1) {
-          editor.zoomToFit({ animation: { duration: 0 } })
-        }
-      } catch { /* ignore */ }
-    }, 300)
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    try {
+      if (editor.getCurrentPageId() === zoomPageId1) {
+        editor.zoomToFit({ animation: { duration: 0 } })
+      }
+    } catch { /* ignore */ }
 
     const totalMs = ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0).toFixed(0)
     console.log(`[CAD V2] ✅ 완료: ${finalSegs.length}개 seg → ${groupShapes.length}개 shape (${totalMs}ms)`)
