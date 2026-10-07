@@ -70,9 +70,19 @@ export interface LayerInfo {
   transparency?: number    // 0-100 (percent transparent)
 }
 
+/**
+ * 임포트가 **조용히 버린 것들**의 집계 (사유 → 개수).
+ *
+ * 파서는 성능과 안정성을 위해 여러 곳에서 엔티티를 건너뛴다. 그게 전부
+ * 무음이면 "도면 일부가 안 들어왔다" 를 아무도 모른다 — 실제로 레이어 목록이
+ * 앞부분만 보고 만들어지는 바람에 건축 도면이 통째로 빠졌는데, 로그 어디에도
+ * 그 사실이 없어서 한참을 엉뚱한 데서 찾았다.
+ */
+export type SkipReport = Record<string, number>
+
 export type WorkerOut =
   | { type: 'progress'; phase: string; percent: number }
-  | { type: 'result'; polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo> }
+  | { type: 'result'; polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo>; skipped: SkipReport }
   | { type: 'error'; message: string }
 
 // ===== Internal types =====
@@ -1284,6 +1294,12 @@ function precomputeEntity(chunk: string): PrecomputedPoly | null {
 }
 
 /** 글로벌 엔티티 평가 카운터 (INSERT 재귀 폭발 방지) */
+/** 이번 파싱에서 건너뛴 것들. parseDxfFast() 시작 때 비운다. */
+let skipTally: SkipReport = {}
+function noteSkip(reason: string, n = 1): void {
+  skipTally[reason] = (skipTally[reason] ?? 0) + n
+}
+
 let globalEntityEvals = 0
 const MAX_ENTITY_EVALS = 500_000
 
@@ -1339,10 +1355,10 @@ function entityToPolyline(
 
   // DIMENSION: 치수 블록 확장 (블록 내 좌표가 WCS, base point = 0,0)
   if (type === 'DIMENSION') {
-    if (depth >= MAX_DEPTH) return
+    if (depth >= MAX_DEPTH) { noteSkip('블록 중첩 한도 초과'); return }
     const dimBlockName = codes.get(2)?.[0]?.trim() ?? ''
     const dimBlock = blocks.get(dimBlockName)
-    if (!dimBlock) return
+    if (!dimBlock) { noteSkip(`치수 블록 정의 없음: ${dimBlockName}`); return }
 
     // precomputed entities (LINE, ARC 등 — 치수선/연장선)
     for (const pe of dimBlock.precomputed) {
@@ -1371,12 +1387,14 @@ function entityToPolyline(
   }
 
   if (type === 'INSERT') {
-      if (depth >= MAX_DEPTH) return
+      if (depth >= MAX_DEPTH) { noteSkip('블록 중첩 한도 초과'); return }
       const blockName = codes.get(2)?.[0]?.trim() ?? ''
       const block = blocks.get(blockName)
-      if (!block) return
+      // 정의가 없는 블록 = 외부 참조(XREF)가 안 딸려왔거나 변환에서 빠진 것.
+      // 도면이 통째로 비는 가장 흔한 원인인데 여태 무음이었다.
+      if (!block) { noteSkip(`블록 정의 없음(XREF 가능): ${blockName}`); return }
       const totalEnts = block.entityChunks.length + block.precomputed.length
-      if (totalEnts > 2000) return  // 거대 블록 건너뛰기 (성능 보호)
+      if (totalEnts > 2000) { noteSkip(`거대 블록 건너뜀(>2000 엔티티): ${blockName}`); return }
 
       const ix = parseFloat(codes.get(10)?.[0] ?? '0')
       const iy = parseFloat(codes.get(20)?.[0] ?? '0')
@@ -1630,9 +1648,10 @@ function extractTextEntity(
   return { x, y, text, height, rotation, layer, colorNumber: colorNum, attachPt, width: mtextWidth, fontName }
 }
 
-function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo> } {
+function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo>; skipped: SkipReport } {
   const t0 = performance.now()
   globalEntityEvals = 0  // 글로벌 카운터 리셋
+  skipTally = {}
   const layerSet = new Set(selectedLayers)
 
   // 0. \r\n → \n 정규화 (Windows DXF 파일 호환)
@@ -1800,6 +1819,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
       const entityLayer = l8 >= 0 ? valAt(dxfText, l8 + GC8_PAT.length, eEnd) : '0'
 
       if (!layerSet.has(entityLayer)) {  // ← THE KEY OPTIMIZATION
+        noteSkip(`선택 안 된 레이어: ${entityLayer}`)
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
@@ -2045,6 +2065,8 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
           type === 'ACAD_PROXY_ENTITY' || type === 'BODY' || type === 'REGION' ||
           type === '3DSOLID' || type === 'SURFACE' || type === 'HELIX' ||
           type === 'LIGHT' || type === 'MESH' || type === 'MLINE') {
+        // VIEWPORT 는 종이공간 창이라 도형이 아니다 — 리포트에 넣지 않는다.
+        if (type !== 'VIEWPORT') noteSkip(`지원 안 하는 타입: ${type}`)
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
@@ -2053,6 +2075,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
       // 타입과 무관하게 덩치로 한 번 더 막는다 — 정상 엔티티는 수 KB 를 넘지
       // 않으므로 1MB 는 "이건 도형이 아니다" 로 봐도 된다.
       if (eEnd - eStart > MAX_ENTITY_CHARS) {
+        noteSkip(`너무 큰 엔티티(>1MB): ${type}`)
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
@@ -2169,6 +2192,22 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   const elapsed = (performance.now() - t0).toFixed(0)
   console.log(`[fast-worker] 파싱 완료: ${output.length}개 폴리라인, ${texts.length}개 텍스트, ${hatches.length}개 해치, ${errCount}개 에러 (${elapsed}ms)`)
 
+  if (errCount > 0) noteSkip('파싱 에러로 버린 엔티티', errCount)
+  if (output.length >= MAX_POLYLINES) noteSkip(`폴리라인 상한(${MAX_POLYLINES}) 도달 — 이후 도형 버림`)
+  if (texts.length >= MAX_TEXTS) noteSkip(`텍스트 상한(${MAX_TEXTS}) 도달 — 이후 글자 버림`)
+  if (hatches.length >= MAX_HATCHES) noteSkip(`해치 상한(${MAX_HATCHES}) 도달 — 이후 해치 버림`)
+  if (globalEntityEvals > MAX_ENTITY_EVALS) noteSkip(`블록 전개 상한(${MAX_ENTITY_EVALS}) 도달 — 이후 블록 내용 버림`)
+
+  const skipEntries = Object.entries(skipTally).sort((a, b) => b[1] - a[1])
+  if (skipEntries.length > 0) {
+    const total = skipEntries.reduce((sum, [, n]) => sum + n, 0)
+    console.warn(`[fast-worker] 건너뛴 엔티티 ${total}개 (${skipEntries.length}가지 사유):`)
+    for (const [reason, n] of skipEntries.slice(0, 20)) console.warn(`    ${n}개 — ${reason}`)
+    if (skipEntries.length > 20) console.warn(`    ...외 ${skipEntries.length - 20}가지`)
+  } else {
+    console.log('[fast-worker] 건너뛴 엔티티 없음')
+  }
+
   // layerDefs → LayerInfo (worker 결과로 전달)
   const layersOut: Record<string, LayerInfo> = {}
   for (const [name, d] of layerDefs) {
@@ -2180,7 +2219,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
     if (Object.keys(info).length > 0) layersOut[name] = info
   }
 
-  return { polylines: output, insUnits, texts, hatches, linetypes: [...linetypeMap.values()], ltscale, layers: layersOut }
+  return { polylines: output, insUnits, texts, hatches, linetypes: [...linetypeMap.values()], ltscale, layers: layersOut, skipped: skipTally }
 }
 
 // ===== Worker message handler =====
@@ -2202,6 +2241,7 @@ self.onmessage = (e: MessageEvent<ParseRequest>) => {
       linetypes: result.linetypes,
       ltscale: result.ltscale,
       layers: result.layers,
+      skipped: result.skipped,
     })
   } catch (err) {
     post({ type: 'error', message: err instanceof Error ? err.message : String(err) })

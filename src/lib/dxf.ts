@@ -1828,13 +1828,13 @@ export function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
  * - UI 스레드 블로킹 없음 (Worker)
  * - 진행률 콜백 지원
  */
-import type { PolylineData, TextData, HatchData, LinetypeDef, LayerInfo, WorkerOut } from './dxf-fast-worker'
+import type { PolylineData, TextData, HatchData, LinetypeDef, LayerInfo, WorkerOut, SkipReport } from './dxf-fast-worker'
 
 function runFastWorker(
   dxfText: string,
   selectedLayers: string[],
   onProgress?: (msg: string) => void,
-): Promise<{ polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo> }> {
+): Promise<{ polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo>; skipped: SkipReport }> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(
       new URL('./dxf-fast-worker.ts', import.meta.url),
@@ -1861,6 +1861,7 @@ function runFastWorker(
           texts: msg.texts || [], hatches: msg.hatches || [],
           linetypes: msg.linetypes || [], ltscale: msg.ltscale ?? 1,
           layers: msg.layers || {},
+          skipped: msg.skipped || {},
         })
       } else if (msg.type === 'error') {
         clearTimeout(timeout)
@@ -1876,6 +1877,19 @@ function runFastWorker(
 
     worker.postMessage({ type: 'parse', dxfText, selectedLayers })
   })
+}
+
+/**
+ * 가장 최근 임포트에서 **못 가져온 것들**의 집계 (사유 → 개수).
+ *
+ * 파서와 파이프라인은 성능·안정성을 위해 여러 곳에서 도형을 버린다. 그게 전부
+ * 무음이면 "도면 일부가 안 들어왔다" 를 쓰는 사람도 고치는 사람도 모른다.
+ * 임포트가 끝나면 콘솔에 요약을 찍고, UI 에서도 꺼내 볼 수 있게 여기 둔다.
+ */
+let lastImportReport: SkipReport = {}
+
+export function getLastImportReport(): SkipReport {
+  return { ...lastImportReport }
 }
 
 // ── commitCadImportV2 파이프라인 헬퍼 함수들 ──
@@ -2413,6 +2427,7 @@ export async function commitCadImportV2(
   let workerLinetypes: LinetypeDef[]
   let workerLtscale: number
   let workerLayers: Record<string, LayerInfo>
+  let workerSkipped: SkipReport
   try {
     const result = await runFastWorker(dxfText, layerArr, onProgress)
     polylines = result.polylines
@@ -2422,6 +2437,7 @@ export async function commitCadImportV2(
     workerLinetypes = result.linetypes || []
     workerLtscale = result.ltscale ?? 1
     workerLayers = result.layers || {}
+    workerSkipped = result.skipped || {}
   } catch (workerErr) {
     console.error(`[CAD V2] Worker 실패:`, workerErr)
     // 동기 fallback 제거 — 메인 스레드에서 100MB+ 파일 파싱 시 브라우저 완전 멈춤
@@ -2467,7 +2483,13 @@ export async function commitCadImportV2(
   }
 
   onProgress?.('세그먼트 병합 중...')
+  const report: SkipReport = { ...workerSkipped }
+  const noteDrop = (reason: string, n: number) => {
+    if (n > 0) report[reason] = (report[reason] ?? 0) + n
+  }
+
   let finalSegs = filterAndCleanSegments(rawSegsAll)
+  noteDrop('세그먼트 정제(1px 미만·중복·동일선상 병합)', rawSegsAll.length - finalSegs.length)
 
   // 4. 아웃라이어 제거: Viewport 클리핑 또는 IQR fallback
   //
@@ -2500,14 +2522,20 @@ export async function commitCadImportV2(
         `clip=(${effectiveClip.minX.toFixed(0)},${effectiveClip.minY.toFixed(0)})~` +
         `(${effectiveClip.maxX.toFixed(0)},${effectiveClip.maxY.toFixed(0)})`,
       )
+      noteDrop('레이아웃 뷰포트가 도형을 못 잡음 → 모델공간 전체로 대체', 1)
       effectiveClip = null
+      const beforeOut = finalSegs.length
       finalSegs = removeOutlierSegments(finalSegs)
+      noteDrop('본체에서 뚝 떨어진 도형', beforeOut - finalSegs.length)
     } else {
+      noteDrop('레이아웃 뷰포트 밖 도형', beforeVp - clipped.length)
       finalSegs = clipped
     }
   } else {
     // 폴백: IQR 아웃라이어 필터 (레이아웃 없는 파일)
+    const beforeOut = finalSegs.length
     finalSegs = removeOutlierSegments(finalSegs)
+    noteDrop('본체에서 뚝 떨어진 도형', beforeOut - finalSegs.length)
   }
 
   // 5. 최종 bbox.
@@ -2573,9 +2601,22 @@ export async function commitCadImportV2(
   const pxTexts = transformWorkerTexts(workerTexts, textScale, minTextPx)
     .filter(t => t.x >= txLoX && t.x <= txHiX && t.y >= txLoY && t.y <= txHiY)
   console.log(`[CAD V2] ${pxTexts.length}개 텍스트 변환 (${effectiveClip ? 'viewport' : 'bbox'} 필터)`)
+  noteDrop('도면 범위 밖 텍스트', workerTexts.length - pxTexts.length)
   const pxHatches = transformWorkerHatches(workerHatches, textScale)
     .filter(h => h.cx >= txLoX && h.cx <= txHiX && h.cy >= txLoY && h.cy <= txHiY)
   console.log(`[CAD V2] ${pxHatches.length}개 해치 변환`)
+  noteDrop('도면 범위 밖 해치', workerHatches.length - pxHatches.length)
+
+  // 임포트에서 못 가져온 것들을 한 자리에 모아 찍는다.
+  lastImportReport = report
+  const dropEntries = Object.entries(report).sort((a, b) => b[1] - a[1])
+  if (dropEntries.length > 0) {
+    const total = dropEntries.reduce((sum, [, n]) => sum + n, 0)
+    console.warn(`[CAD V2] ⚠ 못 가져온 것 ${total}건 (${dropEntries.length}가지 사유) — 자세히:`)
+    for (const [reason, n] of dropEntries) console.warn(`    ${n}건 — ${reason}`)
+  } else {
+    console.log('[CAD V2] 못 가져온 것 없음')
+  }
 
   // ── 100+ segs: DxfGroup 모드 ──
   if (finalSegs.length >= 100) {

@@ -3,13 +3,34 @@ import { PageRecordType } from 'tldraw'
 import { useEditor } from '../../context/EditorContext'
 import { useToast } from '../../context/ToastContext'
 import { uploadImage } from '../../lib/project'
-import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2 } from '../../lib/dxf'
+import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2, getLastImportReport } from '../../lib/dxf'
 import type { DxfLayout, ViewportClip } from '../../lib/dxf-shared'
 import type { LayoutImportInfo } from '../CadPreview'
 import { lazyWithReload } from '../../lib/lazyWithReload'
 import { importPdf } from '../../lib/pdfImport'
 
 const CadPreview = lazyWithReload(() => import('../CadPreview'))
+
+/**
+ * 임포트에서 못 가져온 것들을 한 줄로 요약한다.
+ *
+ * 전부 무음으로 버리면 쓰는 사람은 "원래 이런 도면인가" 하고 넘어가고, 고치는
+ * 쪽은 어디서 샜는지 찾느라 시간을 버린다. 그래서 가장 큰 사유 두 개를 토스트로
+ * 띄우고, 전체 목록은 콘솔에 남긴다.
+ *
+ * @returns 알릴 게 없으면 null
+ */
+function summarizeImportReport(): string | null {
+  const entries = Object.entries(getLastImportReport())
+    // 정상 동작으로 늘 나오는 것들은 알림까지 띄울 필요가 없다 (콘솔에는 남는다).
+    .filter(([reason]) => !reason.startsWith('세그먼트 정제') && !reason.startsWith('도면 범위 밖'))
+    .sort((a, b) => b[1] - a[1])
+  if (entries.length === 0) return null
+  const total = entries.reduce((sum, [, n]) => sum + n, 0)
+  const top = entries.slice(0, 2).map(([reason, n]) => `${reason} ${n}건`).join(', ')
+  const rest = entries.length > 2 ? ` 외 ${entries.length - 2}가지` : ''
+  return `못 가져온 것 ${total}건 — ${top}${rest}. 자세한 내용은 콘솔(F12)에 있어요.`
+}
 
 interface PreviewData {
   dxfText: string
@@ -172,6 +193,8 @@ export function ImportPanel() {
 
         const fmt = prev.isDwg ? 'DWG' : 'DXF'
         toast(`"${prev.fileName}" ${fmt} 가져옴 (${targets.length}개 레이아웃, ${totalCount.toLocaleString()}개 요소)`, 'success')
+        const missed = summarizeImportReport()
+        if (missed) toast(missed, 'info')
       } else {
         // ── Single-layout import (기존 동작) ──
         const count = await commitCadImportV2(
@@ -187,6 +210,8 @@ export function ImportPanel() {
         } else {
           toast(`"${prev.fileName}" ${fmt} 가져옴 (${count.toLocaleString()}개 요소, ${selectedLayers.size}개 레이어)`, 'success')
         }
+        const missed = summarizeImportReport()
+        if (missed) toast(missed, 'info')
       }
     } catch (err) {
       console.error('[Import] commitCadImportV2 에러:', err)
