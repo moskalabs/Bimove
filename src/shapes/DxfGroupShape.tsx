@@ -397,6 +397,15 @@ export type DxfGroupShape = TLBaseShape<'dxfgroup', DxfGroupShapeProps>
 const DXF_TEXT_COLOR_LIGHT = '#b45309'
 const DXF_TEXT_COLOR_DARK = '#fbbf24'
 
+/** 글자 뒤에 깔아 선을 가리는 마스크 색 — AutoCAD 의 DIMTFILL "배경" 과 같은 역할.
+ *  치수선은 글자 한가운데를 지나가게 그려져 있어서, 마스크 없이는 획 사이로
+ *  선이 비쳐 숫자가 뭉개진다. 라이트는 흰색(캔버스 #f9fafc 와 사실상 동색이고
+ *  흑백 모드의 #ffffff 와도 맞는다), 다크는 캔버스색 그대로. */
+const DXF_TEXT_HALO_LIGHT = '#ffffff'
+const DXF_TEXT_HALO_DARK = '#1e1e22'
+/** 글자 높이 대비 마스크 두께. 획 사이 틈은 메우면서 글자가 뚱뚱해 보이진 않는 선. */
+const DXF_TEXT_HALO_RATIO = 0.22
+
 const MIN_TEXT_SCREEN_PX = 1
 
 /** `[data-dxf-h]` 텍스트들의 visibility 를 현재 줌에 맞춰 갱신. 숨긴/보인 개수 반환. */
@@ -557,6 +566,7 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
         const textColor = grayscale
           ? (darkMode ? '#bbb' : '#555')
           : (darkMode ? DXF_TEXT_COLOR_DARK : DXF_TEXT_COLOR_LIGHT)
+        const haloColor = darkMode ? DXF_TEXT_HALO_DARK : DXF_TEXT_HALO_LIGHT
         // MTEXT attachment point → SVG textAnchor + dominantBaseline
         // 1=TL 2=TC 3=TR 4=ML 5=MC 6=MR 7=BL 8=BC 9=BR
         const ap = t.ap || 1
@@ -572,6 +582,10 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
             fontSize={t.h}
             data-dxf-h={t.h}
             fill={textColor}
+            stroke={haloColor}
+            strokeWidth={t.h * DXF_TEXT_HALO_RATIO}
+            strokeLinejoin="round"
+            style={{ paintOrder: 'stroke' }}
             fontFamily={fontFamily}
             textAnchor={textAnchor}
             dominantBaseline={baseline}
@@ -721,6 +735,10 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
               y={t.y}
               fontSize={t.h}
               fill={DXF_TEXT_COLOR_LIGHT}
+              stroke={DXF_TEXT_HALO_LIGHT}
+              strokeWidth={t.h * DXF_TEXT_HALO_RATIO}
+              strokeLinejoin="round"
+              style={{ paintOrder: 'stroke' }}
               fontFamily={fontFamily}
               textAnchor={textAnchor}
               dominantBaseline={baseline}
