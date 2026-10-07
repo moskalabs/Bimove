@@ -2101,7 +2101,38 @@ function filterAndCleanSegments(rawSegsAll: RawSeg[]): RawSeg[] {
 }
 
 /** 3-pass 아웃라이어 제거 (percentile + IQR) */
+/** 전체 범위가 핵심 범위보다 이 배수 넘게 크면 "멀리 떨어진 쓰레기가 있다" 로 본다. */
+const OUTLIER_SPAN_RATIO = 3
+
+/**
+ * 아웃라이어 패스를 돌릴 가치가 있는지 먼저 본다.
+ *
+ * 이 필터의 목적은 원점이나 1e9 같은 엉뚱한 자리에 박힌 쓰레기 도형을 걷어내는
+ * 것이다. 그런데 판정 기준이 "5~95 퍼센타일 bbox + 패딩" 이라, 쓰레기가 하나도
+ * 없는 도면에서도 가장자리 도형을 잘라낸다. 모델공간에 시트를 여러 장 늘어놓은
+ * 실제 도면에서 리비전 구름의 아래쪽 호들이 통째로 사라졌다 (44212 → 43087).
+ * 글씨는 다른 경로로 걸러져서 살아남는 바람에, 주석만 남고 가리키는 선이 없는
+ * 더 이상한 그림이 됐다.
+ *
+ * 진짜 쓰레기가 섞여 있으면 전체 범위가 핵심 범위보다 **압도적으로** 크다.
+ * 그 정도가 아니면 지울 게 없다는 뜻이므로 패스를 통째로 건너뛴다.
+ */
+function hasFarOutliers(segs: RawSeg[]): boolean {
+  if (segs.length === 0) return false
+  const core = computeBBox(segs, 0.05, 0.95)
+  const full = computeBBox(segs, 0, 1)
+  const coreX = (core.maxX - core.minX) || 1
+  const coreY = (core.maxY - core.minY) || 1
+  return (full.maxX - full.minX) > coreX * OUTLIER_SPAN_RATIO ||
+         (full.maxY - full.minY) > coreY * OUTLIER_SPAN_RATIO
+}
+
 function removeOutlierSegments(segs: RawSeg[]): RawSeg[] {
+  if (!hasFarOutliers(segs)) {
+    console.log(`[CAD V2] 멀리 떨어진 아웃라이어 없음 — 필터 건너뜀 (${segs.length}개 유지)`)
+    return segs
+  }
+
   let finalSegs = segs
 
   // 1차 + 2차: percentile 기반
@@ -2449,20 +2480,41 @@ export async function commitCadImportV2(
   let finalSegs = filterAndCleanSegments(rawSegsAll)
 
   // 4. 아웃라이어 제거: Viewport 클리핑 또는 IQR fallback
-  if (viewportClip) {
+  //
+  // clip 이 통째로 빗나간 게 드러나면 아래에서 null 로 되돌린다. 텍스트/해치
+  // 필터도 같은 판단을 따라야 하므로, 이 아래로는 viewportClip 말고 이걸 쓴다.
+  let effectiveClip = viewportClip
+  if (effectiveClip) {
     // Viewport AABB 클리핑 (정확한 레이아웃 기반)
-    const cMinX = viewportClip.minX * scale
-    const cMinY = -viewportClip.maxY * scale  // Y-flip (DXF Y+ → screen Y-)
-    const cMaxX = viewportClip.maxX * scale
-    const cMaxY = -viewportClip.minY * scale  // Y-flip
+    const cMinX = effectiveClip.minX * scale
+    const cMinY = -effectiveClip.maxY * scale  // Y-flip (DXF Y+ → screen Y-)
+    const cMaxX = effectiveClip.maxX * scale
+    const cMaxY = -effectiveClip.minY * scale  // Y-flip
     const beforeVp = finalSegs.length
-    finalSegs = finalSegs.filter(s => {
+    const clipped = finalSegs.filter(s => {
       const x2 = s.x1 + s.dx, y2 = s.y1 + s.dy
       // 세그먼트 AABB가 viewport와 교차하면 통과
       return Math.max(s.x1, x2) >= cMinX && Math.min(s.x1, x2) <= cMaxX &&
              Math.max(s.y1, y2) >= cMinY && Math.min(s.y1, y2) <= cMaxY
     })
-    console.log(`[CAD V2] Viewport 클리핑: ${beforeVp} → ${finalSegs.length} (${beforeVp - finalSegs.length}개 제거)`)
+    console.log(`[CAD V2] Viewport 클리핑: ${beforeVp} → ${clipped.length} (${beforeVp - clipped.length}개 제거)`)
+
+    if (clipped.length === 0 && beforeVp > 0) {
+      // clip 상자 안에 도형이 **하나도** 없다. 이건 "이 레이아웃은 비었다" 가
+      // 아니라 clip 자체가 틀렸다는 뜻이다 — 좌표계(DCS/WCS)나 단위가 어긋나면
+      // 늘 이 모양이 나온다. 그대로 두면 페이지가 통째로 비고, 사용자 입장에선
+      // 임포트가 깨진 걸로 보인다. clip 을 버리고 IQR 폴백으로 돌아간다.
+      // 모델공간이 통째로 들어오는 게 빈 페이지보다 낫다.
+      console.warn(
+        `[CAD V2] Viewport clip 이 세그먼트를 전부 제거했다 — clip 을 버리고 IQR 폴백으로 간다. ` +
+        `clip=(${effectiveClip.minX.toFixed(0)},${effectiveClip.minY.toFixed(0)})~` +
+        `(${effectiveClip.maxX.toFixed(0)},${effectiveClip.maxY.toFixed(0)})`,
+      )
+      effectiveClip = null
+      finalSegs = removeOutlierSegments(finalSegs)
+    } else {
+      finalSegs = clipped
+    }
   } else {
     // 폴백: IQR 아웃라이어 필터 (레이아웃 없는 파일)
     finalSegs = removeOutlierSegments(finalSegs)
@@ -2515,12 +2567,12 @@ export async function commitCadImportV2(
   // 10-1. 텍스트 + 해치 좌표 변환 (viewport 또는 세그먼트 bbox 기반 필터)
   const textScale = scale * autoScale
   let txLoX: number, txHiX: number, txLoY: number, txHiY: number
-  if (viewportClip) {
+  if (effectiveClip) {
     // Viewport 기반 텍스트/해치 필터 경계 (세그먼트와 동일 좌표계)
-    txLoX = viewportClip.minX * scale * autoScale
-    txLoY = -viewportClip.maxY * scale * autoScale  // Y-flip
-    txHiX = viewportClip.maxX * scale * autoScale
-    txHiY = -viewportClip.minY * scale * autoScale  // Y-flip
+    txLoX = effectiveClip.minX * scale * autoScale
+    txLoY = -effectiveClip.maxY * scale * autoScale  // Y-flip
+    txHiX = effectiveClip.maxX * scale * autoScale
+    txHiY = -effectiveClip.minY * scale * autoScale  // Y-flip
   } else {
     // 폴백: 세그먼트 bbox + 10% 패딩
     const bboxPad = Math.max(maxX - minX, maxY - minY) * 0.1
@@ -2530,7 +2582,7 @@ export async function commitCadImportV2(
   const minTextPx = computeMinTextHeight(Math.max(maxX - minX, maxY - minY))
   const pxTexts = transformWorkerTexts(workerTexts, textScale, minTextPx)
     .filter(t => t.x >= txLoX && t.x <= txHiX && t.y >= txLoY && t.y <= txHiY)
-  console.log(`[CAD V2] ${pxTexts.length}개 텍스트 변환 (${viewportClip ? 'viewport' : 'bbox'} 필터)`)
+  console.log(`[CAD V2] ${pxTexts.length}개 텍스트 변환 (${effectiveClip ? 'viewport' : 'bbox'} 필터)`)
   const pxHatches = transformWorkerHatches(workerHatches, textScale)
     .filter(h => h.cx >= txLoX && h.cx <= txHiX && h.cy >= txLoY && h.cy <= txHiY)
   console.log(`[CAD V2] ${pxHatches.length}개 해치 변환`)

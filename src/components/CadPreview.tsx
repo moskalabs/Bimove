@@ -575,10 +575,18 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
 
         const vpWidth = num(40)      // paper space 폭
         const vpHeight = num(41)     // paper space 높이
-        const centerX = num(12)      // model space view center
-        const centerY = num(22)
         const viewHeight = num(45)   // model space view height
         if (viewHeight <= 0 || vpHeight <= 0) continue
+
+        // 12/22 는 **DCS**(디스플레이 좌표계) 기준 뷰 중심이지 WCS 가 아니다.
+        // DCS 의 원점은 17/27 의 view target 이므로, 모델공간 중심은 둘을 더해야
+        // 나온다. 평면 뷰에서 target 이 0 인 파일은 12/22 가 곧 모델 좌표라
+        // 여태 맞아떨어졌지만, 원점에서 멀리 떨어진 곳에 그린 도면은 오토캐드가
+        // target 에 그 위치를 넣고 12/22 에는 작은 오프셋만 남긴다. 그런 파일에서
+        // target 을 빼먹으면 clip 상자가 원점 근처에 생겨 **도형이 하나도 안 걸리고
+        // 페이지가 통째로 빈다** (실제로 "천정도" 가 44212 → 0 이 됐다).
+        const centerX = num(17) + num(12)
+        const centerY = num(27) + num(22)
 
         const viewWidth = viewHeight * (vpWidth / vpHeight)
         const vp: DxfViewport = {
