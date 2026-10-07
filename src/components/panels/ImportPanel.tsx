@@ -1,9 +1,9 @@
 import { useState, Suspense } from 'react'
-import { PageRecordType } from 'tldraw'
+import { PageRecordType, type TLPageId } from 'tldraw'
 import { useEditor } from '../../context/EditorContext'
 import { useToast } from '../../context/ToastContext'
 import { uploadImage } from '../../lib/project'
-import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2, getLastImportReport } from '../../lib/dxf'
+import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2, getLastImportReport, ViewportClipMissedError } from '../../lib/dxf'
 import type { DxfLayout, ViewportClip } from '../../lib/dxf-shared'
 import type { LayoutImportInfo } from '../CadPreview'
 import { lazyWithReload } from '../../lib/lazyWithReload'
@@ -152,6 +152,9 @@ export function ImportPanel() {
       if (targets.length > 1) {
         // ── Multi-layout import: AutoCAD 탭별 별도 페이지 생성 ──
         let totalCount = 0
+        let importedLayouts = 0
+        // clip 이 도형을 못 잡아서 건너뛴 레이아웃. 조용히 넘기지 않고 알린다.
+        const skipped: string[] = []
         const modelPageId = editor.getCurrentPageId()
 
         for (let i = 0; i < targets.length; i++) {
@@ -159,6 +162,8 @@ export function ImportPanel() {
           // AutoCAD "Model" → 한국어 "모형" 매핑
           const displayName = layout.isModelSpace && layout.name === 'Model' ? '모형' : layout.name
 
+          // 이번 바퀴에서 **새로** 만든 페이지. clip 이 빗나가면 지워야 한다.
+          let createdPageId: TLPageId | null = null
           if (i === 0) {
             // 첫 번째 레이아웃 (보통 Model Space) → 현재 페이지 사용, 이름 변경
             //
@@ -172,17 +177,33 @@ export function ImportPanel() {
             const newPageId = PageRecordType.createId()
             editor.createPage({ name: displayName, id: newPageId })
             editor.setCurrentPage(newPageId)
+            createdPageId = newPageId
           }
 
           setLoading(`"${layout.name}" 임포트 중... (${i + 1}/${targets.length})`)
-          const count = await commitCadImportV2(
-            editor, dxfText, selectedLayers,
-            prev.fileName, prev.fileSize, prev.isDwg,
-            (progress: string) => setLoading(`[${layout.name}] ${progress}`),
-            clip,
-          )
-          totalCount += count
-          console.log(`[Import] Layout "${layout.name}": ${count}개 요소`)
+          try {
+            const count = await commitCadImportV2(
+              editor, dxfText, selectedLayers,
+              prev.fileName, prev.fileSize, prev.isDwg,
+              (progress: string) => setLoading(`[${layout.name}] ${progress}`),
+              clip,
+            )
+            totalCount += count
+            importedLayouts++
+            console.log(`[Import] Layout "${layout.name}": ${count}개 요소`)
+          } catch (err) {
+            // clip 이 도형을 하나도 못 잡았다 = clip 이 틀렸다. 모델공간 전체를
+            // 복사하면 "모형" 페이지의 복제본이 생기니, 페이지를 만들지 않는다.
+            if (!(err instanceof ViewportClipMissedError)) throw err
+            console.warn(`[Import] Layout "${layout.name}": ${err.message} → 페이지 생성 안 함`)
+            skipped.push(layout.name)
+            if (createdPageId) {
+              editor.setCurrentPage(modelPageId)
+              editor.deletePage(createdPageId)
+            }
+            // i === 0 이면 지울 페이지가 없다 (기존 페이지를 재사용한 경우).
+            // 빈 페이지가 남지만, 최소 한 장은 있어야 하므로 그대로 둔다.
+          }
         }
 
         // Model Space 페이지로 복귀
@@ -192,17 +213,37 @@ export function ImportPanel() {
         }, 400)
 
         const fmt = prev.isDwg ? 'DWG' : 'DXF'
-        toast(`"${prev.fileName}" ${fmt} 가져옴 (${targets.length}개 레이아웃, ${totalCount.toLocaleString()}개 요소)`, 'success')
+        toast(`"${prev.fileName}" ${fmt} 가져옴 (${importedLayouts}개 레이아웃, ${totalCount.toLocaleString()}개 요소)`, 'success')
+        if (skipped.length > 0) {
+          toast(
+            `레이아웃 ${skipped.map(n => `"${n}"`).join(', ')} 은(는) 뷰포트가 도형을 못 잡아 건너뛰었습니다. ` +
+            `원본 DWG 의 뷰포트 정보가 변환 과정에서 손실된 경우입니다.`,
+            'info',
+          )
+        }
         const missed = summarizeImportReport()
         if (missed) toast(missed, 'info')
       } else {
         // ── Single-layout import (기존 동작) ──
-        const count = await commitCadImportV2(
-          editor, dxfText, selectedLayers,
-          prev.fileName, prev.fileSize, prev.isDwg,
-          (progress: string) => setLoading(progress),
-          viewportClip,
-        )
+        let count: number
+        try {
+          count = await commitCadImportV2(
+            editor, dxfText, selectedLayers,
+            prev.fileName, prev.fileSize, prev.isDwg,
+            (progress: string) => setLoading(progress),
+            viewportClip,
+          )
+        } catch (err) {
+          if (!(err instanceof ViewportClipMissedError)) throw err
+          // 레이아웃이 하나뿐이라 지울 페이지가 없다. 뭐가 잘못됐는지만 알린다.
+          console.warn(`[Import] ${err.message}`)
+          toast(
+            '레이아웃 뷰포트가 도형을 하나도 못 잡아 가져오지 못했습니다. ' +
+            '원본 DWG 의 뷰포트 정보가 변환 과정에서 손실된 경우입니다.',
+            'error',
+          )
+          return
+        }
 
         const fmt = prev.isDwg ? 'DWG' : 'DXF'
         if (count === 0) {

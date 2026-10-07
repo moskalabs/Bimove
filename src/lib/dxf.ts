@@ -2459,6 +2459,35 @@ export function buildOrphanHatchShapes(
   }]
 }
 
+/** 레이아웃 뷰포트 clip 이 도형을 **하나도** 못 잡았을 때 던진다.
+ *
+ * "이 레이아웃은 비었다" 가 아니라 clip 자체가 틀렸다는 뜻이다 — 좌표계
+ * (DCS/WCS)나 단위가 어긋나면 늘 이 모양이 나온다. 실제로 DWG→DXF 변환에서
+ * 뷰포트 → 모델공간 매핑이 날아가는 파일이 있다 (변환기가 비운
+ * ACAD_XREC_ROUNDTRIP XRECORD, 사라진 UCS 원점 코드 110/120/130).
+ *
+ * 호출자는 이걸 받으면 그 레이아웃의 **페이지를 만들지 말아야 한다.** 예전엔
+ * clip 을 버리고 모델공간 전체를 복사했는데, 오토캐드에서 탭으로 나뉘어 있던
+ * 게 한 페이지에 다 쏟아져서 "모형" 페이지의 복제본이 생겼다. 틀린 페이지를
+ * 만들어 주는 것보다 "이 레이아웃은 못 가져왔다" 를 분명히 말하는 게 낫다.
+ *
+ * 0 을 돌려주지 않고 던지는 이유: 0 은 "선택한 레이어에 도형이 없음" 과
+ * 구분되지 않는다. 그 모호함 때문에 워커 실패가 조용히 빈 페이지로 끝난
+ * 전례가 있다.
+ */
+export class ViewportClipMissedError extends Error {
+  readonly clip: ViewportClip
+  constructor(clip: ViewportClip) {
+    super(
+      `레이아웃 뷰포트가 도형을 하나도 못 잡았습니다 ` +
+      `(clip=(${clip.minX.toFixed(0)},${clip.minY.toFixed(0)})~` +
+      `(${clip.maxX.toFixed(0)},${clip.maxY.toFixed(0)}))`,
+    )
+    this.name = 'ViewportClipMissedError'
+    this.clip = clip
+  }
+}
+
 export async function commitCadImportV2(
   editor: Editor,
   dxfText: string,
@@ -2553,9 +2582,9 @@ export async function commitCadImportV2(
 
   // 4. 아웃라이어 제거: Viewport 클리핑 또는 IQR fallback
   //
-  // clip 이 통째로 빗나간 게 드러나면 아래에서 null 로 되돌린다. 텍스트/해치
-  // 필터도 같은 판단을 따라야 하므로, 이 아래로는 viewportClip 말고 이걸 쓴다.
-  let effectiveClip = viewportClip
+  // 텍스트/해치 필터도 같은 clip 을 따라야 하므로 이 아래로는 이걸 쓴다.
+  // (clip 이 통째로 빗나간 경우엔 되돌리지 않고 던진다 — 아래 참고.)
+  const effectiveClip = viewportClip
   if (effectiveClip) {
     // Viewport AABB 클리핑 (정확한 레이아웃 기반)
     const cMinX = effectiveClip.minX * scale
@@ -2572,25 +2601,22 @@ export async function commitCadImportV2(
     console.log(`[CAD V2] Viewport 클리핑: ${beforeVp} → ${clipped.length} (${beforeVp - clipped.length}개 제거)`)
 
     if (clipped.length === 0 && beforeVp > 0) {
-      // clip 상자 안에 도형이 **하나도** 없다. 이건 "이 레이아웃은 비었다" 가
-      // 아니라 clip 자체가 틀렸다는 뜻이다 — 좌표계(DCS/WCS)나 단위가 어긋나면
-      // 늘 이 모양이 나온다. 그대로 두면 페이지가 통째로 비고, 사용자 입장에선
-      // 임포트가 깨진 걸로 보인다. clip 을 버리고 IQR 폴백으로 돌아간다.
-      // 모델공간이 통째로 들어오는 게 빈 페이지보다 낫다.
+      // clip 상자 안에 도형이 **하나도** 없다 → clip 이 틀렸다. 자세한 사정은
+      // ViewportClipMissedError 주석에 있다. 여기서 아무것도 만들지 않고
+      // 던지면, 호출자가 이 레이아웃의 페이지를 아예 안 만든다.
+      //
+      // 아직 editor 에 shape 을 하나도 만들지 않은 지점이라 던져도 안전하다.
       console.warn(
-        `[CAD V2] Viewport clip 이 세그먼트를 전부 제거했다 — clip 을 버리고 IQR 폴백으로 간다. ` +
+        `[CAD V2] Viewport clip 이 세그먼트를 전부 제거했다 (${beforeVp}개) — ` +
+        `이 레이아웃은 가져오지 않는다. ` +
         `clip=(${effectiveClip.minX.toFixed(0)},${effectiveClip.minY.toFixed(0)})~` +
         `(${effectiveClip.maxX.toFixed(0)},${effectiveClip.maxY.toFixed(0)})`,
       )
-      noteDrop('레이아웃 뷰포트가 도형을 못 잡음 → 모델공간 전체로 대체', 1)
-      effectiveClip = null
-      const beforeOut = finalSegs.length
-      finalSegs = removeOutlierSegments(finalSegs)
-      noteDrop('본체에서 뚝 떨어진 도형', beforeOut - finalSegs.length)
-    } else {
-      noteDrop('레이아웃 뷰포트 밖 도형', beforeVp - clipped.length)
-      finalSegs = clipped
+      noteDrop('레이아웃 뷰포트가 도형을 못 잡음 → 페이지 생성 안 함', beforeVp)
+      throw new ViewportClipMissedError(effectiveClip)
     }
+    noteDrop('레이아웃 뷰포트 밖 도형', beforeVp - clipped.length)
+    finalSegs = clipped
   } else {
     // 폴백: IQR 아웃라이어 필터 (레이아웃 없는 파일)
     const beforeOut = finalSegs.length
