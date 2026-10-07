@@ -367,8 +367,18 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
       document.body.style.cursor = 'grabbing'
     }
 
+    const stopPan = () => {
+      if (!isPanning) return
+      isPanning = false
+      document.body.style.cursor = ''
+    }
+
     const handleMouseMove = (e: MouseEvent) => {
       if (!isPanning) return
+      // 휠 버튼을 창 밖에서 떼면 mouseup 이 안 온다. buttons 의 중간버튼 비트(4)가
+      // 비어 있으면 이미 놓은 것이니 여기서 스스로 풀어준다. 안 그러면 아무 버튼도
+      // 안 눌렀는데 마우스만 움직여도 화면이 계속 끌려간다.
+      if ((e.buttons & 4) === 0) { stopPan(); return }
       e.preventDefault()
       const dx = e.clientX - panStartX
       const dy = e.clientY - panStartY
@@ -387,9 +397,8 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
     }
 
     const handleMouseUp = (e: MouseEvent) => {
-      if (e.button !== 1 || !isPanning) return
-      isPanning = false
-      document.body.style.cursor = ''
+      // button 이 1 이 아니어도(좌클릭 떼기 등) 중간버튼이 이미 빠졌으면 끝낸다.
+      if (e.button === 1 || (e.buttons & 4) === 0) stopPan()
     }
 
     // auxclick 방지 (중간 버튼 기본 동작 차단)
@@ -432,12 +441,15 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
     document.addEventListener('mousemove', handleMouseMove, true)
     document.addEventListener('mouseup', handleMouseUp, true)
     document.addEventListener('auxclick', handleAuxClick, true)
+    // 창 밖으로 포커스가 나가면 mouseup 을 못 받는다 → 팬 상태를 끊는다.
+    window.addEventListener('blur', stopPan)
     return () => {
       document.removeEventListener('wheel', handleWheel, true)
       document.removeEventListener('mousedown', handleMiddleDown, true)
       document.removeEventListener('mousemove', handleMouseMove, true)
       document.removeEventListener('mouseup', handleMouseUp, true)
       document.removeEventListener('auxclick', handleAuxClick, true)
+      window.removeEventListener('blur', stopPan)
       document.body.style.cursor = ''
     }
   }, [editor])
