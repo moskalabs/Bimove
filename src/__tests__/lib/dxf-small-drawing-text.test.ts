@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { commitCadImportV2, unpackTextsJson } from '../../lib/dxf'
 import type { PolylineData, TextData, HatchData } from '../../lib/dxf-fast-worker'
+import { createMockEditor } from '../helpers/mockEditor'
 
 type WorkerResult = {
   polylines: PolylineData[]
@@ -37,24 +38,6 @@ class FakeWorker {
   terminate() { /* noop */ }
 }
 
-function createMockEditor() {
-  const created: unknown[] = []
-  return {
-    getInstanceState: () => ({ meta: { unit: 'mm', pxPerMm: 1 } }),
-    getViewportScreenBounds: () => ({ width: 1200, height: 800 }),
-    createShapes: (shapes: unknown[]) => { created.push(...shapes) },
-    getCurrentPageShapes: () => created,
-    getCamera: () => ({ x: 0, y: 0, z: 1 }),
-    setCamera: vi.fn(),
-    selectAll: vi.fn(),
-    selectNone: vi.fn(),
-    getSelectedShapeIds: () => [],
-    zoomToFit: vi.fn(),
-    zoomToSelection: vi.fn(),
-    select: vi.fn(),
-    _created: () => created,
-  }
-}
 
 /** 10m x 8m 직사각형 = 4 세그먼트 (100개 미만 분기) */
 const RECT: PolylineData[] = [{

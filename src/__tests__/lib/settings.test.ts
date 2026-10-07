@@ -193,11 +193,10 @@ describe('individual snap modes', () => {
 })
 
 describe('wheel behavior', () => {
-  // tldraw 는 ctrl 이 눌리면 wheelBehavior 를 뒤집는다. 터치패드는 두 손가락
-  // 스크롤을 ctrl 없이, 핀치를 ctrlKey: true 로 보내므로 'zoom' 으로 두면
-  // 스크롤=확대 / 핀치=이동 으로 정확히 뒤집힌다 → 기본값은 'pan'.
-  it("기본값은 'pan' (터치패드 기준)", () => {
-    expect(getWheelBehavior()).toBe('pan')
+  // 기본값은 'zoom' — 마우스 휠로 바로 확대/축소 하는 오토캐드 방식.
+  // (터치패드는 App.tsx 가 휠 이벤트를 보고 'pan' 으로 자동 전환한다.)
+  it("기본값은 'zoom' (오토캐드 방식)", () => {
+    expect(getWheelBehavior()).toBe('zoom')
   })
 
   it('설정한 값이 유지된다', () => {
@@ -207,8 +206,9 @@ describe('wheel behavior', () => {
     expect(getWheelBehavior()).toBe('pan')
   })
 
-  it("알 수 없는 값은 'pan' 으로 떨어진다", () => {
+  // 'pan' 만 명시적으로 인정하고 나머지는 기본값으로 떨어뜨린다.
+  it("알 수 없는 값은 'zoom' 으로 떨어진다", () => {
     scopedSet('bimova_wheel_behavior', 'garbage')
-    expect(getWheelBehavior()).toBe('pan')
+    expect(getWheelBehavior()).toBe('zoom')
   })
 })

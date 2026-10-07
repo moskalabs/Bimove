@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest'
 import { commitCadImportV2, unpackTextsJson } from '../../lib/dxf'
+import { createMockEditor } from '../helpers/mockEditor'
 
 // ── 테스트용 DXF 조립 ──
 const gc = (code: number, value: string | number) => `${code}\n${value}\n`
@@ -63,14 +64,11 @@ type Shape = {
 
 /** commitCadImportV2 가 필요로 하는 최소 Editor */
 function fakeEditor(created: Shape[]) {
-  return {
-    getInstanceState: () => ({ meta: {} }),
-    getCamera: () => ({ x: 0, y: 0, z: 1 }),
-    getViewportScreenBounds: () => ({ width: 1920, height: 1080 }),
-    createShapes: (arr: Shape[]) => { created.push(...arr) },
-    selectAll: () => {}, selectNone: () => {},
-    zoomToFit: () => {},
-  } as never
+  return createMockEditor({
+    created,
+    instanceMeta: {},
+    viewport: { width: 1920, height: 1080 },
+  }) as never
 }
 
 /** 임포트 후 모든 shape 에 들어간 텍스트 (문자열, 레이어) */

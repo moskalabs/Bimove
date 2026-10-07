@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { commitCadImportV2, computeMinTextHeight, unpackTextsJson } from '../../lib/dxf'
 import type { PolylineData, TextData } from '../../lib/dxf-fast-worker'
+import { createMockEditor } from '../helpers/mockEditor'
 
 describe('computeMinTextHeight', () => {
   it('span 12000px(자동 축소 상한)이면 1px', () => {
@@ -56,20 +57,6 @@ class FakeWorker {
   terminate() { /* noop */ }
 }
 
-function createMockEditor() {
-  const created: unknown[] = []
-  return {
-    getInstanceState: () => ({ meta: { unit: 'mm', pxPerMm: 1 } }),
-    getViewportScreenBounds: () => ({ width: 1200, height: 800 }),
-    createShapes: (shapes: unknown[]) => { created.push(...shapes) },
-    getCurrentPageShapes: () => created,
-    getCamera: () => ({ x: 0, y: 0, z: 1 }),
-    setCamera: vi.fn(), selectAll: vi.fn(), selectNone: vi.fn(),
-    getSelectedShapeIds: () => [], zoomToFit: vi.fn(),
-    zoomToSelection: vi.fn(), select: vi.fn(),
-    _created: () => created,
-  }
-}
 
 /** 976,000 x 500,000 단위 직사각형 → autoScale ≈ 0.0123 (실제 파일과 같은 규모) */
 const HUGE_RECT: PolylineData[] = [{
