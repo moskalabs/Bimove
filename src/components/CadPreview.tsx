@@ -448,6 +448,9 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
 
   // ── 1. OBJECTS 섹션에서 LAYOUT 파싱 ──
   const layouts: DxfLayout[] = []
+  /** BLOCK_RECORD 핸들 → 레이아웃 이름. LAYOUT 의 code 330 이 그 레이아웃의
+   *  종이공간 BLOCK_RECORD 를 가리킨다 — 이게 진짜 연결고리다. */
+  const layoutByBlockRecord = new Map<string, string>()
   const SEC_OBJECTS = `\n${gc(0)}\nSECTION\n${gc(2)}\nOBJECTS\n`
   const ENDSEC = `\n${gc(0)}\nENDSEC`
   const objIdx = dxfText.indexOf(SEC_OBJECTS)
@@ -491,6 +494,9 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
           const v = parseFloat(raw)
           return isFinite(v) ? v : undefined
         }
+
+        const blockRecord = vals.get(330)?.trim()
+        if (blockRecord && !isModelSpaceLayout(name)) layoutByBlockRecord.set(blockRecord, name)
 
         layouts.push({
           name,
@@ -558,11 +564,17 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
 
         if (type === 'BLOCK') {
           const blockName = vals.get(2)?.trim() ?? ''
-          currentLayoutName = blockToLayout.get(blockName) || ''
-          // 종이공간 블록은 전부 찍는다. 이름↔레이아웃 매핑이 어긋나면
-          // 뷰포트를 통째로 못 찾아 페이지가 안 만들어진다 ("평면도" 가 그랬다).
+          // 핸들(330 = 소유 BLOCK_RECORD)로 먼저 맞춘다. 이름 규칙은 폴백이다 —
+          // "*Paper_Space" 는 탭 순서 1번이 아니라 **저장 당시 활성 탭**의
+          // 블록이라, 탭 순서로 추측하면 레이아웃이 통째로 어긋난다.
+          const ownerHandle = vals.get(330)?.trim()
+          currentLayoutName =
+            (ownerHandle && layoutByBlockRecord.get(ownerHandle)) ||
+            blockToLayout.get(blockName) ||
+            ''
           if (blockName.startsWith('*')) {
-            console.log(`[CadPreview] BLOCK "${blockName}" → layout "${currentLayoutName || '(매핑 없음)'}"`)
+            console.log(`[CadPreview] BLOCK "${blockName}" owner=${ownerHandle ?? '-'} ` +
+              `→ layout "${currentLayoutName || '(매핑 없음)'}"`)
           }
           continue
         }
@@ -619,6 +631,11 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
           clipMaxY: centerY + viewHeight / 2,
         }
 
+        // clip 위치가 도형과 안 맞는 파일이 있다. 어떤 코드를 빠뜨렸는지
+        // 추측하지 말고 통째로 찍는다 — 레이아웃당 진짜 뷰포트는 몇 개뿐이다.
+        console.log(`[CadPreview] VIEWPORT "${currentLayoutName}" 전체 코드:`,
+          [...vals.entries()].sort((a, b) => a[0] - b[0])
+            .map(([c, v]) => `${c}=${v.trim()}`).join(' '))
         console.log(`[CadPreview] VIEWPORT "${currentLayoutName}": ` +
           `id=${num(69)} paper=(${num(10).toFixed(0)},${num(20).toFixed(0)}) ${vpWidth.toFixed(0)}x${vpHeight.toFixed(0)} ` +
           `view=(${num(12).toFixed(0)},${num(22).toFixed(0)}) target=(${num(17).toFixed(0)},${num(27).toFixed(0)}) h=${viewHeight.toFixed(0)} ` +
