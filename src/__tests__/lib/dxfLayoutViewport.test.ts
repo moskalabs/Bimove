@@ -17,7 +17,11 @@ function dxf(...pairs: (string | number)[]): string {
   return out.join('\n')
 }
 
-function layoutEntity(name: string, tabOrder: number, opts: { psltscale?: boolean } = {}) {
+function layoutEntity(
+  name: string,
+  tabOrder: number,
+  opts: { psltscale?: boolean; blockRecord?: string } = {},
+) {
   return dxf(
     0, 'LAYOUT',
     100, 'AcDbPlotSettings',
@@ -29,6 +33,9 @@ function layoutEntity(name: string, tabOrder: number, opts: { psltscale?: boolea
     45, 297,
     // 종이공간 limits — 모델 좌표가 아니다. clip 으로 새면 안 된다.
     14, 0, 24, 0, 15, 420, 25, 297,
+    // 330 = 이 레이아웃의 BLOCK_RECORD 핸들. ENTITIES 섹션의 뷰포트는
+    // 이 핸들로 소유 레이아웃을 찾는다.
+    ...(opts.blockRecord ? [330, opts.blockRecord] : []),
   )
 }
 
@@ -55,7 +62,11 @@ function realViewport(v: {
   )
 }
 
-function buildDxf(layouts: string[], blocks: { name: string; entities: string[] }[]) {
+function buildDxf(
+  layouts: string[],
+  blocks: { name: string; entities: string[] }[],
+  entities: string[] = [],
+) {
   const blockBodies = blocks.map(b => [
     dxf(0, 'BLOCK', 2, b.name),
     ...b.entities,
@@ -71,6 +82,9 @@ function buildDxf(layouts: string[], blocks: { name: string; entities: string[] 
     dxf(0, 'ENDSEC'),
     dxf(0, 'SECTION', 2, 'BLOCKS'),
     ...blockBodies,
+    dxf(0, 'ENDSEC'),
+    dxf(0, 'SECTION', 2, 'ENTITIES'),
+    ...entities,
     dxf(0, 'ENDSEC'),
     dxf(0, 'SECTION', 2, 'OBJECTS'),
     ...layouts,
@@ -264,6 +278,144 @@ describe('extractLayoutsAndViewports', () => {
       ['배치1', true],
       ['배치2', false],
     ])
+  })
+})
+
+// ── ENTITIES 섹션의 종이공간 뷰포트 ──
+//
+// 실제 파일에서 터진 버그: 레이아웃 "평면도" 가 페이지로 안 만들어졌다.
+// `*Paper_Space→평면도` 매핑은 맞는데 그 블록 정의 안엔 VIEWPORT 가 0개였다.
+// DXF 는 **저장 당시 활성 레이아웃**의 종이공간 엔티티를 BLOCKS 가 아니라
+// ENTITIES 섹션에 (67=1 로) 쓰기 때문이다. BLOCKS 만 뒤지면 활성 레이아웃은
+// 항상 "뷰포트 없음" 이 된다.
+describe('ENTITIES 섹션 VIEWPORT', () => {
+  /** ENTITIES 섹션에 놓는 종이공간 뷰포트. 67=1 + 330(소유 BLOCK_RECORD) */
+  function paperSpaceEntityVp(v: {
+    owner?: string; id?: number; cx: number; cy: number
+    w: number; h: number; viewH: number; paperFlag?: number
+  }) {
+    return dxf(
+      0, 'VIEWPORT',
+      10, 210, 20, 148.5,
+      40, v.w, 41, v.h,
+      12, v.cx, 22, v.cy,
+      17, 0, 27, 0,
+      45, v.viewH,
+      67, v.paperFlag ?? 1,
+      69, v.id ?? 0,
+      ...(v.owner ? [330, v.owner] : []),
+    )
+  }
+
+  it('330 으로 소유 레이아웃을 찾아 clip 을 만든다', () => {
+    const text = buildDxf(
+      [
+        layoutEntity('Model', 0),
+        layoutEntity('평면도', 1, { blockRecord: 'D2' }),
+        layoutEntity('천정도', 2, { blockRecord: 'D6' }),
+      ],
+      // 활성 레이아웃(평면도)의 블록 정의는 비어 있다 — 실제 파일이 이랬다.
+      [{ name: '*Paper_Space', entities: [] }],
+      [paperSpaceEntityVp({ owner: 'D2', cx: 50000, cy: 30000, w: 200, h: 100, viewH: 4000 })],
+    )
+
+    const { viewportsByLayout } = extractLayoutsAndViewports(text)
+    const vps = viewportsByLayout.get('평면도') ?? []
+    expect(vps).toHaveLength(1)
+    expect(vps[0].viewWidth).toBe(8000)      // 4000 * (200/100)
+    expect(vps[0].clipMinX).toBe(46000)
+    expect(vps[0].clipMaxY).toBe(32000)
+    // 남의 레이아웃에 새지 않는다
+    expect(viewportsByLayout.get('천정도') ?? []).toHaveLength(0)
+  })
+
+  // 67 이 없는 VIEWPORT 는 모형공간 활성 뷰 설정 레코드다. 레이아웃의 창이
+  // 아니니 clip 으로 쓰면 도면이 엉뚱하게 잘린다.
+  it('67(종이공간 플래그) 이 없는 VIEWPORT 는 무시한다', () => {
+    const text = buildDxf(
+      [layoutEntity('Model', 0), layoutEntity('평면도', 1, { blockRecord: 'D2' })],
+      [],
+      [paperSpaceEntityVp({
+        owner: 'D2', cx: 50000, cy: 30000, w: 200, h: 100, viewH: 4000, paperFlag: 0,
+      })],
+    )
+
+    expect(extractLayoutsAndViewports(text).viewportsByLayout.size).toBe(0)
+  })
+
+  // 330 은 DXF 버전/변환기에 따라 빠질 수 있다. 그때는 이름 규칙으로
+  // 폴백한다 — *Paper_Space 가 (탭 순서가 아니라) 활성 레이아웃의 블록이다.
+  it('330 이 없으면 *Paper_Space 레이아웃으로 폴백한다', () => {
+    const text = buildDxf(
+      [layoutEntity('Model', 0), layoutEntity('평면도', 1), layoutEntity('천정도', 2)],
+      [],
+      [paperSpaceEntityVp({ cx: 1000, cy: 2000, w: 200, h: 100, viewH: 4000 })],
+    )
+
+    const { viewportsByLayout } = extractLayoutsAndViewports(text)
+    expect(viewportsByLayout.get('평면도')?.[0].centerX).toBe(1000)
+    expect(viewportsByLayout.get('천정도') ?? []).toHaveLength(0)
+  })
+
+  // 의사 뷰포트 판별이 "그 레이아웃의 첫 번째" 를 쓴다. 활성 레이아웃은
+  // 블록이 비어 있어 둘 다 ENTITIES 에서 나오므로, 순번 카운터가 두 스캔에
+  // 걸쳐 이어지지 않으면 첫 뷰포트만 보고 둘 다 버리거나 둘 다 살린다.
+  it('ENTITIES 안에서도 첫 뷰포트만 의사로 버린다', () => {
+    const text = buildDxf(
+      [layoutEntity('Model', 0), layoutEntity('평면도', 1, { blockRecord: 'D2' })],
+      [],
+      [
+        // 45 ≈ 41 + target 원점 → 의사
+        paperSpaceEntityVp({ owner: 'D2', cx: 210, cy: 148.5, w: 420, h: 297, viewH: 297 }),
+        paperSpaceEntityVp({ owner: 'D2', cx: 50000, cy: 30000, w: 200, h: 100, viewH: 4000 }),
+      ],
+    )
+
+    const vps = extractLayoutsAndViewports(text).viewportsByLayout.get('평면도') ?? []
+    expect(vps).toHaveLength(1)
+    expect(vps[0].centerX).toBe(50000)
+  })
+
+  // 블록 안 의사 뷰포트가 1번을 먹었으면 ENTITIES 의 것은 2번째다.
+  it('블록 스캔과 뷰포트 순번을 공유한다', () => {
+    const text = buildDxf(
+      [layoutEntity('Model', 0), layoutEntity('평면도', 1, { blockRecord: 'D2' })],
+      [{ name: '*Paper_Space', entities: [pseudoViewport()] }],
+      // 1:1 축척 + target 원점 — 기하 조건만 보면 의사와 똑같다.
+      // 순번이 2번째라서 살아남아야 한다.
+      [paperSpaceEntityVp({ owner: 'D2', cx: 100, cy: 60, w: 180, h: 120, viewH: 120 })],
+    )
+
+    const vps = extractLayoutsAndViewports(text).viewportsByLayout.get('평면도') ?? []
+    expect(vps).toHaveLength(1)
+    expect(vps[0].clipMinX).toBeCloseTo(10, 3)
+  })
+
+  // 회귀: 본문을 줄바꿈+"0"+줄바꿈 으로 자르면 code 68(status) 값이 0 일 때
+  // 엔티티가 거기서 끊겨 뒤의 45/67/330 을 못 읽는다 → 뷰포트가 사라진다.
+  // 실제 파일의 VIEWPORT 가 `68=0` 을 갖고 있다.
+  it('code 68 이 0 이어도 뒤쪽 45/67/330 을 읽는다', () => {
+    const text = buildDxf(
+      [layoutEntity('Model', 0), layoutEntity('평면도', 1, { blockRecord: 'D2' })],
+      [],
+      [dxf(
+        0, 'VIEWPORT',
+        10, 210, 20, 148.5,
+        40, 200, 41, 100,
+        68, 0,
+        12, 7000, 22, 8000,
+        17, 0, 27, 0,
+        45, 4000,
+        67, 1,
+        69, 0,
+        330, 'D2',
+      )],
+    )
+
+    const vps = extractLayoutsAndViewports(text).viewportsByLayout.get('평면도') ?? []
+    expect(vps).toHaveLength(1)
+    expect(vps[0].centerX).toBe(7000)
+    expect(vps[0].viewHeight).toBe(4000)
   })
 })
 

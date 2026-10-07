@@ -458,6 +458,94 @@ function aciToHex(aci: number): string {
 }
 
 /**
+ * VIEWPORT 엔티티 하나를 모델공간 clip 상자로 해석한다. 쓸 수 없으면 null.
+ *
+ * BLOCKS 의 레이아웃 블록 안과 ENTITIES 섹션 양쪽에 같은 형식으로 나오므로
+ * 둘이 공유한다. `vpIndex` 는 **그 레이아웃에서 몇 번째** VIEWPORT 인지(1-based),
+ * `where` 는 로그에 찍을 출처다.
+ */
+function parseViewportEntity(
+  vals: Map<number, string>,
+  layoutName: string,
+  vpIndex: number,
+  where: string,
+): DxfViewport | null {
+  const num = (code: number): number => {
+    const v = parseFloat(vals.get(code) ?? '')
+    return isFinite(v) ? v : 0
+  }
+
+  const vpWidth = num(40)      // paper space 폭
+  const vpHeight = num(41)     // paper space 높이
+  const viewHeight = num(45)   // model space view height
+  if (viewHeight <= 0 || vpHeight <= 0) {
+    console.warn(`[CadPreview] VIEWPORT "${layoutName}": 크기를 못 읽어 버림 ` +
+      `(41=${vpHeight}, 45=${viewHeight}) — 코드: ` +
+      [...vals.entries()].sort((a, b) => a[0] - b[0])
+        .map(([c, v]) => `${c}=${v.trim()}`).join(' '))
+    return null
+  }
+
+  // 오토캐드는 레이아웃마다 "종이 자신"을 가리키는 의사 뷰포트를 하나
+  // 넣는다. 이건 도면을 비추는 창이 아니라서, 여기의 12/22/45 를 모델공간
+  // clip 으로 쓰면 엉뚱한 상자가 나오고 union 에 섞이면 clip 전체가 망가진다.
+  //
+  // 원래는 group code 69(뷰포트 ID) == 1 로만 걸렀는데, DWG→DXF 변환기가
+  // 69 를 0 으로 쓰는 파일이 있다 (실제 로그: `id=0 ... h=624`). 그래서
+  // 구조로도 본다 — 의사 뷰포트는 **모델을 1:1 로 비춘다**. 즉 모델공간
+  // view height(45) 가 종이 높이(41) 와 같고 view target(17/27) 이 원점이다.
+  // 진짜 뷰포트는 축척이 걸려 있어 둘이 크게 다르다 (이 파일은 292 vs 29173).
+  //
+  // 기하 조건만으로는 **1:1 축척으로 원점 근처를 비추는 정상 뷰포트**도
+  // 같이 죽는다 (상세도를 원점에 그린 도면). 그래서 "레이아웃의 첫 번째" 를
+  // AND 로 묶었다 — DXF 는 레이아웃의 첫 VIEWPORT 를 종이 의사 뷰포트로 쓴다.
+  const isPaperPseudoVp =
+    num(69) === 1 ||
+    (vpIndex === 1 &&
+     Math.abs(viewHeight - vpHeight) < vpHeight * 0.01 &&
+     num(17) === 0 && num(27) === 0)
+  if (isPaperPseudoVp) {
+    console.log(`[CadPreview] VIEWPORT "${layoutName}": 종이 의사 뷰포트로 보고 건너뜀 ` +
+      `(${where} ${vpIndex}번째, id=${num(69)}, 41=${vpHeight.toFixed(0)}, 45=${viewHeight.toFixed(0)})`)
+    return null
+  }
+
+  // 12/22 는 **DCS**(디스플레이 좌표계) 기준 뷰 중심이지 WCS 가 아니다.
+  // DCS 의 원점은 17/27 의 view target 이므로, 모델공간 중심은 둘을 더해야
+  // 나온다. 평면 뷰에서 target 이 0 인 파일은 12/22 가 곧 모델 좌표라
+  // 여태 맞아떨어졌지만, 원점에서 멀리 떨어진 곳에 그린 도면은 오토캐드가
+  // target 에 그 위치를 넣고 12/22 에는 작은 오프셋만 남긴다. 그런 파일에서
+  // target 을 빼먹으면 clip 상자가 원점 근처에 생겨 **도형이 하나도 안 걸리고
+  // 페이지가 통째로 빈다** (실제로 "천정도" 가 44212 → 0 이 됐다).
+  const centerX = num(17) + num(12)
+  const centerY = num(27) + num(22)
+
+  const viewWidth = viewHeight * (vpWidth / vpHeight)
+  const vp: DxfViewport = {
+    layoutName,
+    centerX, centerY,
+    viewWidth, viewHeight,
+    clipMinX: centerX - viewWidth / 2,
+    clipMinY: centerY - viewHeight / 2,
+    clipMaxX: centerX + viewWidth / 2,
+    clipMaxY: centerY + viewHeight / 2,
+  }
+
+  // clip 위치가 도형과 안 맞는 파일이 있다. 어떤 코드를 빠뜨렸는지
+  // 추측하지 말고 통째로 찍는다 — 레이아웃당 진짜 뷰포트는 몇 개뿐이다.
+  console.log(`[CadPreview] VIEWPORT "${layoutName}" 전체 코드:`,
+    [...vals.entries()].sort((a, b) => a[0] - b[0])
+      .map(([c, v]) => `${c}=${v.trim()}`).join(' '))
+  console.log(`[CadPreview] VIEWPORT "${layoutName}" (${where} ${vpIndex}번째): ` +
+    `id=${num(69)} paper=(${num(10).toFixed(0)},${num(20).toFixed(0)}) ${vpWidth.toFixed(0)}x${vpHeight.toFixed(0)} ` +
+    `view=(${num(12).toFixed(0)},${num(22).toFixed(0)}) target=(${num(17).toFixed(0)},${num(27).toFixed(0)}) h=${viewHeight.toFixed(0)} ` +
+    `dir=(${num(16).toFixed(2)},${num(26).toFixed(2)},${num(36).toFixed(2)}) ucs=(${num(110).toFixed(0)},${num(120).toFixed(0)}) ` +
+    `→ clip (${vp.clipMinX.toFixed(0)},${vp.clipMinY.toFixed(0)})~(${vp.clipMaxX.toFixed(0)},${vp.clipMaxY.toFixed(0)})`)
+
+  return vp
+}
+
+/**
  * DXF에서 Layout + Viewport 정보 경량 추출.
  * OBJECTS 섹션의 LAYOUT 엔티티 + BLOCKS 섹션의 *Paper_Space 내 VIEWPORT 엔티티.
  */
@@ -551,36 +639,54 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
     layouts[0].isModelSpace = true
   }
 
-  // ── 2. BLOCKS 섹션에서 *Paper_Space 블록 내 VIEWPORT 파싱 ──
+  // ── 2. VIEWPORT 파싱 ──
   const viewportsByLayout = new Map<string, DxfViewport[]>()
   /** 레이아웃별로 VIEWPORT 엔티티를 **몇 개 봤는지**. 아래의 `continue` 들이
    *  조용히 버리면 "뷰포트 없음" 과 구분이 안 돼서, 본 개수를 따로 센다. */
   const vpSeen = new Map<string, number>()
+  /** 레이아웃별 VIEWPORT 순번(1-based). 의사 뷰포트 판별이 "첫 번째" 를 쓰는데,
+   *  활성 레이아웃은 BLOCKS 가 아니라 ENTITIES 에 들어 있어서 두 스캔이 같은
+   *  카운터를 공유해야 한다. */
+  const vpIndexByLayout = new Map<string, number>()
+  const bumpVpIndex = (layoutName: string): number => {
+    const n = (vpIndexByLayout.get(layoutName) ?? 0) + 1
+    vpIndexByLayout.set(layoutName, n)
+    return n
+  }
+  const pushVp = (layoutName: string, vp: DxfViewport) => {
+    let arr = viewportsByLayout.get(layoutName)
+    if (!arr) { arr = []; viewportsByLayout.set(layoutName, arr) }
+    arr.push(vp)
+  }
+
+  // *Paper_Space → 첫 번째 paper layout, *Paper_Space0 → 두 번째... (DXF 표준)
+  // 이름 규칙은 폴백이다 — 진짜 연결고리는 핸들(330)이다.
+  const paperLayouts = layouts.filter(l => !l.isModelSpace).sort((a, b) => a.tabOrder - b.tabOrder)
+  const blockToLayout = new Map<string, string>()
+  if (paperLayouts.length > 0) {
+    blockToLayout.set('*Paper_Space', paperLayouts[0].name)
+    for (let n = 1; n < paperLayouts.length; n++) {
+      blockToLayout.set(`*Paper_Space${n - 1}`, paperLayouts[n].name)
+    }
+  }
+  console.log(`[CadPreview] blockToLayout:`, [...blockToLayout].map(([b, l]) => `${b}→${l}`).join(', '))
+
+  // ── 2a. BLOCKS 섹션의 레이아웃 블록 안 VIEWPORT ──
   const SEC_BLOCKS = `\n${gc(0)}\nSECTION\n${gc(2)}\nBLOCKS\n`
   const blkIdx = dxfText.indexOf(SEC_BLOCKS)
   if (blkIdx >= 0) {
     const blkBody = blkIdx + SEC_BLOCKS.length
-    const blkEnd = dxfText.indexOf(ENDSEC, blkBody)
+    // ENDSEC 토큰은 앞 줄바꿈까지 포함한다. 그런데 섹션 첫 줄 앞의 줄바꿈은
+    // SEC_BLOCKS 가 이미 먹었으므로 blkBody 부터 찾으면 **이 섹션의** ENDSEC
+    // 를 못 보고 다음 섹션 끝까지 넘어간다 → BLOCKS 스캔이 ENTITIES 를 같이
+    // 훑어서 뷰포트가 두 번 집계된다. 한 글자 뒤에서부터 찾는다.
+    const blkEnd = dxfText.indexOf(ENDSEC, blkBody - 1)
     if (blkEnd > blkBody) {
-      // *Paper_Space → 첫 번째 paper layout, *Paper_Space0 → 두 번째... (DXF 표준)
-      const paperLayouts = layouts.filter(l => !l.isModelSpace).sort((a, b) => a.tabOrder - b.tabOrder)
-      const blockToLayout = new Map<string, string>()
-      if (paperLayouts.length > 0) {
-        blockToLayout.set('*Paper_Space', paperLayouts[0].name)
-        for (let n = 1; n < paperLayouts.length; n++) {
-          blockToLayout.set(`*Paper_Space${n - 1}`, paperLayouts[n].name)
-        }
-      }
-      console.log(`[CadPreview] blockToLayout:`, [...blockToLayout].map(([b, l]) => `${b}→${l}`).join(', '))
-
       // 여기도 쌍 단위로 걷는다. VIEWPORT 는 code 68(status) 이 0 인 경우가
       // 흔해서, 줄바꿈+"0"+줄바꿈 으로 자르면 엔티티가 중간에 끊기고 그 뒤의
       // 45(view height) / 69(뷰포트 ID) 를 못 읽는다.
       const blkLines = dxfText.substring(blkBody, blkEnd).split('\n')
       let currentLayoutName = ''
-      /** 현재 블록 안에서 몇 번째 VIEWPORT 인지 (1-based). DXF 는 레이아웃
-       *  블록의 **첫** VIEWPORT 를 종이 의사 뷰포트로 쓴다. */
-      let vpIndexInBlock = 0
       let k = 0
       while (k + 1 < blkLines.length) {
         if (blkLines[k].trim() !== '0') { k += 2; continue }
@@ -611,125 +717,121 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
             console.log(`[CadPreview] BLOCK "${blockName}" owner=${ownerHandle ?? '-'} ` +
               `→ layout "${currentLayoutName || '(매핑 없음)'}"`)
           }
-          vpIndexInBlock = 0
           continue
         }
-        if (type === 'ENDBLK') { currentLayoutName = ''; vpIndexInBlock = 0; continue }
-        if (type === 'VIEWPORT') {
-          vpIndexInBlock++
-          const key = currentLayoutName || '(블록→레이아웃 매핑 없음)'
-          vpSeen.set(key, (vpSeen.get(key) ?? 0) + 1)
-        }
-        if (type !== 'VIEWPORT' || !currentLayoutName) continue
+        if (type === 'ENDBLK') { currentLayoutName = ''; continue }
+        if (type !== 'VIEWPORT') continue
+        const key = currentLayoutName || '(블록→레이아웃 매핑 없음)'
+        vpSeen.set(key, (vpSeen.get(key) ?? 0) + 1)
+        if (!currentLayoutName) continue
 
-        const num = (code: number): number => {
-          const v = parseFloat(vals.get(code) ?? '')
-          return isFinite(v) ? v : 0
-        }
-
-        const vpWidth = num(40)      // paper space 폭
-        const vpHeight = num(41)     // paper space 높이
-        const viewHeight = num(45)   // model space view height
-        if (viewHeight <= 0 || vpHeight <= 0) {
-          console.warn(`[CadPreview] VIEWPORT "${currentLayoutName}": 크기를 못 읽어 버림 ` +
-            `(41=${vpHeight}, 45=${viewHeight}) — 코드: ` +
-            [...vals.entries()].sort((a, b) => a[0] - b[0])
-              .map(([c, v]) => `${c}=${v.trim()}`).join(' '))
-          continue
-        }
-
-        // 오토캐드는 레이아웃마다 "종이 자신"을 가리키는 의사 뷰포트를 하나
-        // 넣는다. 이건 도면을 비추는 창이 아니라서, 여기의 12/22/45 를 모델공간
-        // clip 으로 쓰면 엉뚱한 상자가 나오고 union 에 섞이면 clip 전체가 망가진다.
-        //
-        // 원래는 group code 69(뷰포트 ID) == 1 로만 걸렀는데, DWG→DXF 변환기가
-        // 69 를 0 으로 쓰는 파일이 있다 (실제 로그: `id=0 ... h=624`). 그래서
-        // 구조로도 본다 — 의사 뷰포트는 **모델을 1:1 로 비춘다**. 즉 모델공간
-        // view height(45) 가 종이 높이(41) 와 같고 view target(17/27) 이 원점이다.
-        // 진짜 뷰포트는 축척이 걸려 있어 둘이 크게 다르다 (이 파일은 292 vs 29173).
-        //
-        // 기하 조건만으로는 **1:1 축척으로 원점 근처를 비추는 정상 뷰포트**도
-        // 같이 죽는다 (상세도를 원점에 그린 도면). 그래서 "블록 안 첫 번째" 를
-        // AND 로 묶었다 — DXF 는 레이아웃 블록의 첫 VIEWPORT 를 종이 의사
-        // 뷰포트로 쓴다. 이 조건은 기존보다 엄격해지기만 하므로, 지금 걸러지던
-        // 의사 뷰포트를 놓칠 일은 없다 (실제 파일도 의사 → 진짜 순서였다).
-        const isPaperPseudoVp =
-          num(69) === 1 ||
-          (vpIndexInBlock === 1 &&
-           Math.abs(viewHeight - vpHeight) < vpHeight * 0.01 &&
-           num(17) === 0 && num(27) === 0)
-        if (isPaperPseudoVp) {
-          console.log(`[CadPreview] VIEWPORT "${currentLayoutName}": 종이 의사 뷰포트로 보고 건너뜀 ` +
-            `(블록 내 ${vpIndexInBlock}번째, id=${num(69)}, 41=${vpHeight.toFixed(0)}, 45=${viewHeight.toFixed(0)})`)
-          continue
-        }
-
-        // 12/22 는 **DCS**(디스플레이 좌표계) 기준 뷰 중심이지 WCS 가 아니다.
-        // DCS 의 원점은 17/27 의 view target 이므로, 모델공간 중심은 둘을 더해야
-        // 나온다. 평면 뷰에서 target 이 0 인 파일은 12/22 가 곧 모델 좌표라
-        // 여태 맞아떨어졌지만, 원점에서 멀리 떨어진 곳에 그린 도면은 오토캐드가
-        // target 에 그 위치를 넣고 12/22 에는 작은 오프셋만 남긴다. 그런 파일에서
-        // target 을 빼먹으면 clip 상자가 원점 근처에 생겨 **도형이 하나도 안 걸리고
-        // 페이지가 통째로 빈다** (실제로 "천정도" 가 44212 → 0 이 됐다).
-        const centerX = num(17) + num(12)
-        const centerY = num(27) + num(22)
-
-        const viewWidth = viewHeight * (vpWidth / vpHeight)
-        const vp: DxfViewport = {
-          layoutName: currentLayoutName,
-          centerX, centerY,
-          viewWidth, viewHeight,
-          clipMinX: centerX - viewWidth / 2,
-          clipMinY: centerY - viewHeight / 2,
-          clipMaxX: centerX + viewWidth / 2,
-          clipMaxY: centerY + viewHeight / 2,
-        }
-
-        // clip 위치가 도형과 안 맞는 파일이 있다. 어떤 코드를 빠뜨렸는지
-        // 추측하지 말고 통째로 찍는다 — 레이아웃당 진짜 뷰포트는 몇 개뿐이다.
-        console.log(`[CadPreview] VIEWPORT "${currentLayoutName}" 전체 코드:`,
-          [...vals.entries()].sort((a, b) => a[0] - b[0])
-            .map(([c, v]) => `${c}=${v.trim()}`).join(' '))
-        console.log(`[CadPreview] VIEWPORT "${currentLayoutName}": ` +
-          `id=${num(69)} paper=(${num(10).toFixed(0)},${num(20).toFixed(0)}) ${vpWidth.toFixed(0)}x${vpHeight.toFixed(0)} ` +
-          `view=(${num(12).toFixed(0)},${num(22).toFixed(0)}) target=(${num(17).toFixed(0)},${num(27).toFixed(0)}) h=${viewHeight.toFixed(0)} ` +
-          `dir=(${num(16).toFixed(2)},${num(26).toFixed(2)},${num(36).toFixed(2)}) ucs=(${num(110).toFixed(0)},${num(120).toFixed(0)}) ` +
-          `→ clip (${vp.clipMinX.toFixed(0)},${vp.clipMinY.toFixed(0)})~(${vp.clipMaxX.toFixed(0)},${vp.clipMaxY.toFixed(0)})`)
-
-        let arr = viewportsByLayout.get(currentLayoutName)
-        if (!arr) { arr = []; viewportsByLayout.set(currentLayoutName, arr) }
-        arr.push(vp)
+        const vp = parseViewportEntity(
+          vals, currentLayoutName, bumpVpIndex(currentLayoutName), '블록 내')
+        if (vp) pushVp(currentLayoutName, vp)
       }
 
-      // 예전엔 여기서 "paper border 뷰포트" 랍시고 viewHeight 가 가장 큰 것을
-      // 떨어냈다 (`filter(v => v.viewHeight < maxVH * 0.99)`). 두 가지가 틀렸다.
-      //
-      //  1. 같은 크기 뷰포트가 여럿이면 **전부** 날아간다. 실제로 "평면도" 가
-      //     뷰포트 0개가 되어 페이지 자체가 안 만들어졌다.
-      //  2. 레이아웃에서 제일 큰 뷰포트는 보통 **메인 뷰** 다. 그걸 떨어내면
-      //     남는 건 자잘한 것뿐이라 clip 이 도면에서 통째로 빗나간다 —
-      //     "천정도" 가 clip (-277,-192)~(1242,432) 로 44415 → 0 이 됐다.
-      //
-      // 종이 자신을 가리키는 의사 뷰포트는 위에서 group code 69 == 1 로 이미
-      // 걸러낸다. 69 가 없는 파일이면 clip 이 넓어져 모델공간이 통째로 들어오는데,
-      // 그건 페이지가 사라지는 것보다 낫다.
-
-      // 본 개수 vs 쓴 개수. 0 이면 "파일에 아예 없다" 와 "위에서 걸러냈다" 중
-      // 어느 쪽인지 바로 보인다.
-      const vpKeys = new Set([...vpSeen.keys(), ...viewportsByLayout.keys()])
-      console.log('[CadPreview] 레이아웃별 VIEWPORT(발견→사용): ' +
-        [...vpKeys].map(k => `${k} ${vpSeen.get(k) ?? 0}→${viewportsByLayout.get(k)?.length ?? 0}`).join(', '))
-      for (const l of layouts) {
-        if (l.isModelSpace) continue
-        if ((viewportsByLayout.get(l.name)?.length ?? 0) > 0) continue
-        const seen = vpSeen.get(l.name) ?? 0
-        console.warn(seen === 0
-          ? `[CadPreview] ⚠ 레이아웃 "${l.name}": 블록 안에 VIEWPORT 엔티티가 하나도 없음 ` +
-            `→ clip 없이 모델공간 전체를 쓴다`
-          : `[CadPreview] ⚠ 레이아웃 "${l.name}": VIEWPORT ${seen}개를 봤지만 전부 걸러짐 ` +
-            `(의사 뷰포트/크기 불량) → clip 없이 모델공간 전체를 쓴다`)
-      }
     }
+  }
+
+  // ── 2b. ENTITIES 섹션의 종이공간 VIEWPORT ──
+  //
+  // DXF 는 **저장 당시 활성 레이아웃**의 종이공간 엔티티를 BLOCKS 의
+  // *Paper_Space 블록 정의가 아니라 ENTITIES 섹션에 (code 67=1 로) 쓴다.
+  // 그래서 그 블록 정의는 비어 있고, BLOCKS 만 뒤지면 활성 레이아웃은 **항상**
+  // "뷰포트 없음" 이 되어 페이지가 통째로 안 만들어진다. 실제 파일의 "평면도"
+  // 가 그랬다 — `*Paper_Space→평면도` 로 매핑은 맞는데 그 블록 안엔 VIEWPORT
+  // 가 0개였고, 로그는 `레이아웃 "평면도": 뷰포트 없음 → 페이지 생성 안 함`.
+  //
+  // 소유 레이아웃은 추측하지 않는다. VIEWPORT 의 330(소유 BLOCK_RECORD)을
+  // LAYOUT 의 330 과 맞춘다. 330 이 없을 때만 이름 규칙으로 폴백한다.
+  {
+    const SEC_ENTITIES = `\n${gc(0)}\nSECTION\n${gc(2)}\nENTITIES\n`
+    const entIdx = dxfText.indexOf(SEC_ENTITIES)
+    const entBody = entIdx >= 0 ? entIdx + SEC_ENTITIES.length : -1
+    // 2a 와 같은 이유로 한 글자 뒤에서부터 (빈 ENTITIES 섹션 대응).
+    const entEnd = entBody >= 0 ? dxfText.indexOf(ENDSEC, entBody - 1) : -1
+    if (entEnd > entBody) {
+      // VIEWPORT 위치만 indexOf 로 찾는다 — 이 섹션은 113MB 라 split('\n') 은 못 쓴다.
+      const VP_MARK = `\n${gc(0)}\nVIEWPORT\n`
+      // 섹션의 **첫** 엔티티가 VIEWPORT 면 그 앞 줄바꿈이 SEC_ENTITIES 에
+      // 포함돼 있어서 entBody 부터 찾으면 VP_MARK 가 안 걸린다. 활성 레이아웃의
+      // 뷰포트는 종종 맨 앞에 온다 — 한 글자 뒤에서 시작한다.
+      let pos = entBody - 1
+      let found = 0
+      for (;;) {
+        const vi = dxfText.indexOf(VP_MARK, pos)
+        if (vi < 0 || vi >= entEnd) break
+
+        // 본문은 **쌍 단위**로 걷는다. `\n 0\n` 으로 자르면 code 68(status) 의
+        // 값이 0 일 때 엔티티가 중간에 끊겨 뒤의 45/69 를 못 읽는다.
+        const vals = new Map<number, string>()
+        let q = vi + VP_MARK.length
+        while (q < entEnd) {
+          const e1 = dxfText.indexOf('\n', q)
+          if (e1 < 0 || e1 >= entEnd) { q = entEnd; break }
+          if (dxfText.substring(q, e1).trim() === '0') break
+          const e2 = dxfText.indexOf('\n', e1 + 1)
+          if (e2 < 0 || e2 > entEnd) { q = entEnd; break }
+          const code = parseInt(dxfText.substring(q, e1).trim())
+          if (!Number.isNaN(code) && !vals.has(code)) vals.set(code, dxfText.substring(e1 + 1, e2))
+          q = e2 + 1
+        }
+        // q 는 다음 엔티티의 코드 줄("0") 머리를 가리킨다. VP_MARK 는 앞
+        // 줄바꿈부터 시작하므로 거기서 바로 이어 찾으면 **두 번째 이후**
+        // VIEWPORT 를 전부 놓친다. 한 글자 뒤로 물린다.
+        pos = q - 1
+        found++
+
+        // 67 은 종이공간 플래그다. 모형공간 VIEWPORT(활성 뷰 설정 레코드)는
+        // 레이아웃의 창이 아니라서 clip 으로 쓰면 안 된다.
+        if ((vals.get(67)?.trim() ?? '0') !== '1') continue
+
+        const ownerHandle = vals.get(330)?.trim()
+        const layoutName =
+          (ownerHandle && layoutByBlockRecord.get(ownerHandle)) ||
+          blockToLayout.get('*Paper_Space') ||
+          ''
+        vpSeen.set(layoutName || '(ENTITIES: 소유 레이아웃 불명)',
+          (vpSeen.get(layoutName || '(ENTITIES: 소유 레이아웃 불명)') ?? 0) + 1)
+        if (!layoutName) {
+          console.warn(`[CadPreview] ENTITIES VIEWPORT: 소유 레이아웃을 못 찾음 (330=${ownerHandle ?? '-'})`)
+          continue
+        }
+
+        const vp = parseViewportEntity(vals, layoutName, bumpVpIndex(layoutName), 'ENTITIES 내')
+        if (vp) pushVp(layoutName, vp)
+      }
+      console.log(`[CadPreview] ENTITIES 섹션 VIEWPORT ${found}개 발견`)
+    }
+  }
+
+  // 예전엔 여기서 "paper border 뷰포트" 랍시고 viewHeight 가 가장 큰 것을
+  // 떨어냈다 (`filter(v => v.viewHeight < maxVH * 0.99)`). 두 가지가 틀렸다.
+  //
+  //  1. 같은 크기 뷰포트가 여럿이면 **전부** 날아간다. 실제로 "평면도" 가
+  //     뷰포트 0개가 되어 페이지 자체가 안 만들어졌다.
+  //  2. 레이아웃에서 제일 큰 뷰포트는 보통 **메인 뷰** 다. 그걸 떨어내면
+  //     남는 건 자잘한 것뿐이라 clip 이 도면에서 통째로 빗나간다 —
+  //     "천정도" 가 clip (-277,-192)~(1242,432) 로 44415 → 0 이 됐다.
+  //
+  // 종이 자신을 가리키는 의사 뷰포트는 parseViewportEntity 에서 걸러낸다.
+  // 거기서도 못 거르면 clip 이 넓어져 모델공간이 통째로 들어오는데, 그건
+  // 페이지가 사라지는 것보다 낫다.
+
+  // 본 개수 vs 쓴 개수. 0 이면 "파일에 아예 없다" 와 "위에서 걸러냈다" 중
+  // 어느 쪽인지 바로 보인다.
+  const vpKeys = new Set([...vpSeen.keys(), ...viewportsByLayout.keys()])
+  console.log('[CadPreview] 레이아웃별 VIEWPORT(발견→사용): ' +
+    [...vpKeys].map(k => `${k} ${vpSeen.get(k) ?? 0}→${viewportsByLayout.get(k)?.length ?? 0}`).join(', '))
+  for (const l of layouts) {
+    if (l.isModelSpace) continue
+    if ((viewportsByLayout.get(l.name)?.length ?? 0) > 0) continue
+    const seen = vpSeen.get(l.name) ?? 0
+    console.warn(seen === 0
+      ? `[CadPreview] ⚠ 레이아웃 "${l.name}": BLOCKS/ENTITIES 어디에도 VIEWPORT 엔티티가 없음 ` +
+        `→ clip 없이 모델공간 전체를 쓴다`
+      : `[CadPreview] ⚠ 레이아웃 "${l.name}": VIEWPORT ${seen}개를 봤지만 전부 걸러짐 ` +
+        `(의사 뷰포트/크기 불량) → clip 없이 모델공간 전체를 쓴다`)
   }
 
   // VIEWPORT 를 한 개도 찾지 못한 레이아웃은 clip 없이 남긴다.
