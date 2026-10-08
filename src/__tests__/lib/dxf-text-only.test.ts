@@ -40,7 +40,7 @@ const text = (x: number, y: number, t: string, height = 200): TextData => ({
 
 const hatch = (cx: number, cy: number, layer = 'HATCH'): HatchData => ({
   pathData: `M${cx - 100},${cy - 100}L${cx + 100},${cy - 100}L${cx + 100},${cy + 100}Z`,
-  patternName: 'ANSI31', patternScale: 1, patternAngle: 0, solidFill: false, layer, cx, cy,
+  patternName: 'ANSI31', patternScale: 1, patternAngle: 0, patternSpacing: 0, patternDefAngle: 0, patternDefLines: 0, solidFill: false, layer, cx, cy,
 })
 
 type ShapeLike = {

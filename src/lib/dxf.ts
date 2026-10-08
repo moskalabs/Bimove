@@ -359,6 +359,9 @@ export type DxfHatch = {
   pathData: string       // closed SVG path (boundary)
   patternName: string    // "SOLID", "ANSI31", "AR-CONC" 등
   patternScale: number   // 패턴 축척 (기본 1)
+  patternSpacing: number // 패턴 정의선 간격 (도면 단위). 0 = 정의선 없음
+  patternDefAngle: number// 첫 패턴 정의선 각도 (deg, CCW)
+  patternDefLines: number// 패턴 정의선 수 (2 이상 = 격자형)
   solidFill: boolean     // gc 70: 1 = 단색 채움
   patternAngle: number   // 패턴 회전 (도, 기본 0)
   color?: string
@@ -737,6 +740,8 @@ export function parseDxfHatches(
     const patternScale = (e.patternScale as number) ?? 1
     const patternAngle = (e.patternAngle as number) ?? 0
     const solidFill = (e.solidFill as boolean) ?? ((e.fillType as string) === 'SOLID')
+    // dxf-parser 는 패턴 정의선(gc 78/53/45/46)을 노출하지 않는다 → 0 (shape 쪽이 추정값으로 폴백)
+    const patternSpacing = 0, patternDefAngle = 0, patternDefLines = 0
 
     // 각 boundary를 SVG path로 변환
     const svgParts: string[] = []
@@ -764,6 +769,9 @@ export function parseDxfHatches(
         patternName: patternName.toUpperCase(),
         patternScale,
         patternAngle,
+        patternSpacing,
+        patternDefAngle,
+        patternDefLines,
         solidFill,
         color,
         layer,
@@ -1137,11 +1145,22 @@ export function detectDxfEncoding(buffer: ArrayBuffer): 'utf-8' | 'euc-kr' {
 // ── Raw DXF HATCH 파서 (dxf-parser가 HATCH를 스킵하므로 직접 파싱) ──
 
 /**
+ * 경계 edge 데이터가 끝났음을 알리는 group code.
+ * 72/92 = 다음 edge·path, 0 = 다음 엔티티, 97 = source object 목록,
+ * 75/76/98 = boundary 뒤의 패턴 정의 블록 시작. 여기서 멈추지 않으면
+ * edge 파싱 루프가 패턴 축척(41)/각도(52)까지 먹어버린다.
+ */
+function isHatchEdgeEnd(c: number): boolean {
+  return c === 72 || c === 92 || c === 0 || c === 75 || c === 76 || c === 97 || c === 98
+}
+
+/**
  * DXF raw text에서 HATCH 엔티티를 직접 파싱.
  * dxf-parser v1.x는 HATCH 핸들러가 없어서 완전히 스킵하기 때문에
  * group code 기반으로 직접 추출.
  */
-function parseRawHatches(
+/** @internal 테스트에서 직접 호출한다 (패턴 정의 데이터 파싱 검증). */
+export function parseRawHatches(
   dxfText: string,
   layerDefs: Record<string, { lineweight?: number; colorIndex?: number; color?: number }>,
 ): DxfHatch[] {
@@ -1177,6 +1196,9 @@ function parseRawHatches(
     let patternScale = 1
     let patternAngle = 0
     let solidFill = false
+    let patternSpacing = 0
+    let patternDefAngle = 0
+    let patternDefLines = 0
     let numBoundaryPaths = 0
 
     // HATCH 헤더 파싱 (91코드 = boundary path 수 전까지)
@@ -1186,9 +1208,8 @@ function parseRawHatches(
       else if (c === 62) colorIndex = parseInt(v) || 0
       else if (c === 420) trueColor = parseInt(v) || 0
       else if (c === 2) patternName = v
-      else if (c === 41) patternScale = parseFloat(v) || 1
-      else if (c === 52) patternAngle = parseFloat(v) || 0
       else if (c === 70) solidFill = (parseInt(v) || 0) === 1
+      // gc 41/52/78 은 boundary path 뒤에 온다 — 아래에서 따로 읽는다.
       i++
     }
 
@@ -1284,7 +1305,7 @@ function parseRawHatches(
           if (edgeType === 1) {
             // Line: 10/20=start, 11/21=end
             let x1 = 0, y1 = 0, x2 = 0, y2 = 0
-            while (i < pairs.length && pairs[i].code !== 72 && pairs[i].code !== 92 && !(pairs[i].code === 0)) {
+            while (i < pairs.length && !isHatchEdgeEnd(pairs[i].code)) {
               const c = pairs[i].code, v = parseFloat(pairs[i].value) || 0
               if (c === 10) x1 = v; else if (c === 20) y1 = v
               else if (c === 11) x2 = v; else if (c === 21) y2 = v
@@ -1297,7 +1318,7 @@ function parseRawHatches(
           } else if (edgeType === 2) {
             // Arc: 10/20=center, 40=radius, 50=start angle, 51=end angle, 73=ccw
             let cx = 0, cy = 0, r = 0, sa = 0, ea = 360, ccw = 1
-            while (i < pairs.length && pairs[i].code !== 72 && pairs[i].code !== 92 && !(pairs[i].code === 0)) {
+            while (i < pairs.length && !isHatchEdgeEnd(pairs[i].code)) {
               const c = pairs[i].code, v = parseFloat(pairs[i].value) || 0
               if (c === 10) cx = v; else if (c === 20) cy = v
               else if (c === 40) r = v; else if (c === 50) sa = v
@@ -1321,7 +1342,7 @@ function parseRawHatches(
           } else if (edgeType === 3) {
             // Ellipse: 10/20=center, 11/21=major endpoint, 40=minor/major ratio, 50/51=start/end
             let cx = 0, cy = 0, mx = 0, my = 0, ratio = 1, esa = 0, eea = 2 * Math.PI
-            while (i < pairs.length && pairs[i].code !== 72 && pairs[i].code !== 92 && !(pairs[i].code === 0)) {
+            while (i < pairs.length && !isHatchEdgeEnd(pairs[i].code)) {
               const c = pairs[i].code, v = parseFloat(pairs[i].value) || 0
               if (c === 10) cx = v; else if (c === 20) cy = v
               else if (c === 11) mx = v; else if (c === 21) my = v
@@ -1346,7 +1367,7 @@ function parseRawHatches(
           } else if (edgeType === 4) {
             // Spline edge: degree(94), rational(73), periodic(74), numKnots(95), numCtrl(96)
             let spDegree = 3, numKnots = 0, numCtrl = 0
-            while (i < pairs.length && pairs[i].code !== 72 && pairs[i].code !== 92 && pairs[i].code !== 0) {
+            while (i < pairs.length && !isHatchEdgeEnd(pairs[i].code)) {
               const c = pairs[i].code
               if (c === 94) spDegree = parseInt(pairs[i].value) || 3
               else if (c === 95) numKnots = parseInt(pairs[i].value) || 0
@@ -1397,7 +1418,7 @@ function parseRawHatches(
             }
           } else {
             // Unknown edge type - skip until next edge/boundary
-            while (i < pairs.length && pairs[i].code !== 72 && pairs[i].code !== 92 && pairs[i].code !== 0) {
+            while (i < pairs.length && !isHatchEdgeEnd(pairs[i].code)) {
               if (pairs[i].code === 97) break
               i++
             }
@@ -1424,7 +1445,28 @@ function parseRawHatches(
       }
     }
 
-    // HATCH 뒤쪽 나머지 (pattern def lines 등) 스킵: 다음 entity(code=0)까지
+    // --- 패턴 정의 데이터 (boundary path 뒤): gc 52 각도, 41 축척, 78 정의선 수,
+    // 정의선마다 53 angle / 43,44 base / 45,46 offset. 47 또는 98 에서 끝난다. ---
+    let defDx = 0
+    let seenDefAngle = false
+    while (i < pairs.length && pairs[i].code !== 0) {
+      const c = pairs[i].code, v = pairs[i].value
+      if (c === 47 || c === 98 || c === 450) break
+      if (c === 52) patternAngle = parseFloat(v) || 0
+      else if (c === 41) patternScale = parseFloat(v) || 1
+      else if (c === 78) patternDefLines = parseInt(v) || 0
+      else if (c === 53) {
+        if (!seenDefAngle) { patternDefAngle = parseFloat(v) || 0; seenDefAngle = true }
+      }
+      else if (c === 45) defDx = parseFloat(v) || 0
+      else if (c === 46) {
+        const d = Math.hypot(defDx, parseFloat(v) || 0)
+        if (d > 1e-9 && (patternSpacing === 0 || d < patternSpacing)) patternSpacing = d
+        defDx = 0
+      }
+      i++
+    }
+    // 남은 꼬리(seed point 등) 스킵: 다음 entity(code=0)까지
     while (i < pairs.length && pairs[i].code !== 0) i++
 
     if (svgParts.length > 0 && ptCount > 0) {
@@ -1433,6 +1475,9 @@ function parseRawHatches(
         patternName: patternName.toUpperCase(),
         patternScale,
         patternAngle,
+        patternSpacing,
+        patternDefAngle,
+        patternDefLines,
         solidFill,
         color,
         layer,
@@ -1958,7 +2003,7 @@ export function getLastImportReport(): SkipReport {
 /** 좌표 변환된 텍스트 */
 type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string; attachPt?: number; width?: number; fontName?: string }
 /** 좌표 변환된 해치 */
-type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; solidFill?: boolean; color?: string; layer: string; cx: number; cy: number }
+type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; patternSpacing: number; patternDefAngle: number; patternDefLines: number; solidFill?: boolean; color?: string; layer: string; cx: number; cy: number }
 
 const COORD_LIMIT = 1e8
 const MAX_FINAL_SEGS = 100_000
@@ -2281,6 +2326,21 @@ export function computeMinTextHeight(canvasSpanPx: number): number {
   return Math.max(span / MAX_CANVAS_SPAN_PX, 0.1)
 }
 
+/**
+ * hatchesJson 한 항목의 패턴 정보.
+ * 패턴 정의선(gc 78)이 있으면 그 각도/간격이 이미 해석된 최종값이므로
+ * gc 52(각도)/41(축척) 대신 정의선 값을 쓴다.
+ */
+function packHatchPattern(hh: PxHatch) {
+  const hasDef = hh.patternDefLines > 0 && hh.patternSpacing > 0
+  return {
+    p: hh.patternName,
+    s: hh.patternScale,
+    a: hasDef ? hh.patternDefAngle : hh.patternAngle,
+    ...(hasDef ? { sp: +hh.patternSpacing.toFixed(2), n: hh.patternDefLines } : {}),
+  }
+}
+
 /** Worker 해치 → px 좌표 변환 (Y-flip + scale, SVG path 변환) */
 function transformWorkerHatches(workerHatches: HatchData[], textScale: number): PxHatch[] {
   return workerHatches
@@ -2300,6 +2360,10 @@ function transformWorkerHatches(workerHatches: HatchData[], textScale: number): 
         patternName: h.patternName,
         patternScale: h.patternScale,
         patternAngle: h.patternAngle,
+        // 간격은 도면 단위 → px (경로와 같은 배율). 각도는 Y-flip 이라 렌더 쪽에서 부호 반전.
+        patternSpacing: h.patternSpacing * textScale,
+        patternDefAngle: h.patternDefAngle,
+        patternDefLines: h.patternDefLines,
         solidFill: h.solidFill,
         color: h.color,
         layer: h.layer,
@@ -2448,7 +2512,7 @@ export function buildOrphanHatchShapes(
 
   const localHatches = parsed.map(({ hh, pts, dim }) => ({
     d: pts.map(([cmd, x, y]) => `${cmd}${(x - hMinX).toFixed(1)},${(y - hMinY).toFixed(1)}`).join(''),
-    p: hh.patternName, s: hh.patternScale, a: hh.patternAngle, c: hh.color,
+    ...packHatchPattern(hh), c: hh.color,
     f: hh.solidFill ? 1 : 0,
     dim: +dim.toFixed(1),
   }))
@@ -2864,7 +2928,7 @@ export async function commitCadImportV2(
 
         // 해치 수집: 이 클러스터 바운딩박스 내의 HATCH
         const hatchMargin = 50
-        const localHatches: Array<{ d: string; p: string; s: number; a: number; c?: string; f?: number; dim?: number }> = []
+        const localHatches: Array<{ d: string; p: string; s: number; a: number; sp?: number; n?: number; c?: string; f?: number; dim?: number }> = []
         for (let hi = 0; hi < pxHatches.length; hi++) {
           if (assignedHatchIdx.has(hi)) continue
           const hh = pxHatches[hi]
@@ -2883,7 +2947,7 @@ export async function commitCadImportV2(
             )
             const hDim = Math.max(hMaxX2 - hMinX2, hMaxY2 - hMinY2, 10)
             localHatches.push({
-              d: localPath, p: hh.patternName, s: hh.patternScale, a: hh.patternAngle, c: hh.color,
+              d: localPath, ...packHatchPattern(hh), c: hh.color,
               f: hh.solidFill ? 1 : 0,
               dim: +hDim.toFixed(1),
             })

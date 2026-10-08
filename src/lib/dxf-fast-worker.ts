@@ -48,8 +48,11 @@ export interface TextData {
 export interface HatchData {
   pathData: string       // SVG path: "M0,0L100,0 ... Z"
   patternName: string    // "SOLID", "ANSI31", etc.
-  patternScale: number
-  patternAngle: number
+  patternScale: number   // gc 41
+  patternAngle: number   // gc 52 (deg, CCW)
+  patternSpacing: number // 패턴 정의선 간격, 도면 단위. 0 = 정의선 없음
+  patternDefAngle: number// 첫 패턴 정의선 각도 (deg, CCW)
+  patternDefLines: number// gc 78: 패턴 정의선 수 (2 이상이면 격자형)
   solidFill: boolean     // gc 70: 1 = 단색 채움 (패턴명과 무관)
   color?: string         // hex color
   layer: string
@@ -887,6 +890,16 @@ export function parseMultiLeaderLines(chunk: string): number[][][] {
 // ===== HATCH entity parser =====
 
 /** Parse a HATCH entity from its group-code text chunk → HatchData or null */
+/**
+ * 경계 edge 데이터가 끝났음을 알리는 group code.
+ * 72/92 = 다음 edge·path, 0 = 다음 엔티티, 97 = source object 목록,
+ * 75/76/98 = boundary 뒤의 패턴 정의 블록 시작. 여기서 멈추지 않으면
+ * edge 파싱 루프가 패턴 축척(41)/각도(52)까지 먹어버린다.
+ */
+function isHatchEdgeEnd(c: number): boolean {
+  return c === 72 || c === 92 || c === 0 || c === 75 || c === 76 || c === 97 || c === 98
+}
+
 function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null {
   const lines = chunk.split('\n')
   // Build sequential pairs for stateful parsing
@@ -904,6 +917,9 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
   let patternScale = 1
   let patternAngle = 0
   let solidFill = false
+  let patternSpacing = 0
+  let patternDefAngle = 0
+  let patternDefLines = 0
   let numBoundaryPaths = 0
 
   // Parse header fields until group code 91 (boundary path count)
@@ -914,9 +930,8 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
     else if (c === 62) colorIndex = parseInt(v) || 0
     else if (c === 420) trueColor = parseInt(v) || 0
     else if (c === 2) patternName = v
-    else if (c === 41) patternScale = parseFloat(v) || 1
-    else if (c === 52) patternAngle = parseFloat(v) || 0
     else if (c === 70) solidFill = (parseInt(v) || 0) === 1
+    // gc 41(축척)/52(각도)/78(정의선)은 boundary path *뒤에* 오므로 여기서 읽으면 안 된다.
     pi++
   }
   if (pi < pairs.length && pairs[pi].code === 91) {
@@ -1004,7 +1019,7 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
         if (edgeType === 1) {
           // Line edge
           let x1 = 0, y1 = 0, x2 = 0, y2 = 0
-          while (pi < pairs.length && pairs[pi].code !== 72 && pairs[pi].code !== 92 && pairs[pi].code !== 0) {
+          while (pi < pairs.length && !isHatchEdgeEnd(pairs[pi].code)) {
             const c = pairs[pi].code, v = parseFloat(pairs[pi].value) || 0
             if (c === 10) x1 = v; else if (c === 20) y1 = v
             else if (c === 11) x2 = v; else if (c === 21) y2 = v
@@ -1017,7 +1032,7 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
         } else if (edgeType === 2) {
           // Arc edge
           let cx = 0, cy = 0, r = 0, sa = 0, ea = 360, ccw = 1
-          while (pi < pairs.length && pairs[pi].code !== 72 && pairs[pi].code !== 92 && pairs[pi].code !== 0) {
+          while (pi < pairs.length && !isHatchEdgeEnd(pairs[pi].code)) {
             const c = pairs[pi].code, v = parseFloat(pairs[pi].value) || 0
             if (c === 10) cx = v; else if (c === 20) cy = v
             else if (c === 40) r = v; else if (c === 50) sa = v
@@ -1040,7 +1055,7 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
         } else if (edgeType === 3) {
           // Ellipse edge
           let cx = 0, cy = 0, mx = 0, my = 0, ratio = 1, esa = 0, eea = 2 * Math.PI
-          while (pi < pairs.length && pairs[pi].code !== 72 && pairs[pi].code !== 92 && pairs[pi].code !== 0) {
+          while (pi < pairs.length && !isHatchEdgeEnd(pairs[pi].code)) {
             const c = pairs[pi].code, v = parseFloat(pairs[pi].value) || 0
             if (c === 10) cx = v; else if (c === 20) cy = v
             else if (c === 11) mx = v; else if (c === 21) my = v
@@ -1065,7 +1080,7 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
         } else if (edgeType === 4) {
           // Spline edge
           let spDegree = 3, numKnots = 0, numCtrl = 0
-          while (pi < pairs.length && pairs[pi].code !== 72 && pairs[pi].code !== 92 && pairs[pi].code !== 0) {
+          while (pi < pairs.length && !isHatchEdgeEnd(pairs[pi].code)) {
             const c = pairs[pi].code
             if (c === 94) spDegree = parseInt(pairs[pi].value) || 3
             else if (c === 95) numKnots = parseInt(pairs[pi].value) || 0
@@ -1114,7 +1129,7 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
           }
         } else {
           // Unknown edge type - skip
-          while (pi < pairs.length && pairs[pi].code !== 72 && pairs[pi].code !== 92 && pairs[pi].code !== 0) {
+          while (pi < pairs.length && !isHatchEdgeEnd(pairs[pi].code)) {
             if (pairs[pi].code === 97) break
             pi++
           }
@@ -1139,6 +1154,31 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
     }
   }
 
+  // --- 패턴 정의 데이터 (boundary path 뒤) ---
+  // gc 75 style, 76 type, 52 angle, 41 scale, 77 double, 78 정의선 수,
+  // 정의선마다 53 angle / 43,44 base / 45,46 offset / 79,49 dash.
+  // 47(pixel size) 또는 98(seed point) 에서 끝난다.
+  let defDx = 0
+  let seenDefAngle = false
+  while (pi < pairs.length) {
+    const c = pairs[pi].code, v = pairs[pi].value
+    if (c === 0 || c === 47 || c === 98 || c === 450) break
+    if (c === 52) patternAngle = parseFloat(v) || 0
+    else if (c === 41) patternScale = parseFloat(v) || 1
+    else if (c === 78) patternDefLines = parseInt(v) || 0
+    else if (c === 53) {
+      if (!seenDefAngle) { patternDefAngle = parseFloat(v) || 0; seenDefAngle = true }
+    }
+    else if (c === 45) defDx = parseFloat(v) || 0
+    else if (c === 46) {
+      // 정의선 간격 = offset 벡터 길이 (도면 단위). 여러 개면 가장 촘촘한 쪽을 쓴다.
+      const d = Math.hypot(defDx, parseFloat(v) || 0)
+      if (d > 1e-9 && (patternSpacing === 0 || d < patternSpacing)) patternSpacing = d
+      defDx = 0
+    }
+    pi++
+  }
+
   if (svgParts.length === 0 || ptCount === 0) return null
 
   return {
@@ -1146,6 +1186,9 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
     patternName: patternName.toUpperCase(),
     patternScale,
     patternAngle,
+    patternSpacing,
+    patternDefAngle,
+    patternDefLines,
     solidFill,
     color,
     layer,

@@ -482,6 +482,11 @@ describe('DXF Performance Benchmark', () => {
       `${g(11)}`, '200', `${g(21)}`, '0',
       `${g(75)}`, '0',
       `${g(76)}`, '1',
+      // 패턴 축척/각도는 boundary path 뒤에 온다 (DXF 스펙)
+      `${g(52)}`, '45',    // pattern angle
+      `${g(41)}`, '2.5',   // pattern scale
+      `${g(77)}`, '0',
+      `${g(78)}`, '0',
     ].join('\n'))
 
     // HATCH 3: arc edge boundary
@@ -490,7 +495,6 @@ describe('DXF Performance Benchmark', () => {
       `${g(8)}`, 'WALL',
       `${g(420)}`, `${(255 << 16) | (128 << 8) | 0}`,  // trueColor: orange
       `${g(2)}`, 'CONCRETE',
-      `${g(41)}`, '1',
       `${g(70)}`, '0',
       `${g(71)}`, '0',
       `${g(91)}`, '1',
@@ -508,6 +512,7 @@ describe('DXF Performance Benchmark', () => {
       `${g(11)}`, '450', `${g(21)}`, '50',
       `${g(75)}`, '0',
       `${g(76)}`, '1',
+      `${g(41)}`, '1',
     ].join('\n'))
 
     parts.push(`${g(0)}\nENDSEC\n${g(0)}\nEOF\n`)

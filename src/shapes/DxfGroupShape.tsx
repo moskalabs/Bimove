@@ -62,11 +62,16 @@ export type DxfGroupShapeProps = {
   thickness: number
   segCount: number // 세그먼트 수 (정보용)
   textsJson: string // JSON: Array<{ x, y, t, h, r?, c? }>
-  hatchesJson: string // JSON: Array<{ d, p, s, a, c?, f? }> (pathData, pattern, scale, angle, color, solidFill)
+  hatchesJson: string // JSON: Array<{ d, p, s, a, sp?, n?, c?, f? }> (path, pattern, scale, angle, 간격, 정의선수, color, solidFill)
 }
 
 type DxfTextEntry = { x: number; y: number; t: string; h: number; r?: number; c?: string; ap?: number; mw?: number; f?: string }
-type DxfHatchEntry = { d: string; p: string; s: number; a: number; c?: string; f?: number; dim?: number }
+type DxfHatchEntry = {
+  d: string; p: string; s: number; a: number
+  sp?: number   // DXF 패턴 정의선에서 해석한 실제 간격 (px). 없으면 shape 크기로 추정.
+  n?: number    // 패턴 정의선 수. 2 이상이면 격자형 해치.
+  c?: string; f?: number; dim?: number
+}
 
 /** 단색 채움인지: DXF gc 70 이 1 이거나 패턴명이 SOLID 계열 (예: "SOLID,_O"). */
 function isSolidHatch(h: DxfHatchEntry): boolean {
@@ -76,19 +81,26 @@ function isSolidHatch(h: DxfHatchEntry): boolean {
 /** DXF 패턴명 → SVG pattern 생성 */
 function dxfHatchPatternDef(
   id: string, patternName: string, scale: number, angle: number, color: string,
-  shapeMaxDim?: number,
+  shapeMaxDim?: number, spacing?: number, defLines?: number,
 ): React.ReactElement | null {
-  // shape 크기에 비례해서 패턴 셀 크기 결정 (약 30~50회 반복 목표)
   const dim = shapeMaxDim ?? 400
-  const baseSz = Math.max(10, dim / 40)
-  const sz = baseSz * Math.max(0.5, scale) // 패턴 셀 크기
+  // 셀 크기: DXF 패턴 정의선 간격(sp)이 있으면 그걸 쓴다. 없으면 shape 크기로 추정.
+  // 다만 실제 간격이 도면 전체 축척에서 1px 수준으로 깔리면 패턴이 통짜 회색으로
+  // 뭉개지므로, 해치 크기 기준으로 반복 횟수를 [4, 60] 회로 제한한다.
+  const estimated = Math.max(10, dim / 40) * Math.max(0.5, scale)
+  const sz = spacing && spacing > 0
+    ? Math.min(Math.max(spacing, dim / 60), dim / 4)
+    : estimated
   const sw = Math.max(0.8, sz * 0.10) // 선 두께 비례 (더 굵게)
   const upper = patternName.toUpperCase()
 
   // SOLID: 패턴 없이 단색 fill
   if (upper === 'SOLID') return null
 
-  const rotate = angle !== 0 ? `rotate(${angle})` : undefined
+  // DXF 각도는 CCW, shape 좌표는 Y-flip 되어 있으므로 부호를 뒤집는다.
+  const rotate = angle !== 0 ? `rotate(${-angle})` : undefined
+  // 정의선이 2개 이상이면 교차 해치 — 한 방향만 그리면 원본과 다르게 보인다.
+  const isCross = (defLines ?? 0) >= 2
 
   // --- 사선 해칭 (ANSI) ---
   if (upper === 'ANSI31' || upper === 'ANSI32') {
@@ -359,13 +371,17 @@ function dxfHatchPatternDef(
     )
   }
 
-  // --- _USER / 사용자 정의 패턴: 촘촘한 사선 ---
+  // --- _USER / 사용자 정의 패턴 ---
+  // 간격·각도·격자 여부가 모두 DXF 정의선에서 오므로 그대로 따른다.
   if (upper.startsWith('_USER') || upper.startsWith('*')) {
-    const g = sz * 0.8
+    const g = spacing && spacing > 0 ? sz : sz * 0.8
     return (
       <pattern id={id} width={g} height={g} patternUnits="userSpaceOnUse"
-        patternTransform={rotate ?? 'rotate(45)'}>
+        patternTransform={rotate ?? (spacing ? undefined : 'rotate(45)')}>
         <line x1={0} y1={0} x2={g} y2={0} stroke={color} strokeWidth={sw} opacity={0.75} />
+        {isCross && (
+          <line x1={0} y1={0} x2={0} y2={g} stroke={color} strokeWidth={sw} opacity={0.75} />
+        )}
       </pattern>
     )
   }
@@ -517,7 +533,7 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
     const isSolid = isSolidHatch(h)
     return {
       id: patId,
-      def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor, h.dim ?? Math.max(shape.props.w, shape.props.h)),
+      def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor, h.dim ?? Math.max(shape.props.w, shape.props.h), h.sp, h.n),
       isSolid,
       color: hColor,
     }
@@ -783,7 +799,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
       const hColor = h.c ? darkenForLightBg(h.c) : '#666'
       const patId = `hatch-svg-${shape.id}-${i}`
       const isSolid = isSolidHatch(h)
-      return { id: patId, def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor, h.dim ?? Math.max(shape.props.w, shape.props.h)), isSolid, color: hColor }
+      return { id: patId, def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor, h.dim ?? Math.max(shape.props.w, shape.props.h), h.sp, h.n), isSolid, color: hColor }
     })
 
     return (
