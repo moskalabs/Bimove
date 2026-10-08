@@ -62,20 +62,97 @@ export type DxfGroupShapeProps = {
   thickness: number
   segCount: number // 세그먼트 수 (정보용)
   textsJson: string // JSON: Array<{ x, y, t, h, r?, c? }>
-  hatchesJson: string // JSON: Array<{ d, p, s, a, sp?, n?, c?, f? }> (path, pattern, scale, angle, 간격, 정의선수, color, solidFill)
+  hatchesJson: string // JSON: Array<{ d, p, s, a, sp?, n?, dl?, c?, f? }> (path, pattern, scale, angle, 간격, 정의선수, 정의선, color, solidFill)
 }
 
 type DxfTextEntry = { x: number; y: number; t: string; h: number; r?: number; c?: string; ap?: number; mw?: number; f?: string }
+/** hatchesJson 의 패턴 정의선 한 줄 — a=각도(deg, CCW), s=줄 간격(px), d=dash 길이(px) */
+type DxfDefLine = { a: number; s: number; d?: number[] }
+
 type DxfHatchEntry = {
   d: string; p: string; s: number; a: number
   sp?: number   // DXF 패턴 정의선에서 해석한 실제 간격 (px). 없으면 shape 크기로 추정.
   n?: number    // 패턴 정의선 수. 2 이상이면 격자형 해치.
+  dl?: DxfDefLine[] // 해석된 정의선. 있으면 패턴명 추측 없이 이걸 그대로 그린다.
   c?: string; f?: number; dim?: number
 }
 
 /** 단색 채움인지: DXF gc 70 이 1 이거나 패턴명이 SOLID 계열 (예: "SOLID,_O"). */
 function isSolidHatch(h: DxfHatchEntry): boolean {
   return h.f === 1 || h.p.toUpperCase().split(',')[0] === 'SOLID'
+}
+
+/** 해치 한 칸을 가로지르는 패턴 반복 횟수 한계.
+ *  너무 촘촘하면 통짜 회색으로 뭉개지고, 너무 넓으면 선이 한 줄도 안 보인다. */
+const HATCH_MIN_REPEAT = 4
+const HATCH_MAX_REPEAT = 60
+
+/**
+ * DXF 패턴 정의선 → SVG pattern 들.
+ *
+ * 정의선 하나가 "평행선 한 가족"이라서 정의선마다 pattern 을 하나씩 만들고
+ * 같은 경로에 겹쳐 깐다. 타일은 (dash 한 주기 × 줄 간격) 크기에 y 중앙을
+ * 가로지르는 선 하나 — 회전시키면 정확히 맞물려 반복된다.
+ *
+ * 간격 보정은 **가장 촘촘한 선 기준으로 한 번만** 구해서 전부에 똑같이 곱한다.
+ * 선마다 따로 clamp 하면 정의선 사이의 비율이 깨져서 원본과 다른 그림이 된다.
+ */
+function dxfDefLinePatterns(
+  idBase: string, dl: DxfDefLine[], color: string, dim: number,
+): { ids: string[]; defs: React.ReactElement[] } {
+  const lines = dl.filter(d => d.s > 0 && isFinite(d.s))
+  if (lines.length === 0) return { ids: [], defs: [] }
+
+  const finest = Math.min(...lines.map(d => d.s))
+  const lo = dim / HATCH_MAX_REPEAT, hi = dim / HATCH_MIN_REPEAT
+  const k = finest < lo ? lo / finest : finest > hi ? hi / finest : 1
+
+  const ids: string[] = []
+  const defs: React.ReactElement[] = []
+  lines.forEach((d, li) => {
+    const sp = d.s * k
+    const sw = Math.max(0.4, Math.min(sp * 0.12, 1.5))
+    // DXF dash: 양수=실선, 음수=공백, 0=점. SVG strokeDasharray 는 실선부터
+    // 번갈아 읽으므로 실선으로 시작하게 회전시킨다 (타일 반복이라 위상만 밀림).
+    const src = d.d ?? []
+    const head = src.findIndex(v => v >= 0)
+    const seq = head > 0 ? [...src.slice(head), ...src.slice(0, head)] : src
+    const hasDot = seq.some(v => v === 0)
+    const dashes = head < 0 ? [] : seq.map(v => (v === 0 ? sw * 0.01 : Math.abs(v) * k))
+    const cycle = dashes.reduce((a, b) => a + b, 0)
+    const dashed = cycle > 0.01
+    // 홀수 개면 SVG 가 실선/공백을 뒤집어 가며 두 바퀴 돌려야 한 주기가 된다.
+    const w = dashed ? (dashes.length % 2 === 1 ? cycle * 2 : cycle) : sp * 2
+    const id = `${idBase}-d${li}`
+    ids.push(id)
+    defs.push(
+      <pattern key={id} id={id} width={w} height={sp} patternUnits="userSpaceOnUse"
+        patternTransform={d.a !== 0 ? `rotate(${-d.a})` : undefined}>
+        <line x1={0} y1={sp / 2} x2={w} y2={sp / 2}
+          stroke={color} strokeWidth={sw} opacity={0.85}
+          {...(hasDot ? { strokeLinecap: 'round' as const } : {})}
+          {...(dashed ? { strokeDasharray: dashes.map(v => +v.toFixed(2)).join(' ') } : {})} />
+      </pattern>
+    )
+  })
+  return { ids, defs }
+}
+
+/** 해치 하나의 채움 준비 결과. 정의선이 여러 개면 패턴도 여러 개 겹쳐 그린다. */
+type HatchFill = { ids: string[]; defs: React.ReactElement[]; isSolid: boolean; color: string }
+
+/** 해치 하나 → 채움. DXF 정의선이 있으면 그걸 쓰고, 없으면 패턴명으로 추정한다. */
+function buildHatchFill(
+  h: DxfHatchEntry, idBase: string, color: string, shapeMaxDim: number,
+): HatchFill {
+  if (isSolidHatch(h)) return { ids: [], defs: [], isSolid: true, color }
+  const dim = h.dim ?? shapeMaxDim
+  if (h.dl && h.dl.length > 0) {
+    const r = dxfDefLinePatterns(idBase, h.dl, color, dim)
+    if (r.defs.length > 0) return { ...r, isSolid: false, color }
+  }
+  const def = dxfHatchPatternDef(idBase, h.p, h.s, h.a, color, dim, h.sp, h.n)
+  return { ids: def ? [idBase] : [], defs: def ? [def] : [], isSolid: false, color }
 }
 
 /** DXF 패턴명 → SVG pattern 생성 */
@@ -529,21 +606,14 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
       : h.c
         ? (darkMode ? (isNearBlack(h.c) ? '#aaa' : h.c) : darkenForLightBg(h.c))
         : (darkMode ? '#aaa' : '#666')
-    const patId = `hatch-${shape.id}-${i}`
-    const isSolid = isSolidHatch(h)
-    return {
-      id: patId,
-      def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor, h.dim ?? Math.max(shape.props.w, shape.props.h), h.sp, h.n),
-      isSolid,
-      color: hColor,
-    }
+    return buildHatchFill(h, `hatch-${shape.id}-${i}`, hColor, Math.max(shape.props.w, shape.props.h))
   }), [hatches, grayscale, darkMode, shape.id, shape.props.w, shape.props.h])
 
   return (
     <SVGContainer style={{ overflow: 'visible' }}>
-      {hatchDefs.some(d => d.def) && (
+      {hatchDefs.some(d => d.defs.length > 0) && (
         <defs>
-          {hatchDefs.map(d => d.def)}
+          {hatchDefs.flatMap(d => d.defs)}
         </defs>
       )}
       {matFill && (
@@ -564,11 +634,12 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
               fill={hd.color} stroke="none" opacity={0.85} pointerEvents="none" />
           )
         }
-        // 패턴 해치: 패턴만 (단색 배경을 깔면 큰 해치가 회색 덩어리로 보인다)
-        return (
-          <path key={`h${i}`} d={h.d} fill={`url(#${hd.id})`} stroke="none"
+        // 패턴 해치: 패턴만 (단색 배경을 깔면 큰 해치가 회색 덩어리로 보인다).
+        // 정의선이 여러 개면 패턴마다 path 를 하나씩 겹쳐서 교차 해치를 만든다.
+        return hd.ids.map(pid => (
+          <path key={pid} d={h.d} fill={`url(#${pid})`} stroke="none"
             opacity={0.85} pointerEvents="none" />
-        )
+        ))
       })}
       {shape.props.pathData && (
         <path
@@ -795,18 +866,17 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
       if (shape.props.hatchesJson) hatches = JSON.parse(shape.props.hatchesJson)
     } catch { /* ignore */ }
 
-    const svgHatchDefs = hatches.map((h, i) => {
-      const hColor = h.c ? darkenForLightBg(h.c) : '#666'
-      const patId = `hatch-svg-${shape.id}-${i}`
-      const isSolid = isSolidHatch(h)
-      return { id: patId, def: isSolid ? null : dxfHatchPatternDef(patId, h.p, h.s, h.a, hColor, h.dim ?? Math.max(shape.props.w, shape.props.h), h.sp, h.n), isSolid, color: hColor }
-    })
+    const svgHatchDefs = hatches.map((h, i) => buildHatchFill(
+      h, `hatch-svg-${shape.id}-${i}`,
+      h.c ? darkenForLightBg(h.c) : '#666',
+      Math.max(shape.props.w, shape.props.h),
+    ))
 
     return (
       <g>
-        {svgHatchDefs.some(d => d.def) && (
+        {svgHatchDefs.some(d => d.defs.length > 0) && (
           <defs>
-            {svgHatchDefs.map(d => d.def)}
+            {svgHatchDefs.flatMap(d => d.defs)}
           </defs>
         )}
         {hatches.map((h, i) => {
@@ -814,7 +884,9 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
           if (hd.isSolid) {
             return <path key={`h${i}`} d={h.d} fill={hd.color} stroke="none" opacity={0.85} />
           }
-          return <path key={`h${i}`} d={h.d} fill={`url(#${hd.id})`} stroke="none" opacity={0.85} />
+          return hd.ids.map(pid => (
+            <path key={pid} d={h.d} fill={`url(#${pid})`} stroke="none" opacity={0.85} />
+          ))
         })}
         {shape.props.pathData && (
           <path

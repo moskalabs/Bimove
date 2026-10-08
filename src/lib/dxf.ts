@@ -5,7 +5,7 @@ import { createShapeId, type Editor } from 'tldraw'
 import { getScaleConfig } from './scaleConfig'
 import { reloadForStaleChunk } from './lazyWithReload'
 import { getDefaultWallThicknessMm } from './settings'
-import { ACI_TO_HEX as ACI_TABLE, trueColorToHex as trueColorToHexShared, decodeDxfSpecialChars as decodeSpecialCharsShared, STRUCTURAL_KEYWORDS, type ViewportClip } from './dxf-shared'
+import { ACI_TO_HEX as ACI_TABLE, trueColorToHex as trueColorToHexShared, decodeDxfSpecialChars as decodeSpecialCharsShared, STRUCTURAL_KEYWORDS, defLineSpacing, type ViewportClip, type HatchPatternLine } from './dxf-shared'
 
 const MAX_SEGMENTS = 100_000
 
@@ -362,6 +362,7 @@ export type DxfHatch = {
   patternSpacing: number // 패턴 정의선 간격 (도면 단위). 0 = 정의선 없음
   patternDefAngle: number// 첫 패턴 정의선 각도 (deg, CCW)
   patternDefLines: number// 패턴 정의선 수 (2 이상 = 격자형)
+  patternDefs: HatchPatternLine[] // 해석된 정의선. 비어 있으면 패턴명으로 추정해야 한다
   solidFill: boolean     // gc 70: 1 = 단색 채움
   patternAngle: number   // 패턴 회전 (도, 기본 0)
   color?: string
@@ -742,6 +743,7 @@ export function parseDxfHatches(
     const solidFill = (e.solidFill as boolean) ?? ((e.fillType as string) === 'SOLID')
     // dxf-parser 는 패턴 정의선(gc 78/53/45/46)을 노출하지 않는다 → 0 (shape 쪽이 추정값으로 폴백)
     const patternSpacing = 0, patternDefAngle = 0, patternDefLines = 0
+    const patternDefs: HatchPatternLine[] = []
 
     // 각 boundary를 SVG path로 변환
     const svgParts: string[] = []
@@ -772,6 +774,7 @@ export function parseDxfHatches(
         patternSpacing,
         patternDefAngle,
         patternDefLines,
+        patternDefs,
         solidFill,
         color,
         layer,
@@ -1199,6 +1202,7 @@ export function parseRawHatches(
     let patternSpacing = 0
     let patternDefAngle = 0
     let patternDefLines = 0
+    const patternDefs: HatchPatternLine[] = []
     let numBoundaryPaths = 0
 
     // HATCH 헤더 파싱 (91코드 = boundary path 수 전까지)
@@ -1446,25 +1450,34 @@ export function parseRawHatches(
     }
 
     // --- 패턴 정의 데이터 (boundary path 뒤): gc 52 각도, 41 축척, 78 정의선 수,
-    // 정의선마다 53 angle / 43,44 base / 45,46 offset. 47 또는 98 에서 끝난다. ---
-    let defDx = 0
-    let seenDefAngle = false
-    while (i < pairs.length && pairs[i].code !== 0) {
+    // 정의선마다 53 angle / 43,44 base / 45,46 offset / 49 dash. 47 또는 98 에서 끝난다.
+    // 정의선은 축척·각도가 이미 반영된 최종값이라, 있으면 패턴명을 볼 필요가 없다. ---
+    let dAngle = 0, dOffX = 0, dOffY = 0, dDashes: number[] = []
+    let inDef = false
+    const flushDef = () => {
+      if (!inDef) return
+      const sp = defLineSpacing(dAngle, dOffX, dOffY)
+      if (sp > 1e-9) patternDefs.push({ angle: dAngle, spacing: sp, dashes: dDashes })
+      inDef = false; dOffX = 0; dOffY = 0; dDashes = []
+    }
+    while (i < pairs.length) {
       const c = pairs[i].code, v = pairs[i].value
-      if (c === 47 || c === 98 || c === 450) break
+      if (c === 0 || c === 47 || c === 98 || c === 450) break
       if (c === 52) patternAngle = parseFloat(v) || 0
       else if (c === 41) patternScale = parseFloat(v) || 1
       else if (c === 78) patternDefLines = parseInt(v) || 0
-      else if (c === 53) {
-        if (!seenDefAngle) { patternDefAngle = parseFloat(v) || 0; seenDefAngle = true }
-      }
-      else if (c === 45) defDx = parseFloat(v) || 0
-      else if (c === 46) {
-        const d = Math.hypot(defDx, parseFloat(v) || 0)
-        if (d > 1e-9 && (patternSpacing === 0 || d < patternSpacing)) patternSpacing = d
-        defDx = 0
+      else if (c === 53) { flushDef(); inDef = true; dAngle = parseFloat(v) || 0 }
+      else if (inDef) {
+        if (c === 45) dOffX = parseFloat(v) || 0
+        else if (c === 46) dOffY = parseFloat(v) || 0
+        else if (c === 49) dDashes.push(parseFloat(v) || 0)
       }
       i++
+    }
+    flushDef()
+    if (patternDefs.length > 0) {
+      patternSpacing = Math.min(...patternDefs.map(d => d.spacing))
+      patternDefAngle = patternDefs[0].angle
     }
     // 남은 꼬리(seed point 등) 스킵: 다음 entity(code=0)까지
     while (i < pairs.length && pairs[i].code !== 0) i++
@@ -1478,6 +1491,7 @@ export function parseRawHatches(
         patternSpacing,
         patternDefAngle,
         patternDefLines,
+        patternDefs,
         solidFill,
         color,
         layer,
@@ -2003,7 +2017,7 @@ export function getLastImportReport(): SkipReport {
 /** 좌표 변환된 텍스트 */
 type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string; attachPt?: number; width?: number; fontName?: string }
 /** 좌표 변환된 해치 */
-type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; patternSpacing: number; patternDefAngle: number; patternDefLines: number; solidFill?: boolean; color?: string; layer: string; cx: number; cy: number }
+type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; patternSpacing: number; patternDefAngle: number; patternDefLines: number; patternDefs: HatchPatternLine[]; solidFill?: boolean; color?: string; layer: string; cx: number; cy: number }
 
 const COORD_LIMIT = 1e8
 const MAX_FINAL_SEGS = 100_000
@@ -2326,18 +2340,34 @@ export function computeMinTextHeight(canvasSpanPx: number): number {
   return Math.max(span / MAX_CANVAS_SPAN_PX, 0.1)
 }
 
+/** hatchesJson 에 실어 보낼 정의선 최대 개수. AR-CONC 처럼 13개인 패턴도 있는데
+ *  전부 깔면 SVG pattern 이 그만큼 늘어나고 어차피 회색 덩어리로 보인다. */
+const MAX_PACKED_DEF_LINES = 4
+
 /**
  * hatchesJson 한 항목의 패턴 정보.
  * 패턴 정의선(gc 78)이 있으면 그 각도/간격이 이미 해석된 최종값이므로
- * gc 52(각도)/41(축척) 대신 정의선 값을 쓴다.
+ * gc 52(각도)/41(축척) 대신 정의선 값을 쓴다. dl 이 있으면 렌더 쪽은
+ * 패턴명을 아예 보지 않고 정의선만 그린다.
  */
 function packHatchPattern(hh: PxHatch) {
   const hasDef = hh.patternDefLines > 0 && hh.patternSpacing > 0
+  // 간격 넓은 쪽이 눈에 보이는 선 → 잘릴 땐 촘촘한 쪽을 버린다.
+  const dl = hh.patternDefs
+    .filter(d => d.spacing > 0 && isFinite(d.spacing))
+    .sort((a, b) => b.spacing - a.spacing)
+    .slice(0, MAX_PACKED_DEF_LINES)
+    .map(d => ({
+      a: +d.angle.toFixed(2),
+      s: +d.spacing.toFixed(2),
+      ...(d.dashes.length > 0 ? { d: d.dashes.map(v => +v.toFixed(2)) } : {}),
+    }))
   return {
     p: hh.patternName,
     s: hh.patternScale,
     a: hasDef ? hh.patternDefAngle : hh.patternAngle,
     ...(hasDef ? { sp: +hh.patternSpacing.toFixed(2), n: hh.patternDefLines } : {}),
+    ...(dl.length > 0 ? { dl } : {}),
   }
 }
 
@@ -2364,6 +2394,12 @@ function transformWorkerHatches(workerHatches: HatchData[], textScale: number): 
         patternSpacing: h.patternSpacing * textScale,
         patternDefAngle: h.patternDefAngle,
         patternDefLines: h.patternDefLines,
+        // 정의선의 간격·dash 길이도 같은 배율로 px 로 바꿔 둔다 (각도는 그대로).
+        patternDefs: h.patternDefs.map(d => ({
+          angle: d.angle,
+          spacing: d.spacing * textScale,
+          dashes: d.dashes.map(v => v * textScale),
+        })),
         solidFill: h.solidFill,
         color: h.color,
         layer: h.layer,
@@ -2928,7 +2964,7 @@ export async function commitCadImportV2(
 
         // 해치 수집: 이 클러스터 바운딩박스 내의 HATCH
         const hatchMargin = 50
-        const localHatches: Array<{ d: string; p: string; s: number; a: number; sp?: number; n?: number; c?: string; f?: number; dim?: number }> = []
+        const localHatches: Array<{ d: string; p: string; s: number; a: number; sp?: number; n?: number; dl?: Array<{ a: number; s: number; d?: number[] }>; c?: string; f?: number; dim?: number }> = []
         for (let hi = 0; hi < pxHatches.length; hi++) {
           if (assignedHatchIdx.has(hi)) continue
           const hh = pxHatches[hi]

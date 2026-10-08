@@ -10,7 +10,9 @@
  * - Zero npm dependencies (dxf-shared is internal)
  */
 
-import { aciToHex, trueColorToHex, detectPadding, makeGcFormatter, decodeDxfSpecialChars, cleanMtextFormatting } from './dxf-shared'
+import { aciToHex, trueColorToHex, detectPadding, makeGcFormatter, decodeDxfSpecialChars, cleanMtextFormatting, defLineSpacing, type HatchPatternLine } from './dxf-shared'
+
+export type { HatchPatternLine }
 
 // ===== Public message types (also used by main thread) =====
 
@@ -53,6 +55,7 @@ export interface HatchData {
   patternSpacing: number // 패턴 정의선 간격, 도면 단위. 0 = 정의선 없음
   patternDefAngle: number// 첫 패턴 정의선 각도 (deg, CCW)
   patternDefLines: number// gc 78: 패턴 정의선 수 (2 이상이면 격자형)
+  patternDefs: HatchPatternLine[] // 해석된 정의선. 비어 있으면 패턴명으로 추정해야 한다
   solidFill: boolean     // gc 70: 1 = 단색 채움 (패턴명과 무관)
   color?: string         // hex color
   layer: string
@@ -889,7 +892,6 @@ export function parseMultiLeaderLines(chunk: string): number[][][] {
 
 // ===== HATCH entity parser =====
 
-/** Parse a HATCH entity from its group-code text chunk → HatchData or null */
 /**
  * 경계 edge 데이터가 끝났음을 알리는 group code.
  * 72/92 = 다음 edge·path, 0 = 다음 엔티티, 97 = source object 목록,
@@ -900,6 +902,7 @@ function isHatchEdgeEnd(c: number): boolean {
   return c === 72 || c === 92 || c === 0 || c === 75 || c === 76 || c === 97 || c === 98
 }
 
+/** Parse a HATCH entity from its group-code text chunk → HatchData or null */
 function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null {
   const lines = chunk.split('\n')
   // Build sequential pairs for stateful parsing
@@ -1158,25 +1161,33 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
   // gc 75 style, 76 type, 52 angle, 41 scale, 77 double, 78 정의선 수,
   // 정의선마다 53 angle / 43,44 base / 45,46 offset / 79,49 dash.
   // 47(pixel size) 또는 98(seed point) 에서 끝난다.
-  let defDx = 0
-  let seenDefAngle = false
+  const patternDefs: HatchPatternLine[] = []
+  let dAngle = 0, dOffX = 0, dOffY = 0, dDashes: number[] = []
+  let inDef = false
+  const flushDef = () => {
+    if (!inDef) return
+    const sp = defLineSpacing(dAngle, dOffX, dOffY)
+    if (sp > 1e-9) patternDefs.push({ angle: dAngle, spacing: sp, dashes: dDashes })
+    inDef = false; dOffX = 0; dOffY = 0; dDashes = []
+  }
   while (pi < pairs.length) {
     const c = pairs[pi].code, v = pairs[pi].value
     if (c === 0 || c === 47 || c === 98 || c === 450) break
     if (c === 52) patternAngle = parseFloat(v) || 0
     else if (c === 41) patternScale = parseFloat(v) || 1
     else if (c === 78) patternDefLines = parseInt(v) || 0
-    else if (c === 53) {
-      if (!seenDefAngle) { patternDefAngle = parseFloat(v) || 0; seenDefAngle = true }
-    }
-    else if (c === 45) defDx = parseFloat(v) || 0
-    else if (c === 46) {
-      // 정의선 간격 = offset 벡터 길이 (도면 단위). 여러 개면 가장 촘촘한 쪽을 쓴다.
-      const d = Math.hypot(defDx, parseFloat(v) || 0)
-      if (d > 1e-9 && (patternSpacing === 0 || d < patternSpacing)) patternSpacing = d
-      defDx = 0
+    else if (c === 53) { flushDef(); inDef = true; dAngle = parseFloat(v) || 0 }
+    else if (inDef) {
+      if (c === 45) dOffX = parseFloat(v) || 0
+      else if (c === 46) dOffY = parseFloat(v) || 0
+      else if (c === 49) dDashes.push(parseFloat(v) || 0)
     }
     pi++
+  }
+  flushDef()
+  if (patternDefs.length > 0) {
+    patternSpacing = Math.min(...patternDefs.map(d => d.spacing))
+    patternDefAngle = patternDefs[0].angle
   }
 
   if (svgParts.length === 0 || ptCount === 0) return null
@@ -1189,6 +1200,7 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
     patternSpacing,
     patternDefAngle,
     patternDefLines,
+    patternDefs,
     solidFill,
     color,
     layer,

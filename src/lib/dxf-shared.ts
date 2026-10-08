@@ -170,3 +170,27 @@ export type ViewportClip = { minX: number; minY: number; maxX: number; maxY: num
 
 /** 구조 레이어 키워드 매칭 패턴 */
 export const STRUCTURAL_KEYWORDS = /wall|window|win(?!ter)|door|stair|column|beam|slab|elev|건축|벽|창문|문/i
+
+/**
+ * HATCH 패턴 정의선 하나 (gc 53/45/46/49).
+ *
+ * HATCH 엔티티에 박혀 있는 정의선은 패턴명(.pat)을 축척·각도까지 반영해
+ * 이미 해석한 최종 결과다. 즉 이것만 그리면 어떤 패턴이든 원본대로 나온다.
+ */
+export interface HatchPatternLine {
+  angle: number    // gc 53: 선 각도 (deg, CCW)
+  spacing: number  // 줄 간격 (도면 단위, 선에 수직)
+  dashes: number[] // gc 49: 선 방향 길이. 양수=실선, 음수=공백, 0=점
+}
+
+/**
+ * 패턴 정의선의 줄 간격 (선에 수직인 거리).
+ *
+ * gc 45/46 오프셋은 선 자체 좌표계가 아니라 **WCS** 기준이다 (90도 선의
+ * 오프셋에 cos(90) 반올림 오차가 남아 있는 걸로 확인). 선 방향이 아닌
+ * 수직 성분만 뽑아야 하고, 선 방향 성분은 dash 위상 밀림이라 무시한다.
+ */
+export function defLineSpacing(angleDeg: number, offX: number, offY: number): number {
+  const t = angleDeg * Math.PI / 180
+  return Math.abs(-offX * Math.sin(t) + offY * Math.cos(t))
+}

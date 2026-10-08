@@ -52,7 +52,7 @@ const text = (x: number, y: number, t: string): TextData => ({
 
 const hatch = (cx: number, cy: number): HatchData => ({
   pathData: `M${cx - 100},${cy - 100}L${cx + 100},${cy - 100}L${cx + 100},${cy + 100}Z`,
-  patternName: 'ANSI31', patternScale: 1, patternAngle: 0, patternSpacing: 0, patternDefAngle: 0, patternDefLines: 0, solidFill: false,
+  patternName: 'ANSI31', patternScale: 1, patternAngle: 0, patternSpacing: 0, patternDefAngle: 0, patternDefLines: 0, patternDefs: [], solidFill: false,
   layer: 'HATCH', cx, cy,
 })
 
