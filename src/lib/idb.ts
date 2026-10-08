@@ -18,13 +18,14 @@ import { scopedKey } from './scopedStorage'
 const DB_NAME = 'bimova'
 
 /** 스키마 버전. 스토어를 추가하면 올린다 (STORES 도 같이). */
-const DB_VERSION = 2
+const DB_VERSION = 3
 
 /** 이 DB 가 가진 오브젝트 스토어 전부. onupgradeneeded 가 없는 것만 만든다.
  *
- *  versions  — 버전 히스토리 (메타 목록 + 스냅샷 본문)
- *  snapshots — 프로젝트 현재 도면 (projectId 하나당 레코드 하나) */
-const STORES = ['versions', 'snapshots'] as const
+ *  versions   — 버전 히스토리 (메타 목록 + 스냅샷 본문)
+ *  snapshots  — 프로젝트 현재 도면 통짜 스냅샷 (레거시 + 마이그레이션 경로)
+ *  docrecords — 프로젝트 현재 도면을 **레코드 단위**로 쪼갠 것 (snapshotRecords.ts) */
+const STORES = ['versions', 'snapshots', 'docrecords'] as const
 export type IdbStore = (typeof STORES)[number]
 
 export function idbAvailable(): boolean {
@@ -124,6 +125,94 @@ export async function idbDelete(store: IdbStore, key: string): Promise<boolean> 
     console.warn('[idb] 삭제 실패', store, key, err)
     return false
   }
+}
+
+/** 접두사로 시작하는 키 전부를 덮는 범위.
+ *
+ *  \uffff 는 유효한 유니코드 코드 유닛 중 사실상 가장 큰 값이라, IndexedDB 의
+ *  문자열 정렬(UTF-16 코드 유닛 순서)에서 같은 접두사를 가진 어떤 키보다도
+ *  뒤에 온다. 즉 [prefix, prefix+\uffff] 는 "prefix 로 시작하는 전부" 다. */
+function prefixRange(prefix: string): IDBKeyRange {
+  const lo = scopedKey(prefix)
+  return IDBKeyRange.bound(lo, lo + '\uffff')
+}
+
+/** 한 트랜잭션 안에서 여러 요청을 돌린다. */
+export type IdbOp =
+  | { type: 'put'; key: string; value: unknown }
+  | { type: 'delete'; key: string }
+  | { type: 'deleteRange'; prefix: string }
+
+/** 여러 put/delete 를 **한 트랜잭션으로** 묶어 쓴다. 성공하면 true.
+ *
+ *  withStore 는 요청을 하나만 다룬다. 증분 저장은 바뀐 레코드 수십 개를 한꺼번에
+ *  넣어야 하고, 그게 **원자적**이어야 한다 — 중간에 탭이 죽어서 절반만 반영되면
+ *  디스크에 옛 레코드와 새 레코드가 섞인 도면이 남는다. 트랜잭션이 하나면
+ *  실패 시 통째로 롤백된다. */
+export async function idbBatch(store: IdbStore, ops: IdbOp[]): Promise<boolean> {
+  if (ops.length === 0) return true
+  try {
+    const db = await openDb()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(store, 'readwrite')
+      const os = tx.objectStore(store)
+      try {
+        for (const op of ops) {
+          if (op.type === 'put') os.put(op.value, scopedKey(op.key))
+          else if (op.type === 'delete') os.delete(scopedKey(op.key))
+          else os.delete(prefixRange(op.prefix))
+        }
+      } catch (err) {
+        // put() 은 복제 불가한 값을 만나면 **그 자리에서** 던진다. 그냥 빠져나오면
+        // 이미 큐에 들어간 앞의 요청들이 그대로 커밋돼서, 원자성을 보장하려고
+        // 만든 함수가 정확히 반쪽짜리 쓰기를 남긴다. 명시적으로 되돌린다.
+        tx.abort()
+        reject(err)
+        return
+      }
+      tx.oncomplete = () => resolve()
+      tx.onabort = () => reject(tx.error ?? new Error('트랜잭션 중단'))
+      tx.onerror = () => reject(tx.error ?? new Error('트랜잭션 실패'))
+    })
+    return true
+  } catch (err) {
+    console.warn('[idb] 일괄 쓰기 실패 (용량 초과?)', store, `${ops.length}건`, err)
+    return false
+  }
+}
+
+/** 접두사로 시작하는 레코드 전부. 키는 **접두사를 떼고** 돌려준다.
+ *
+ *  실패하면 null 이다 — 빈 Map 과 구분해야 한다. "아직 저장된 게 없다" 와
+ *  "읽다가 터졌다" 를 섞으면, 멀쩡한 캐시가 있는데 빈 도면을 띄울 수 있다. */
+export async function idbGetRange<T>(store: IdbStore, prefix: string): Promise<Map<string, T> | null> {
+  try {
+    const db = await openDb()
+    const skip = scopedKey(prefix).length
+    const out = new Map<string, T>()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(store, 'readonly')
+      const req = tx.objectStore(store).openCursor(prefixRange(prefix))
+      req.onsuccess = () => {
+        const cur = req.result
+        if (!cur) return
+        out.set(String(cur.key).slice(skip), cur.value as T)
+        cur.continue()
+      }
+      tx.oncomplete = () => resolve()
+      tx.onabort = () => reject(tx.error ?? req.error ?? new Error('트랜잭션 중단'))
+      tx.onerror = () => reject(tx.error ?? req.error ?? new Error('트랜잭션 실패'))
+    })
+    return out
+  } catch (err) {
+    console.warn('[idb] 범위 읽기 실패', store, prefix, err)
+    return null
+  }
+}
+
+/** 접두사로 시작하는 레코드 전부 삭제. */
+export async function idbDeleteRange(store: IdbStore, prefix: string): Promise<boolean> {
+  return idbBatch(store, [{ type: 'deleteRange', prefix }])
 }
 
 /** 스토어의 모든 키 (유저 스코프 접두사가 붙은 그대로). */

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Suspense } from 'react'
-import { Tldraw } from 'tldraw'
+import { Tldraw, createSessionStateSnapshotSignal } from 'tldraw'
 import type { Editor, TLEditorSnapshot } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { lazyWithReload } from './lib/lazyWithReload'
@@ -36,7 +36,8 @@ import { CommentTool } from './tools/CommentTool'
 import { DimensionTool } from './tools/DimensionTool'
 import { EditorContext } from './context/EditorContext'
 import { ProjectContext } from './context/ProjectContext'
-import { loadSnapshot, saveSnapshot, saveThumbnail, touchProject, resolveSnapshot } from './lib/projectStore'
+import { loadSnapshot, dropLegacySnapshot, saveThumbnail, touchProject, resolveSnapshot } from './lib/projectStore'
+import { readRecordSnapshot, writeFullRecords, writeRecordDiff, type SnapshotLike } from './lib/snapshotRecords'
 import { createDebouncedSaver } from './lib/debouncedSave'
 import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, saveProjectVersion } from './lib/supabaseSync'
 import { saveVersion, getVersion, type Version } from './lib/versions'
@@ -163,7 +164,10 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
           serverUpdatedAtRef.current = result.updatedAt
         }
       } catch { /* Supabase 실패 */ }
-      const saved = resolveSnapshot(projectId, server, await loadSnapshot(projectId))
+      // 로컬 후보는 레코드 저장본이 우선이다. null 이면 아직 레코드로 저장된
+      // 적이 없는(또는 읽기가 실패한) 프로젝트라 옛 통짜 스냅샷으로 폴백한다.
+      const local = (await readRecordSnapshot(projectId)) ?? (await loadSnapshot(projectId))
+      const saved = resolveSnapshot(projectId, server, local)
       if (saved) {
         try { ed.loadSnapshot(saved as TLEditorSnapshot) } catch { /* ignore corrupt */ }
       }
@@ -220,10 +224,22 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
     if (!editor) return
     let supabaseTimer = 0
     let dirtySinceAuto = false
-    let latestSnapshot: object | null = null
+    let serverDirty = false        // 마지막 서버 동기화 뒤에 바뀐 게 있나
     let quotaWarned = false        // 용량 초과 토스트는 한 번만
     let quotaFailedAt = 0          // 마지막 용량 초과 시각 (0 = 없음)
     const QUOTA_RETRY_MS = 30_000   // 용량 초과 후 로컬 저장 재시도 간격
+
+    // 세션(카메라/선택) 상태 신호. editor.getSnapshot() 은 세션이 아직 준비되지
+    // 않았으면 예외를 던지는데, 안에서 읽는 건 결국 이 신호다 — 직접 읽어서
+    // null 을 조용히 다룬다.
+    const sessionState$ = createSessionStateSnapshotSignal(editor.store)
+
+    /** 서버로 보낼 통짜 스냅샷. 세션이 아직 없으면 null. */
+    const buildFullSnapshot = (): SnapshotLike | null => {
+      const session = sessionState$.get()
+      if (!session) return null
+      return { document: editor.store.getStoreSnapshot(), session }
+    }
 
     // 썸네일 (200+ shapes일 때 스킵 — getSvgString이 너무 무거움)
     const updateThumbnail = async () => {
@@ -239,34 +255,73 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
       } catch { /* ignore thumbnail errors */ }
     }
 
-    // 로컬(IndexedDB) 저장은 비동기다 — 앞의 쓰기가 끝나기 전에 다음 걸
-    // 시작하면 순서가 뒤집혀 낡은 스냅샷이 최신을 덮어쓸 수 있다. 한 번에
-    // 하나만 돌리고, 그 사이에 들어온 건 **가장 마지막 것만** 이어서 쓴다
-    // (중간 것들은 어차피 더 새 것에 덮일 테니 버려도 된다).
-    let localWriteInFlight = false
-    let queuedSnapshot: object | null = null
+    // 로컬 저장은 **레코드 단위**다 (snapshotRecords.ts 참고). tldraw 가 넘겨준
+    // 변경 목록을 모아뒀다가 바뀐 레코드만 쓴다 — 손대지 않은 수 MB 짜리
+    // dxfgroup 은 디스크에 그대로 누워 있는다.
+    const pendingPuts = new Map<string, unknown>()
+    const pendingDels = new Set<string>()
+    // 마운트 직후 한 번은 전체를 쓴다. 지금 화면에 올라간 도면은 서버에서 왔을
+    // 수도 있어서 디스크의 레코드가 이것과 전혀 다를 수 있다 — 그 위에 diff 를
+    // 얹으면 두 도면이 섞인 괴물이 된다.
+    let needFullWrite = true
+    let legacyBlobDropped = false
+    let localDirty = false
+    let lastSessionJson = ''
 
-    const persistLocal = async (snapshot: object) => {
-      if (localWriteInFlight) { queuedSnapshot = snapshot; return }
+    // 쓰기가 겹치면 순서가 뒤집힌다. 한 번에 하나만 돌리고, 그 사이에 쌓인
+    // 변경은 루프를 한 바퀴 더 돌아 이어서 쓴다.
+    let localWriteInFlight = false
+
+    const persistLocal = async () => {
+      if (localWriteInFlight) return
       localWriteInFlight = true
       try {
-        let next: object | null = snapshot
-        while (next) {
-          const ok = await saveSnapshot(projectId, next)
-          if (ok) {
-            // updatedAt 은 성공했을 때만 올린다 — 실패했는데 올리면
-            // resolveSnapshot() 이 낡은 로컬을 "최신"으로 착각한다.
-            touchProject(projectId)
-            quotaFailedAt = 0
+        while (localDirty || needFullWrite) {
+          localDirty = false
+          const session = sessionState$.get() ?? undefined
+          const sessionJson = JSON.stringify(session ?? null)
+          const full = needFullWrite
+          const puts = new Map(pendingPuts)
+          const dels = new Set(pendingDels)
+          // 포인터만 움직여도 리스너는 깨어난다 — 쓸 게 없으면 쓰지 않는다.
+          if (!full && puts.size === 0 && dels.size === 0 && sessionJson === lastSessionJson) break
+          pendingPuts.clear()
+          pendingDels.clear()
+
+          let ok: boolean
+          if (full) {
+            // 모아둔 diff 는 버린다 — 전체 쓰기에 어차피 다 들어간다.
+            needFullWrite = false
+            const snapshot = buildFullSnapshot()
+            if (!snapshot) { needFullWrite = true; break }  // 세션이 아직 없다. 다음 틱에.
+            ok = await writeFullRecords(projectId, snapshot)
           } else {
+            const meta = { schema: editor.store.schema.serialize(), session }
+            ok = await writeRecordDiff(projectId, puts, dels, meta)
+          }
+
+          if (!ok) {
+            // 반쪽만 쓰였을 수 있으니 다음 기회엔 전체를 다시 쓴다. 지금 바로
+            // 또 쓰지는 않는다 — 용량 초과라면 연달아 또 실패할 뿐이다.
+            needFullWrite = true
             quotaFailedAt = Date.now()
             if (!quotaWarned) {
               quotaWarned = true
               toast('이 기기에 도면을 캐시하지 못했습니다. 작업은 서버에 저장되지만, 오프라인에서는 열 수 없습니다.', 'error')
             }
+            break
           }
-          next = queuedSnapshot
-          queuedSnapshot = null
+
+          lastSessionJson = sessionJson
+          quotaFailedAt = 0
+          // updatedAt 은 성공했을 때만 올린다 — 실패했는데 올리면
+          // resolveSnapshot() 이 낡은 로컬을 "최신"으로 착각한다.
+          touchProject(projectId)
+          if (full && !legacyBlobDropped) {
+            // 레코드가 제대로 자리잡았으니 옛 통짜 스냅샷은 자리만 차지한다.
+            legacyBlobDropped = true
+            void dropLegacySnapshot(projectId)
+          }
         }
       } finally {
         localWriteInFlight = false
@@ -274,10 +329,6 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
     }
 
     const saver = createDebouncedSaver(reason => {
-      // 서버 동기화용 스냅샷은 로컬 저장 성공 여부와 무관하게 항상 갱신한다.
-      const snapshot = editor.getSnapshot()
-      latestSnapshot = snapshot
-
       // 저장 실패 뒤에는 로컬 저장을 잠깐 쉰다. 공간이 나면 다시 되도록
       // 영구 포기는 안 하고 간격만 벌린다.
       //
@@ -286,7 +337,7 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
       // 쓰고 있으니 여기서 잃을 수 있는 건 최대 1.5초 분량이고, 같은 내용이
       // 5초 서버 동기화로도 올라간다.
       const backingOff = reason === 'timer' && Date.now() - quotaFailedAt < QUOTA_RETRY_MS
-      if (!backingOff) void persistLocal(snapshot)
+      if (!backingOff) void persistLocal()
 
       // flush 는 언마운트/탭 종료 직전이다 — 무거운 썸네일은 건너뛴다
       if (reason === 'timer') void updateThumbnail()
@@ -296,10 +347,36 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
     const flushOnHide = () => saver.flush()
     window.addEventListener('pagehide', flushOnHide)
 
-    const unsub = editor.store.listen(() => {
+    // 변경 목록에서 document 스코프 레코드만 모은다. 세션(카메라/선택/인스턴스)은
+    // 레코드로 쪼개지 않고 meta 에 통째로 들어가므로 여기선 건너뛴다.
+    const docTypes = editor.store.scopedTypes.document
+    const unsub = editor.store.listen(entry => {
+      const { added, updated, removed } = entry.changes
+      for (const rec of Object.values(added)) {
+        if (!docTypes.has(rec.typeName)) continue
+        pendingPuts.set(rec.id, rec)
+        pendingDels.delete(rec.id)
+      }
+      for (const [, to] of Object.values(updated)) {
+        if (!docTypes.has(to.typeName)) continue
+        pendingPuts.set(to.id, to)
+        pendingDels.delete(to.id)
+      }
+      for (const rec of Object.values(removed)) {
+        if (!docTypes.has(rec.typeName)) continue
+        pendingPuts.delete(rec.id)
+        pendingDels.add(rec.id)
+      }
       dirtySinceAuto = true
+      serverDirty = true
+      localDirty = true
       saver.schedule()
     })
+
+    // 아무것도 건드리지 않아도 한 번은 로컬에 내려놓는다. 서버에서 받아온
+    // 도면이면 디스크에 레코드가 아직 없어서, 여기서 쓰지 않으면 오프라인
+    // 캐시가 비어 있는 채로 남는다.
+    saver.schedule()
 
     // Supabase 동기화 (5초 디바운스, optimistic locking)
     let lastServerUpdatedAt: string | undefined = serverUpdatedAtRef.current
@@ -308,9 +385,12 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
     let backedUpServerAt: string | undefined    // 같은 서버 버전을 반복 백업하지 않기
 
     supabaseTimer = window.setInterval(async () => {
-      if (!latestSnapshot || syncPaused) return
-      const snap = latestSnapshot
-      latestSnapshot = null
+      if (!serverDirty || syncPaused) return
+      // 통짜 스냅샷은 이제 여기서만 만든다 — 로컬 저장(1.5초)은 레코드 단위라
+      // 필요 없다. 즉 수 MB 직렬화가 1.5초마다에서 5초마다로 줄었다.
+      const snap = buildFullSnapshot()
+      if (!snap) return
+      serverDirty = false
       try {
         const result = await saveSnapshotToSupabase(projectId, snap, undefined, lastServerUpdatedAt)
         if (result.conflict) {
@@ -344,6 +424,7 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
         }
       } catch (err) {
         console.warn('[supabase-sync] snapshot save failed', err)
+        serverDirty = true   // 다음 틱에 다시 시도
         if (!syncFailed) {
           toast('서버 동기화에 실패했습니다. 로컬에 저장됩니다.', 'error')
           syncFailed = true
@@ -376,9 +457,9 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
       // 어디에도 저장되지 않았고, 다시 들어오면 사라져 있었다.
       saver.flush()
 
-      const snap = latestSnapshot
-      latestSnapshot = null
-      if (snap && !syncPaused) {
+      const snap = serverDirty && !syncPaused ? buildFullSnapshot() : null
+      serverDirty = false
+      if (snap) {
         // 언마운트 뒤에도 fetch 는 계속 진행된다. 충돌이면 서버를 건드리지 않고
         // 넘어간다 — 로컬에는 이미 남아 있고, 다음 진입 때 isLocalNewer 가 집어낸다.
         void saveSnapshotToSupabase(projectId, snap, undefined, lastServerUpdatedAt)

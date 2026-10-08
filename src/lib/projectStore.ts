@@ -1,6 +1,7 @@
 import { scopedGet, scopedSet, scopedRemove } from './scopedStorage'
 import { clearVersions } from './versions'
 import { idbGet, idbSet, idbDelete, requestPersistentStorage } from './idb'
+import { deleteRecords } from './snapshotRecords'
 
 export type Project = {
   id: string
@@ -47,6 +48,7 @@ export function deleteProject(id: string) {
   // 도면 본문도 정리. 비동기지만 기다리지 않는다 — 프로젝트는 이미 목록에서
   // 빠졌고, 남은 스냅샷 레코드는 아무도 못 찾는다.
   void idbDelete('snapshots', id)
+  void deleteRecords(id)
   // 버전 히스토리도 함께 정리. IndexedDB 라 비동기지만 기다리지 않는다 —
   // 프로젝트는 이미 목록에서 빠졌고, 남은 버전 레코드는 아무도 못 찾는다.
   // (clearVersions 가 레거시 localStorage 키도 같이 치운다.)
@@ -140,6 +142,17 @@ export function resolveSnapshot(
 export async function saveSnapshot(id: string, snapshot: object): Promise<boolean> {
   void requestPersistentStorage()
   return idbSet('snapshots', id, snapshot)
+}
+
+/**
+ * 옛 통짜 스냅샷을 치운다.
+ *
+ * 레코드 단위 저장(snapshotRecords.ts)이 자리잡으면 이 blob 은 더 이상 읽히지
+ * 않는데, 큰 도면은 혼자 수 MB 를 차지한다. 레코드 **전체 쓰기가 성공한 뒤에만**
+ * 부른다 — 레코드가 아직 없는데 이걸 지우면 오프라인 캐시가 통째로 사라진다.
+ */
+export async function dropLegacySnapshot(id: string): Promise<boolean> {
+  return idbDelete('snapshots', id)
 }
 
 export function saveThumbnail(id: string, dataUrl: string) {

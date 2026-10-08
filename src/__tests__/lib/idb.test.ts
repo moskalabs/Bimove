@@ -6,7 +6,7 @@
  * (oncomplete 를 안 기다려서 커밋 전에 "저장됐다"고 보고하는 것) 을 못 잡는다.
  */
 import { describe, it, expect, beforeEach } from 'vitest'
-import { idbGet, idbSet, idbDelete, idbKeys, idbAvailable } from '../../lib/idb'
+import { idbGet, idbSet, idbDelete, idbKeys, idbAvailable, idbBatch, idbGetRange, idbDeleteRange } from '../../lib/idb'
 import { setCurrentUserId } from '../../lib/scopedStorage'
 
 // DB 비우기는 전역 setup.ts 가 한다 (매 테스트마다 deleteDatabase).
@@ -102,5 +102,94 @@ describe('idbKeys', () => {
 
   it('비어 있으면 빈 배열', async () => {
     expect(await idbKeys('versions')).toEqual([])
+  })
+})
+
+describe('idbBatch', () => {
+  it('여러 put/delete 를 한 번에 반영한다', async () => {
+    await idbSet('docrecords', 'a', 1)
+    expect(await idbBatch('docrecords', [
+      { type: 'put', key: 'b', value: 2 },
+      { type: 'put', key: 'c', value: 3 },
+      { type: 'delete', key: 'a' },
+    ])).toBe(true)
+    expect(await idbGet('docrecords', 'a')).toBeUndefined()
+    expect(await idbGet('docrecords', 'b')).toBe(2)
+    expect(await idbGet('docrecords', 'c')).toBe(3)
+  })
+
+  it('빈 배열은 아무것도 안 하고 성공', async () => {
+    expect(await idbBatch('docrecords', [])).toBe(true)
+  })
+
+  it('deleteRange 는 접두사가 맞는 키만 지운다', async () => {
+    await idbBatch('docrecords', [
+      { type: 'put', key: 'p1/r/x', value: 1 },
+      { type: 'put', key: 'p1/r/y', value: 2 },
+      { type: 'put', key: 'p10/r/z', value: 3 },
+      { type: 'put', key: 'p2/r/w', value: 4 },
+    ])
+    expect(await idbBatch('docrecords', [{ type: 'deleteRange', prefix: 'p1/' }])).toBe(true)
+    expect(await idbGet('docrecords', 'p1/r/x')).toBeUndefined()
+    expect(await idbGet('docrecords', 'p1/r/y')).toBeUndefined()
+    // 'p10/' 은 'p1/' 로 시작하지 않는다 — 접두사 경계를 넘지 말아야 한다
+    expect(await idbGet('docrecords', 'p10/r/z')).toBe(3)
+    expect(await idbGet('docrecords', 'p2/r/w')).toBe(4)
+  })
+
+  // 이게 idbBatch 가 존재하는 이유다. 한 건이 터졌을 때 앞의 put 이 살아남으면
+  // 디스크에 옛 레코드와 새 레코드가 섞인 도면이 남는다.
+  it('한 건이라도 실패하면 같은 배치의 앞 쓰기도 남지 않는다', async () => {
+    await idbSet('docrecords', 'keep', 'old')
+    const ok = await idbBatch('docrecords', [
+      { type: 'put', key: 'keep', value: 'new' },
+      { type: 'put', key: 'bad', value: () => {} },   // 복제 불가
+      { type: 'put', key: 'after', value: 'new' },
+    ])
+    expect(ok).toBe(false)
+    expect(await idbGet('docrecords', 'keep')).toBe('old')
+    expect(await idbGet('docrecords', 'after')).toBeUndefined()
+  })
+})
+
+describe('idbGetRange', () => {
+  it('접두사를 떼고 돌려준다', async () => {
+    await idbBatch('docrecords', [
+      { type: 'put', key: 'p1/meta', value: { s: 1 } },
+      { type: 'put', key: 'p1/r/shape:a', value: { x: 1 } },
+      { type: 'put', key: 'p2/r/shape:b', value: { x: 2 } },
+    ])
+    const rows = await idbGetRange<unknown>('docrecords', 'p1/')
+    expect(rows).not.toBeNull()
+    expect([...rows!.keys()].sort()).toEqual(['meta', 'r/shape:a'])
+    expect(rows!.get('r/shape:a')).toEqual({ x: 1 })
+  })
+
+  // 빈 Map 과 null 은 다른 뜻이다 — 빈 Map 은 "없다", null 은 "못 읽었다".
+  it('맞는 키가 없으면 빈 Map (null 아님)', async () => {
+    const rows = await idbGetRange('docrecords', 'nope/')
+    expect(rows).toEqual(new Map())
+  })
+
+  it('유저가 다르면 서로 안 보인다', async () => {
+    setCurrentUserId('u1')
+    await idbBatch('docrecords', [{ type: 'put', key: 'p1/r/a', value: 1 }])
+    setCurrentUserId('u2')
+    expect(await idbGetRange('docrecords', 'p1/')).toEqual(new Map())
+    setCurrentUserId('u1')
+    expect(await idbGetRange('docrecords', 'p1/')).toEqual(new Map([['r/a', 1]]))
+  })
+})
+
+describe('idbDeleteRange', () => {
+  it('접두사로 시작하는 키 전부를 지운다', async () => {
+    await idbBatch('docrecords', [
+      { type: 'put', key: 'p1/meta', value: 1 },
+      { type: 'put', key: 'p1/r/a', value: 2 },
+      { type: 'put', key: 'p2/meta', value: 3 },
+    ])
+    expect(await idbDeleteRange('docrecords', 'p1/')).toBe(true)
+    expect(await idbGetRange('docrecords', 'p1/')).toEqual(new Map())
+    expect(await idbGet('docrecords', 'p2/meta')).toBe(3)
   })
 })
