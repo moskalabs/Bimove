@@ -507,7 +507,30 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
     let isPanning = false
     let panStartX = 0
     let panStartY = 0
+    // didDrag 는 다음 누름에서 초기화하기 전까지 **직전 클릭이 팬이었는지**를
+    // 들고 있다. 빠르게 두 번 끌었을 뿐인데 화면맞춤으로 오해하지 않으려고
+    // 더블클릭 판정에서 같이 본다 — 끌었던 클릭은 더블클릭의 앞짝으로 안 친다.
     let didDrag = false
+
+    // tldraw 도 휠 버튼을 자기 방식으로 처리한다 (Editor.js 의 MIDDLE_MOUSE_BUTTON:
+    // inputs.isPanning → pointer_move 마다 setCamera, 뗄 때 slideCamera 관성,
+    // 그리고 매번 stopCameraAnimation). 우리 핸들러와 겹치면서 세 가지가 터졌다.
+    //   - 팬이 두 번 먹어서 화면이 두 배로 끌려간다
+    //   - 더블클릭 화면맞춤 애니메이션이 tldraw 의 stopCameraAnimation 에 중간에
+    //     잘린다 → 손이 조금만 흔들려도 "안 됨". 가만히 눌렀을 때만 가끔 성공해서
+    //     대여섯 번 시도해야 되는 것처럼 보였다
+    //   - 뗄 때 관성 슬라이드가 맞춰놓은 화면을 다시 밀어낸다
+    // mousedown 의 stopPropagation 으로는 못 막는다 — tldraw 가 듣는 건 별개
+    // 이벤트인 pointerdown 이다. 그래서 캡처 단계에서 휠 버튼 pointerdown 을
+    // 통째로 끊는다 (뗄 때도 같이 — 내려간 걸 못 본 쪽에 올라간 것만 흘려보내지
+    // 않는다). tldraw 는 document 에 pointer 리스너를 달지 않고 캔버스 엘리먼트의
+    // React 핸들러만 쓰므로, 여기서 끊으면 아예 도달하지 않는다.
+    const blockMiddlePointer = (e: PointerEvent) => {
+      if (e.button !== 1) return
+      if (!(e.target as HTMLElement)?.closest('.tl-container')) return
+      e.preventDefault()
+      e.stopPropagation()
+    }
 
     const handleMiddleDown = (e: MouseEvent) => {
       if (e.button !== 1) return
@@ -515,8 +538,10 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
       e.preventDefault()
       e.stopPropagation()
 
+      // 윈도우 기본 더블클릭 간격이 500ms 다. 400 으로 잡아두면 조금만 느긋하게
+      // 눌러도 두 번의 따로된 클릭이 된다.
       const now = Date.now()
-      if (now - lastMiddleDown < 400) {
+      if (!didDrag && now - lastMiddleDown < 500) {
         // 더블클릭 → 화면 맞춤
         editor.zoomToFit({ animation: { duration: 250 } })
         lastMiddleDown = 0
@@ -619,6 +644,8 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
     }
 
     document.addEventListener('wheel', handleWheel, { capture: true, passive: true })
+    document.addEventListener('pointerdown', blockMiddlePointer, true)
+    document.addEventListener('pointerup', blockMiddlePointer, true)
     document.addEventListener('mousedown', handleMiddleDown, true)
     document.addEventListener('mousemove', handleMouseMove, true)
     document.addEventListener('mouseup', handleMouseUp, true)
@@ -627,6 +654,8 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
     window.addEventListener('blur', stopPan)
     return () => {
       document.removeEventListener('wheel', handleWheel, true)
+      document.removeEventListener('pointerdown', blockMiddlePointer, true)
+      document.removeEventListener('pointerup', blockMiddlePointer, true)
       document.removeEventListener('mousedown', handleMiddleDown, true)
       document.removeEventListener('mousemove', handleMouseMove, true)
       document.removeEventListener('mouseup', handleMouseUp, true)
