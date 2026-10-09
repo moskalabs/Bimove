@@ -166,6 +166,52 @@ export interface DxfViewport {
 /** Viewport 기반 클리핑 영역 */
 export type ViewportClip = { minX: number; minY: number; maxX: number; maxY: number }
 
+/** 레이아웃 하나를 어떻게 페이지로 만들 것인가. */
+export interface LayoutTarget {
+  layout: DxfLayout
+  /** 모델공간 클리핑 영역. 모형 탭이거나 뷰포트를 못 찾았으면 null. */
+  clip: ViewportClip | null
+  /** 도형을 넣을 것인가. false 면 탭 자리만 잡고 비워 둔다. */
+  geometry: boolean
+}
+
+/**
+ * 레이아웃 목록 → 만들 페이지 목록.
+ *
+ * 뷰포트를 못 찾은 종이 레이아웃도 **페이지는 만든다** (geometry: false).
+ * 전엔 통째로 건너뛰어서, 오토캐드에 탭이 3개인 도면이 2개로 들어왔다 —
+ * 뭐가 없어졌는지조차 안 보였다. 도형을 안 넣는 이유는 따로다: clip 없이
+ * 임포트하면 모델공간 전체가 복사돼 모형 탭의 복제본이 생긴다.
+ */
+export function buildLayoutTargets(
+  layouts: DxfLayout[],
+  viewportsByLayout: Map<string, DxfViewport[]>,
+): LayoutTarget[] {
+  const targets: LayoutTarget[] = []
+  for (const layout of [...layouts].sort((a, b) => a.tabOrder - b.tabOrder)) {
+    if (layout.isModelSpace) {
+      targets.push({ layout, clip: null, geometry: true })
+      continue
+    }
+    const vps = viewportsByLayout.get(layout.name)
+    if (!vps || vps.length === 0) {
+      targets.push({ layout, clip: null, geometry: false })
+      continue
+    }
+    targets.push({
+      layout,
+      clip: {
+        minX: Math.min(...vps.map(v => v.clipMinX)),
+        minY: Math.min(...vps.map(v => v.clipMinY)),
+        maxX: Math.max(...vps.map(v => v.clipMaxX)),
+        maxY: Math.max(...vps.map(v => v.clipMaxY)),
+      },
+      geometry: true,
+    })
+  }
+  return targets
+}
+
 // ── Structural layer detection ──
 
 /** 구조 레이어 키워드 매칭 패턴 */

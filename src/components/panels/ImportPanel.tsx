@@ -1,11 +1,12 @@
 import { useState, Suspense } from 'react'
-import { PageRecordType, type TLPageId } from 'tldraw'
+import { PageRecordType } from 'tldraw'
 import { useEditor } from '../../context/EditorContext'
 import { useProjectName } from '../../context/ProjectContext'
 import { useToast } from '../../context/ToastContext'
 import { uploadImage } from '../../lib/project'
 import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2, getLastImportReport, ViewportClipMissedError } from '../../lib/dxf'
-import type { DxfLayout, ViewportClip } from '../../lib/dxf-shared'
+import type { ViewportClip } from '../../lib/dxf-shared'
+import { buildLayoutTargets } from '../../lib/dxf-shared'
 import type { LayoutImportInfo } from '../CadPreview'
 import { lazyWithReload } from '../../lib/lazyWithReload'
 import { importPdf } from '../../lib/pdfImport'
@@ -138,49 +139,30 @@ export function ImportPanel() {
     await new Promise(r => requestAnimationFrame(r))
 
     try {
-      // 페이지를 만들 레이아웃을 먼저 가려낸다.
-      //
-      // 뷰포트를 못 찾은 paper space 레이아웃은 **페이지를 아예 만들지 않는다.**
-      // clip 없이 임포트하면 모델공간 전체가 그대로 복사돼서, 오토캐드에서 탭으로
-      // 나뉘어 있던 게 한 페이지에 다 쏟아진다. 빈 페이지보다 나쁘다.
-      const targets: { layout: DxfLayout; clip: ViewportClip | null }[] = []
-      if (layoutInfo) {
-        for (const layout of [...layoutInfo.layouts].sort((a, b) => a.tabOrder - b.tabOrder)) {
-          if (layout.isModelSpace) {
-            targets.push({ layout, clip: null })
-            continue
-          }
-          const vps = layoutInfo.viewportsByLayout.get(layout.name)
-          if (!vps || vps.length === 0) {
-            console.warn(`[Import] Layout "${layout.name}": 뷰포트 없음 → 페이지 생성 안 함`)
-            continue
-          }
-          const clip: ViewportClip = {
-            minX: Math.min(...vps.map(v => v.clipMinX)),
-            minY: Math.min(...vps.map(v => v.clipMinY)),
-            maxX: Math.max(...vps.map(v => v.clipMaxX)),
-            maxY: Math.max(...vps.map(v => v.clipMaxY)),
-          }
-          console.log(`[Import] Layout "${layout.name}" viewport clip: (${clip.minX.toFixed(0)},${clip.minY.toFixed(0)})~(${clip.maxX.toFixed(0)},${clip.maxY.toFixed(0)})`)
-          targets.push({ layout, clip })
-        }
+      // 어떤 레이아웃을 어떻게 페이지로 만들지는 buildLayoutTargets 가 정한다
+      // (뷰포트 없는 탭도 빈 페이지로 남기는 이유는 거기 주석에).
+      const targets = layoutInfo
+        ? buildLayoutTargets(layoutInfo.layouts, layoutInfo.viewportsByLayout)
+        : []
+      for (const t of targets) {
+        if (!t.geometry) console.warn(`[Import] Layout "${t.layout.name}": 뷰포트 없음 → 빈 페이지만 만든다`)
+        else if (t.clip) console.log(`[Import] Layout "${t.layout.name}" viewport clip: ` +
+          `(${t.clip.minX.toFixed(0)},${t.clip.minY.toFixed(0)})~(${t.clip.maxX.toFixed(0)},${t.clip.maxY.toFixed(0)})`)
       }
 
       if (targets.length > 1) {
         // ── Multi-layout import: AutoCAD 탭별 별도 페이지 생성 ──
         let totalCount = 0
         let importedLayouts = 0
-        // clip 이 도형을 못 잡아서 건너뛴 레이아웃. 조용히 넘기지 않고 알린다.
-        const skipped: string[] = []
+        // 페이지는 만들었지만 도형이 하나도 안 들어간 레이아웃. 조용히 넘기지 않는다.
+        const empty: string[] = []
         const modelPageId = editor.getCurrentPageId()
 
         for (let i = 0; i < targets.length; i++) {
-          const { layout, clip } = targets[i]
+          const { layout, clip, geometry } = targets[i]
           // AutoCAD "Model" → 한국어 "모형" 매핑
           const displayName = layout.isModelSpace && layout.name === 'Model' ? '모형' : layout.name
 
-          // 이번 바퀴에서 **새로** 만든 페이지. clip 이 빗나가면 지워야 한다.
-          let createdPageId: TLPageId | null = null
           if (i === 0) {
             // 첫 번째 레이아웃 (보통 Model Space) → 현재 페이지 사용, 이름 변경
             //
@@ -194,7 +176,12 @@ export function ImportPanel() {
             const newPageId = PageRecordType.createId()
             editor.createPage({ name: displayName, id: newPageId })
             editor.setCurrentPage(newPageId)
-            createdPageId = newPageId
+          }
+
+          // 뷰포트를 못 찾은 레이아웃 — 탭 자리만 잡아두고 도형은 비운다.
+          if (!geometry) {
+            empty.push(layout.name)
+            continue
           }
 
           setLoading(`"${layout.name}" 임포트 중... (${i + 1}/${targets.length})`)
@@ -210,16 +197,12 @@ export function ImportPanel() {
             console.log(`[Import] Layout "${layout.name}": ${count}개 요소`)
           } catch (err) {
             // clip 이 도형을 하나도 못 잡았다 = clip 이 틀렸다. 모델공간 전체를
-            // 복사하면 "모형" 페이지의 복제본이 생기니, 페이지를 만들지 않는다.
+            // 복사하면 "모형" 페이지의 복제본이 생기니 도형은 넣지 않는다.
+            // 그래도 **페이지는 남긴다** — 탭 개수가 원본과 맞아야 뭐가 비었는지
+            // 보인다. 전엔 여기서 지워버려서 탭이 조용히 사라졌다.
             if (!(err instanceof ViewportClipMissedError)) throw err
-            console.warn(`[Import] Layout "${layout.name}": ${err.message} → 페이지 생성 안 함`)
-            skipped.push(layout.name)
-            if (createdPageId) {
-              editor.setCurrentPage(modelPageId)
-              editor.deletePage(createdPageId)
-            }
-            // i === 0 이면 지울 페이지가 없다 (기존 페이지를 재사용한 경우).
-            // 빈 페이지가 남지만, 최소 한 장은 있어야 하므로 그대로 둔다.
+            console.warn(`[Import] Layout "${layout.name}": ${err.message} → 빈 페이지로 둔다`)
+            empty.push(layout.name)
           }
         }
 
@@ -232,9 +215,9 @@ export function ImportPanel() {
         const fmt = prev.isDwg ? 'DWG' : 'DXF'
         adoptFileName(prev.fileName)
         toast(`"${prev.fileName}" ${fmt} 가져옴 (${importedLayouts}개 레이아웃, ${totalCount.toLocaleString()}개 요소)`, 'success')
-        if (skipped.length > 0) {
+        if (empty.length > 0) {
           toast(
-            `레이아웃 ${skipped.map(n => `"${n}"`).join(', ')} 은(는) 뷰포트가 도형을 못 잡아 건너뛰었습니다. ` +
+            `레이아웃 ${empty.map(n => `"${n}"`).join(', ')} 은(는) 뷰포트를 못 찾아 빈 페이지로 들어왔습니다. ` +
             `원본 DWG 의 뷰포트 정보가 변환 과정에서 손실된 경우입니다.`,
             'info',
           )

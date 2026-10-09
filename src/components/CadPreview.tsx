@@ -907,12 +907,14 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
     const seen = vpSeen.get(l.name) ?? 0
     console.warn(seen === 0
       ? `[CadPreview] ⚠ 레이아웃 "${l.name}": BLOCKS/ENTITIES 어디에도 VIEWPORT 엔티티가 없음 ` +
-        `→ clip 없이 모델공간 전체를 쓴다`
+        `→ 탭 자리만 잡고 빈 페이지로 들어간다`
       : `[CadPreview] ⚠ 레이아웃 "${l.name}": VIEWPORT ${seen}개를 봤지만 전부 걸러짐 ` +
-        `(의사 뷰포트/크기 불량) → clip 없이 모델공간 전체를 쓴다`)
+        `(의사 뷰포트/크기 불량) → 탭 자리만 잡고 빈 페이지로 들어간다`)
   }
 
-  // VIEWPORT 를 한 개도 찾지 못한 레이아웃은 clip 없이 남긴다.
+  // VIEWPORT 를 한 개도 찾지 못한 레이아웃은 clip 을 null 로 남긴다 (합성하지 않는다).
+  // 그런 레이아웃을 어떻게 처리하는지는 buildLayoutTargets 가 정한다 — 페이지는
+  // 만들고 도형만 비운다.
   //
   // 전엔 LAYOUT 의 EXTMIN/EXTMAX (group code 14/24/15/25) 로 clip 을 합성했는데,
   // 이 네 개는 **종이공간 limits** 다 — 모델공간 범위가 아니다. A3 레이아웃이면
