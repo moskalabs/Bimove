@@ -79,6 +79,21 @@ export default function CadPreview({
           console.log(`[CadPreview] ${parsedLayouts.length}개 레이아웃: ${parsedLayouts.map(l => l.name).join(', ')}`)
         }
 
+        // 탭이 안 나뉠 때 어디서 막혔는지 한 줄로 남긴다. 레이아웃 개수,
+        // 레이아웃별 뷰포트 개수, ENTITIES 안 종이공간 엔티티 분포 —
+        // 이 셋이면 원인이 셋 중 어느 것인지 바로 가려진다.
+        const space = summarizeSpaceEntities(dxfText)
+        const vpSummary = parsedLayouts.length
+          ? parsedLayouts.map(l => `${l.name}=${parsedVP.get(l.name)?.length ?? 0}`).join(', ')
+          : '-'
+        const tabSummary = space.byLayout.size
+          ? [...space.byLayout].map(([n, c]) => `${n}:${c}`).join(', ')
+          : '없음'
+        console.log(
+          `[CadPreview] 탭 진단 — 레이아웃 ${parsedLayouts.length}개 / 뷰포트 {${vpSummary}} / ` +
+          `종이공간 엔티티 ${space.paperEntities}개 / 코드410 {${tabSummary}}`,
+        )
+
         console.log(`[CadPreview] ${result.length}개 레이어 추출 (${(performance.now() - t0).toFixed(0)}ms)`)
       } catch (err) {
         console.error('[CadPreview] 레이어 추출 에러:', err)
@@ -546,6 +561,60 @@ function parseViewportEntity(
 }
 
 /**
+ * ENTITIES 섹션 안 **종이공간 엔티티**의 분포. 레이아웃이 안 나뉠 때
+ * 원인을 가리기 위한 진단용이다.
+ *
+ * 코드 67 = 1 은 종이공간 엔티티, 코드 410 은 그게 속한 탭 이름이다.
+ * - 둘 다 0 → 변환기가 레이아웃 정보를 안 썼다 (나눌 근거가 없다)
+ * - 67 은 있는데 410 이 없다 → 엔티티를 탭에 배정할 수 없다
+ * - 410 이 있다 → 탭별로 나눌 수 있다
+ *
+ * ENTITIES 는 100MB 를 넘기도 해서 쌍 단위로 걷진 못한다. 해당 그룹코드
+ * 줄만 indexOf 로 건너뛰며 센다.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function summarizeSpaceEntities(rawDxfText: string): {
+  paperEntities: number
+  byLayout: Map<string, number>
+} {
+  const dxfText = rawDxfText.indexOf('\r') >= 0
+    ? rawDxfText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    : rawDxfText
+  const gc = makeGcFormatter(detectPadding(dxfText))
+  const byLayout = new Map<string, number>()
+
+  const SEC_ENTITIES = `\n${gc(0)}\nSECTION\n${gc(2)}\nENTITIES\n`
+  const idx = dxfText.indexOf(SEC_ENTITIES)
+  if (idx < 0) return { paperEntities: 0, byLayout }
+  const body = idx + SEC_ENTITIES.length
+  // 섹션 첫 줄 앞의 줄바꿈은 SEC_ENTITIES 가 이미 먹었다 — 한 글자 뒤에서 찾는다.
+  const end = dxfText.indexOf(`\n${gc(0)}\nENDSEC`, body - 1)
+  if (end <= body) return { paperEntities: 0, byLayout }
+
+  let paperEntities = 0
+  const PAPER = `\n${gc(67)}\n1\n`
+  for (let p = body - 1; ;) {
+    const i = dxfText.indexOf(PAPER, p)
+    if (i < 0 || i >= end) break
+    paperEntities++
+    p = i + PAPER.length - 1
+  }
+
+  const TAB = `\n${gc(410)}\n`
+  for (let p = body - 1; ;) {
+    const i = dxfText.indexOf(TAB, p)
+    if (i < 0 || i >= end) break
+    const valStart = i + TAB.length
+    const nl = dxfText.indexOf('\n', valStart)
+    const name = dxfText.substring(valStart, nl < 0 || nl > end ? end : nl).trim()
+    if (name) byLayout.set(name, (byLayout.get(name) ?? 0) + 1)
+    p = nl < 0 ? end : nl
+  }
+
+  return { paperEntities, byLayout }
+}
+
+/**
  * DXF에서 Layout + Viewport 정보 경량 추출.
  * OBJECTS 섹션의 LAYOUT 엔티티 + BLOCKS 섹션의 *Paper_Space 내 VIEWPORT 엔티티.
  */
@@ -569,6 +638,9 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
   const SEC_OBJECTS = `\n${gc(0)}\nSECTION\n${gc(2)}\nOBJECTS\n`
   const ENDSEC = `\n${gc(0)}\nENDSEC`
   const objIdx = dxfText.indexOf(SEC_OBJECTS)
+  if (objIdx < 0) {
+    console.warn('[CadPreview] OBJECTS 섹션 없음 → LAYOUT 레코드가 아예 없다 (탭 분리 불가)')
+  }
   if (objIdx >= 0) {
     const objBody = objIdx + SEC_OBJECTS.length
     const objEnd = dxfText.indexOf(ENDSEC, objBody)
@@ -627,6 +699,12 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
 
   // 레이아웃이 없으면 빈 결과 반환
   if (layouts.length <= 1) {
+    // 조용히 돌아가면 "탭이 하나로 합쳐졌다" 는 증상만 남고 이유가 안 보인다.
+    console.warn(
+      `[CadPreview] LAYOUT 레코드 ${layouts.length}개` +
+      (layouts.length ? ` (${layouts.map(l => l.name).join(', ')})` : '') +
+      ' → 탭 분리 안 함 (2개 이상이어야 나눈다)',
+    )
     return { layouts: [], viewportsByLayout: new Map() }
   }
   layouts.sort((a, b) => a.tabOrder - b.tabOrder)

@@ -6,7 +6,7 @@
  * 둘 다 "clip 사각형을 잘못 만들었다"에서 나왔다.
  */
 import { describe, it, expect } from 'vitest'
-import { extractLayoutsAndViewports } from '../../components/CadPreview'
+import { extractLayoutsAndViewports, summarizeSpaceEntities } from '../../components/CadPreview'
 
 /** group code / value 쌍을 DXF 줄로 */
 function dxf(...pairs: (string | number)[]): string {
@@ -489,5 +489,92 @@ describe('의사 뷰포트 판별 — 기하 휴리스틱의 범위', () => {
     )
     const { viewportsByLayout } = extractLayoutsAndViewports(dxfText)
     expect(viewportsByLayout.get('평면도') ?? []).toHaveLength(1)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────
+// 탭이 안 나뉠 때 "어디서 막혔나" 를 가리는 진단. 레이아웃 레코드가 없는
+// 건지, 뷰포트가 없는 건지, 엔티티에 탭 정보(410)가 없는 건지 — 콘솔
+// 한 줄로 갈리게 하려고 둔 함수라 숫자가 정확해야 한다.
+// ─────────────────────────────────────────────────────────────────────
+describe('summarizeSpaceEntities', () => {
+  /** 종이공간 엔티티 (67=1) + 소속 탭 (410) */
+  const paperLine = (tab?: string) => dxf(
+    0, 'LINE', 8, '0',
+    67, 1,
+    ...(tab ? [410, tab] : []),
+    10, 0, 20, 0, 11, 10, 21, 10,
+  )
+
+  const modelLine = (tab?: string) => dxf(
+    0, 'LINE', 8, '0',
+    ...(tab ? [410, tab] : []),
+    10, 0, 20, 0, 11, 10, 21, 10,
+  )
+
+  it('종이공간 엔티티가 없으면 0', () => {
+    const text = buildDxf([], [], [modelLine(), modelLine()])
+    const r = summarizeSpaceEntities(text)
+    expect(r.paperEntities).toBe(0)
+    expect(r.byLayout.size).toBe(0)
+  })
+
+  it('67=1 을 세고 410 으로 탭별 집계한다', () => {
+    const text = buildDxf([], [], [
+      paperLine('배치1'), paperLine('배치1'), paperLine('Layout1'), modelLine(),
+    ])
+    const r = summarizeSpaceEntities(text)
+    expect(r.paperEntities).toBe(3)
+    expect(r.byLayout.get('배치1')).toBe(2)
+    expect(r.byLayout.get('Layout1')).toBe(1)
+  })
+
+  // 변환기가 종이공간 플래그만 쓰고 탭 이름을 안 쓰는 경우. 이러면
+  // 엔티티를 탭에 배정할 수 없다 — 진단이 그걸 드러내야 한다.
+  it('410 이 없으면 종이공간 개수만 센다', () => {
+    const text = buildDxf([], [], [paperLine(), paperLine()])
+    const r = summarizeSpaceEntities(text)
+    expect(r.paperEntities).toBe(2)
+    expect(r.byLayout.size).toBe(0)
+  })
+
+  // R2000+ 는 모형공간 엔티티에도 410 'Model' 을 붙인다. 410 집계는
+  // 종이공간만 고르지 않는다 — 탭 정보가 **있는지** 를 보는 용도다.
+  it("모형 엔티티의 410 'Model' 도 집계에 들어온다", () => {
+    const text = buildDxf([], [], [modelLine('Model'), paperLine('배치1')])
+    const r = summarizeSpaceEntities(text)
+    expect(r.paperEntities).toBe(1)
+    expect(r.byLayout.get('Model')).toBe(1)
+    expect(r.byLayout.get('배치1')).toBe(1)
+  })
+
+  it('ENTITIES 섹션이 없으면 0', () => {
+    const text = [
+      dxf(0, 'SECTION', 2, 'HEADER', 9, '$ACADVER', 1, 'AC1027'),
+      dxf(0, 'ENDSEC'),
+      dxf(0, 'EOF'),
+    ].join('\n')
+    const r = summarizeSpaceEntities(text)
+    expect(r.paperEntities).toBe(0)
+    expect(r.byLayout.size).toBe(0)
+  })
+
+  it('CRLF 도 읽는다', () => {
+    const text = buildDxf([], [], [paperLine('배치1')]).replace(/\n/g, '\r\n')
+    const r = summarizeSpaceEntities(text)
+    expect(r.paperEntities).toBe(1)
+    expect(r.byLayout.get('배치1')).toBe(1)
+  })
+
+  // 패딩된 그룹코드(실제 오토캐드 출력)에서도 같은 숫자가 나와야 한다.
+  it('3칸 패딩 그룹코드도 읽는다', () => {
+    const plain = buildDxf([], [], [paperLine('배치1'), paperLine('Layout1')])
+    const padded = plain.split('\n')
+      .map((l, i) => (i % 2 === 0 && /^\d+$/.test(l) ? l.padStart(3) : l))
+      .join('\n')
+    const r = summarizeSpaceEntities(padded)
+    expect(r.paperEntities).toBe(2)
+    expect(r.byLayout.get('배치1')).toBe(1)
+    expect(r.byLayout.get('Layout1')).toBe(1)
   })
 })
