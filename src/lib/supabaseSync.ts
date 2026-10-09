@@ -254,6 +254,23 @@ export async function createProject(userId: string, name: string) {
 }
 
 /**
+ * 두 타임스탬프가 **같은 순간**인지.
+ *
+ * 글자 그대로 비교하면 안 된다. 우리가 써 보내는 건 JS 의
+ * `2026-10-09T09:07:33.218Z` 인데, 같은 행을 다시 읽으면 Postgres 는
+ * `2026-10-09T09:07:33.218+00:00` 으로 돌려준다 — 같은 시각인데 글자가 다르다.
+ * 그래서 시각으로 환산해 비교한다. 환산이 안 되는 형식이면 글자 비교로 떨어진다.
+ */
+export function sameInstant(a?: string | null, b?: string | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  const ta = Date.parse(a)
+  const tb = Date.parse(b)
+  if (Number.isNaN(ta) || Number.isNaN(tb)) return false
+  return ta === tb
+}
+
+/**
  * 스냅샷 저장 (optimistic locking).
  * lastKnownUpdatedAt를 전달하면 서버의 updated_at과 비교하여
  * 다른 세션에서 먼저 저장했을 경우 충돌을 감지한다.
@@ -273,13 +290,17 @@ export async function saveProjectSnapshot(
       .eq('id', projectId)
       .single()
 
-    if (current && current.updated_at !== lastKnownUpdatedAt) {
+    if (current && !sameInstant(current.updated_at, lastKnownUpdatedAt)) {
       return { conflict: true, serverUpdatedAt: current.updated_at }
     }
   }
 
   const now = new Date().toISOString()
-  await supabase
+  // 저장한 뒤 **서버가 들고 있는 값 그대로** 돌려받는다. 우리가 보낸 문자열을
+  // 다음 번 기준값으로 삼으면, 다음 저장 때 읽어온 값과 형식이 달라 혼자서
+  // 충돌을 만들어낸다 (내가 쓴 걸 남이 쓴 걸로 오해 → 5초마다 "다른 기기에서
+  // 저장한 내용이 있어…" 토스트).
+  const { data: saved } = await supabase
     .from('projects')
     .update({
       snapshot,
@@ -287,8 +308,10 @@ export async function saveProjectSnapshot(
       updated_at: now,
     })
     .eq('id', projectId)
+    .select('updated_at')
+    .single()
 
-  return { conflict: false, serverUpdatedAt: now }
+  return { conflict: false, serverUpdatedAt: saved?.updated_at ?? now }
 }
 
 export async function loadProjectSnapshot(projectId: string): Promise<{ snapshot: unknown; updatedAt?: string } | null> {
