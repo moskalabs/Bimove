@@ -273,7 +273,21 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
       return { document: editor.store.getStoreSnapshot(), session }
     }
 
-    // 썸네일 (200+ shapes일 때 스킵 — getSvgString이 너무 무거움)
+    /** 다음 서버 동기화에 실어 보낼 썸네일. 보내고 나면 비운다. */
+    let pendingThumbnail: string | undefined
+    let sentThumbnail: string | undefined
+
+    /**
+     * 썸네일을 한 장 떠서 로컬과 (다음 틱에) 서버에 올린다.
+     *
+     * 대시보드 카드는 `projects.thumbnail` 을 읽는다 — 로컬에만 저장하면
+     * 카드는 영원히 빈 칸이다. 그래서 여기서 뜬 걸 서버 동기화에 실어 보낸다.
+     *
+     * 200+ shapes 는 건너뛴다 (getSvgString 이 너무 무겁다). 도면 그룹은
+     * shape 하나지만 안에 수천 개가 들어 있어서 개수로는 안 걸린다 —
+     * 그래서 결과 크기로 한 번 더 막는다.
+     */
+    const THUMB_MAX_BYTES = 200 * 1024
     const updateThumbnail = async () => {
       const shapes = editor.getCurrentPageShapes()
       if (shapes.length === 0 || shapes.length > 200) return
@@ -282,7 +296,10 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
           .getSvgString(shapes, { padding: 16, background: true })
         if (result?.svg) {
           const dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(result.svg)))
+          if (dataUrl.length > THUMB_MAX_BYTES) return
           saveThumbnail(projectId, dataUrl)
+          // 같은 그림을 5초마다 다시 올리지는 않는다
+          if (dataUrl !== sentThumbnail) pendingThumbnail = dataUrl
         }
       } catch { /* ignore thumbnail errors */ }
     }
@@ -423,8 +440,9 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
       const snap = buildFullSnapshot()
       if (!snap) return
       serverDirty = false
+      const thumb = pendingThumbnail
       try {
-        const result = await saveSnapshotToSupabase(projectId, snap, undefined, lastServerUpdatedAt)
+        const result = await saveSnapshotToSupabase(projectId, snap, thumb, lastServerUpdatedAt)
         if (result.conflict) {
           // 다른 세션이 먼저 저장했다. 예전엔 경고 로그만 찍고 조용히 덮어썼다 —
           // 상대가 한 작업이 흔적도 없이 사라진다. 이제 서버 내용을 버전으로
@@ -442,13 +460,15 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
             toast('다른 기기의 변경과 충돌했지만 백업에 실패해 서버 저장을 멈췄습니다. 작업은 이 기기에 저장됩니다 — 새로고침해서 확인해주세요.', 'error')
             return
           }
-          const retry = await saveSnapshotToSupabase(projectId, snap)
+          const retry = await saveSnapshotToSupabase(projectId, snap, thumb)
           lastServerUpdatedAt = retry.serverUpdatedAt
+          if (thumb) { sentThumbnail = thumb; if (pendingThumbnail === thumb) pendingThumbnail = undefined }
           if (backup === 'saved') {
             toast('다른 기기에서 저장한 내용이 있어 이 화면 내용으로 덮어썼습니다. 서버에 있던 내용은 버전 기록에 백업했습니다.', 'error')
           }
         } else {
           lastServerUpdatedAt = result.serverUpdatedAt
+          if (thumb) { sentThumbnail = thumb; if (pendingThumbnail === thumb) pendingThumbnail = undefined }
           if (syncFailed) {
             toast('서버 동기화가 복구되었습니다.', 'success')
             syncFailed = false
@@ -494,7 +514,7 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
       if (snap) {
         // 언마운트 뒤에도 fetch 는 계속 진행된다. 충돌이면 서버를 건드리지 않고
         // 넘어간다 — 로컬에는 이미 남아 있고, 다음 진입 때 isLocalNewer 가 집어낸다.
-        void saveSnapshotToSupabase(projectId, snap, undefined, lastServerUpdatedAt)
+        void saveSnapshotToSupabase(projectId, snap, pendingThumbnail, lastServerUpdatedAt)
           .catch(err => console.warn('[supabase-sync] 언마운트 flush 실패', err))
       }
     }

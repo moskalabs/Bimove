@@ -275,6 +275,10 @@ export function sameInstant(a?: string | null, b?: string | null): boolean {
  * lastKnownUpdatedAt를 전달하면 서버의 updated_at과 비교하여
  * 다른 세션에서 먼저 저장했을 경우 충돌을 감지한다.
  * 충돌 시 { conflict: true, serverUpdatedAt } 반환.
+ *
+ * thumbnail 을 **생략하면 서버 썸네일은 그대로 둔다**. 예전엔
+ * `thumbnail ?? null` 로 매번 써서, 썸네일을 넘기지 않는 5초 동기화가
+ * 올려둔 썸네일을 바로 지워버렸다 (대시보드 카드가 항상 빈 상태).
  */
 export async function saveProjectSnapshot(
   projectId: string,
@@ -296,17 +300,16 @@ export async function saveProjectSnapshot(
   }
 
   const now = new Date().toISOString()
+  const patch: Record<string, unknown> = { snapshot, updated_at: now }
+  if (thumbnail !== undefined) patch.thumbnail = thumbnail
+
   // 저장한 뒤 **서버가 들고 있는 값 그대로** 돌려받는다. 우리가 보낸 문자열을
   // 다음 번 기준값으로 삼으면, 다음 저장 때 읽어온 값과 형식이 달라 혼자서
   // 충돌을 만들어낸다 (내가 쓴 걸 남이 쓴 걸로 오해 → 5초마다 "다른 기기에서
   // 저장한 내용이 있어…" 토스트).
   const { data: saved } = await supabase
     .from('projects')
-    .update({
-      snapshot,
-      thumbnail: thumbnail ?? null,
-      updated_at: now,
-    })
+    .update(patch)
     .eq('id', projectId)
     .select('updated_at')
     .single()

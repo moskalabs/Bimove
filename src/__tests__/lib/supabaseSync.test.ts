@@ -12,10 +12,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 /** PostgREST 가 timestamptz 를 돌려주는 형식 (JS 의 'Z' 가 아니다) */
 const toPgFormat = (iso: string) => iso.replace(/Z$/, '+00:00')
 
-let row: { updated_at: string; snapshot: unknown } = {
+type Row = { updated_at: string; snapshot: unknown; thumbnail: string | null }
+
+const initialRow = (): Row => ({
   updated_at: toPgFormat('2026-10-09T09:00:00.000Z'),
   snapshot: null,
-}
+  thumbnail: 'data:image/svg+xml;base64,AAA',
+})
+
+let row: Row = initialRow()
 
 vi.mock('../../lib/supabase', () => {
   const makeBuilder = () => {
@@ -26,9 +31,11 @@ vi.mock('../../lib/supabase', () => {
       update: (values: Record<string, unknown>) => { pending = values; return builder },
       single: async () => {
         if (pending) {
-          // 서버는 받은 값을 자기 형식으로 저장하고, 자기 형식으로 돌려준다.
+          // UPDATE 는 패치다 — 패치에 없는 컬럼은 그대로 남는다.
+          // 서버는 받은 시각을 자기 형식으로 저장하고, 자기 형식으로 돌려준다.
           row = {
-            snapshot: pending.snapshot,
+            ...row,
+            ...(pending as Partial<Row>),
             updated_at: toPgFormat(pending.updated_at as string),
           }
           pending = null
@@ -47,7 +54,7 @@ vi.mock('../../lib/supabase', () => {
 const { saveProjectSnapshot, sameInstant } = await import('../../lib/supabaseSync')
 
 beforeEach(() => {
-  row = { updated_at: toPgFormat('2026-10-09T09:00:00.000Z'), snapshot: null }
+  row = initialRow()
 })
 
 describe('sameInstant', () => {
@@ -98,5 +105,18 @@ describe('saveProjectSnapshot', () => {
     const result = await saveProjectSnapshot('p1', { a: 9 })
     expect(result.conflict).toBe(false)
     expect(row.snapshot).toEqual({ a: 9 })
+  })
+
+  // 5초 동기화는 썸네일을 넘기지 않는다. 예전엔 그때마다 null 로 덮어써서
+  // 대시보드 카드가 늘 빈 칸이었다.
+  it('썸네일을 안 넘기면 서버 썸네일을 건드리지 않는다', async () => {
+    const before = row.thumbnail
+    await saveProjectSnapshot('p1', { a: 1 }, undefined, row.updated_at)
+    expect(row.thumbnail).toBe(before)
+  })
+
+  it('썸네일을 넘기면 저장한다', async () => {
+    await saveProjectSnapshot('p1', { a: 1 }, 'data:image/svg+xml;base64,BBB', row.updated_at)
+    expect(row.thumbnail).toBe('data:image/svg+xml;base64,BBB')
   })
 })
