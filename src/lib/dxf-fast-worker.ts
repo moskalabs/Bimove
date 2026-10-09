@@ -10,9 +10,9 @@
  * - Zero npm dependencies (dxf-shared is internal)
  */
 
-import { aciToHex, trueColorToHex, detectPadding, makeGcFormatter, decodeDxfSpecialChars, cleanMtextFormatting, defLineSpacing, type HatchPatternLine } from './dxf-shared'
+import { aciToHex, trueColorToHex, detectPadding, makeGcFormatter, decodeDxfSpecialChars, cleanMtextFormatting, defLineSpacing, type HatchPatternLine, type ParseSpace } from './dxf-shared'
 
-export type { HatchPatternLine }
+export type { HatchPatternLine, ParseSpace }
 
 // ===== Public message types (also used by main thread) =====
 
@@ -20,6 +20,8 @@ export interface ParseRequest {
   type: 'parse'
   dxfText: string
   selectedLayers: string[]
+  /** 읽을 공간. 생략하면 모델공간 (기존 동작). */
+  space?: ParseSpace
 }
 
 export interface PolylineData {
@@ -1740,11 +1742,16 @@ function extractTextEntity(
   return { x, y, text, height, rotation, layer, colorNumber: colorNum, attachPt, width: mtextWidth, fontName }
 }
 
-function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void): { polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo>; skipped: SkipReport } {
+function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void, space: ParseSpace = { kind: 'model' }): { polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo>; skipped: SkipReport } {
   const t0 = performance.now()
   globalEntityEvals = 0  // 글로벌 카운터 리셋
   skipTally = {}
   const layerSet = new Set(selectedLayers)
+  const wantPaper = space.kind === 'paper'
+  /** 모델공간을 읽으면서 종이공간 엔티티는 버린다 (탭마다 따로 들어갈 때만). */
+  const dropPaper = space.kind === 'model' && space.excludePaper === true
+  if (wantPaper) console.log(`[fast-worker] 종이공간 모드: 레이아웃 "${space.layoutName}" (블록 ${space.blockName ?? '-'})`)
+  else console.log(`[fast-worker] 모델공간 모드 (종이 엔티티 ${dropPaper ? '제외' : '포함'})`)
 
   // 0. \r\n → \n 정규화 (Windows DXF 파일 호환)
   progress('줄바꿈 정규화', 2)
@@ -1822,6 +1829,8 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   const GC72 = `\n${gc(72)}\n`
   const GC73 = `\n${gc(73)}\n`
   const GC230 = `\n${gc(230)}\n`
+  const GC67 = `\n${gc(67)}\n`   // 1 = 종이공간 엔티티
+  const GC410 = `\n${gc(410)}\n` // 그 엔티티가 속한 레이아웃 이름 (R2000+)
 
   progress('도면 요소 변환', 30)
   const output: PolylineData[] = []
@@ -1913,6 +1922,31 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
 
       if (!layerSet.has(entityLayer)) {  // ← THE KEY OPTIMIZATION
         noteSkip(`선택 안 된 레이어: ${entityLayer}`)
+        sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
+      }
+
+      // --- 모델공간 / 종이공간 가르기 ---
+      //
+      // ENTITIES 섹션은 모델공간 전용이 아니다. 저장 당시 활성이던 레이아웃의
+      // 종이공간 엔티티가 code 67=1 로 표시되어 **같이** 들어 있다. 전엔 이걸
+      // 안 봐서 도면틀·표제란이 모형 페이지에 겹쳐 쏟아졌고, 정작 그 탭은
+      // 비어 있었다.
+      const c67 = idxIn(dxfText, GC67, eStart, eEnd)
+      const entIsPaper = c67 >= 0 && valAt(dxfText, c67 + GC67.length, eEnd) === '1'
+      if (wantPaper) {
+        if (!entIsPaper) {
+          noteSkip('모델공간 엔티티 (종이 탭 아님)')
+          sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
+        }
+        // code 410 이 없는 건 R14 이전 포맷이다 — 종이공간이 하나뿐이라
+        // 이름으로 가릴 수가 없다. 버리는 것보다 넣는 쪽이 낫다.
+        const c410 = idxIn(dxfText, GC410, eStart, eEnd)
+        if (c410 >= 0 && valAt(dxfText, c410 + GC410.length, eEnd) !== space.layoutName) {
+          noteSkip('다른 레이아웃의 종이공간 엔티티')
+          sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
+        }
+      } else if (dropPaper && entIsPaper) {
+        noteSkip('종이공간 엔티티 (제 탭에서 따로 들어간다)')
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
@@ -2261,51 +2295,70 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
     sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd
   }
 
-  // ── Paper Space fallback ──
-  // ENTITIES 섹션(= Model Space)에 도형이 없고, *Paper_Space* 블록에 엔티티가 있으면
-  // 해당 블록의 엔티티를 직접 펼쳐서 사용한다.
-  // DWG→DXF 변환 시 Paper Space 전용 도면이 이 패턴을 보인다.
-  if (output.length === 0 && texts.length === 0 && hatches.length === 0) {
+  // ── 종이공간 BLOCK 전개 ──
+  //
+  // 종이공간 엔티티는 **두 군데 중 하나**에 들어 있다. 저장 당시 활성이던 탭의
+  // 것은 ENTITIES 섹션에 (code 67=1 로) 섞여 있고 — 위 루프가 이미 걸러 담았다 —
+  // 나머지 탭의 것은 `*Paper_SpaceN` BLOCK 안에 있다. 그 블록은 아무도 INSERT
+  // 하지 않으니 직접 펼쳐야 보인다.
+  const expandPaperBlocks = (names: string[]) => {
+    for (const psName of names) {
+      const psBlock = blocks.get(psName)
+      if (!psBlock) continue
+
+      // 1) precomputed (LINE/ARC/CIRCLE/LWPOLYLINE/SPLINE/SOLID/3DFACE)
+      for (const pe of psBlock.precomputed) {
+        if (output.length >= MAX_POLYLINES) break
+        if (pe.isHatchBoundary && psBlock.hasSolidHatch) continue
+        const entityLayer = pe.rawLayer || '0'
+        if (layerSet.size > 0 && !layerSet.has(entityLayer)) continue
+        const verts: number[][] = pe.vertices.map(v => [v[0], v[1]])
+        output.push({ vertices: verts, layer: entityLayer, colorNumber: pe.colorNumber })
+      }
+
+      // 2) entityChunks (INSERT, TEXT, MTEXT, HATCH, etc.)
+      for (const chunk of psBlock.entityChunks) {
+        if (output.length >= MAX_POLYLINES) break
+        const { type: eType, codes: eCodes } = parseGroupCodes(chunk)
+        const eLayer = eCodes.get(8)?.[0]?.trim() || '0'
+        if (layerSet.size > 0 && !layerSet.has(eLayer)) continue
+
+        if ((eType === 'TEXT' || eType === 'MTEXT') && texts.length < MAX_TEXTS) {
+          const colorNum = eCodes.get(62)?.[0] ? parseInt(eCodes.get(62)![0]) : -1
+          const td = extractTextEntity(eType, eCodes, eLayer, colorNum, [], textStyleMap)
+          if (td) texts.push(td)
+        } else if (eType === 'HATCH' && hatches.length < MAX_HATCHES) {
+          const hd = parseHatchEntity(chunk, eLayer)
+          if (hd) hatches.push(hd)
+        } else {
+          entityToPolyline(eType, eCodes, blocks, eLayer, [], 0, layerSet, output, texts, hatches, textStyleMap)
+        }
+      }
+    }
+  }
+
+  if (wantPaper) {
+    // 이 레이아웃 **하나**의 블록만. 이름을 모르면 아무것도 펼치지 않는다 —
+    // 전부 펼치면 다른 탭의 도면틀까지 이 페이지에 겹쳐 들어온다.
+    const psName = space.blockName && blocks.has(space.blockName) ? space.blockName : null
+    if (psName) {
+      progress('종이공간 엔티티 추출', 85)
+      expandPaperBlocks([psName])
+    }
+    console.log(`[fast-worker] 종이공간 "${space.layoutName}": ENTITIES + 블록 ${psName ?? '(없음)'} → ` +
+      `${output.length}개 폴리라인, ${texts.length}개 텍스트, ${hatches.length}개 해치`)
+  } else if (!dropPaper && output.length === 0 && texts.length === 0 && hatches.length === 0) {
+    // ── Model Space 가 빈 경우의 구제책 ──
+    // DWG→DXF 변환물 중에는 모델공간이 아예 비고 종이공간에만 도형이 있는 게
+    // 있다. 그럴 때만 종이공간 블록을 전부 긁어 모형 페이지에 보여준다.
+    // (탭이 여러 개면 ImportPanel 이 탭별로 종이 모드를 호출하니 여기 안 온다.)
     const psBlockNames = [...blocks.keys()].filter(n =>
       /^\*Paper_Space/i.test(n)
     )
     if (psBlockNames.length > 0) {
       console.log(`[fast-worker] Model Space 비어있음 → Paper Space 블록 ${psBlockNames.join(', ')} 에서 엔티티 추출`)
       progress('Paper Space 엔티티 추출', 85)
-
-      for (const psName of psBlockNames) {
-        const psBlock = blocks.get(psName)
-        if (!psBlock) continue
-
-        // 1) precomputed (LINE/ARC/CIRCLE/LWPOLYLINE/SPLINE/SOLID/3DFACE)
-        for (const pe of psBlock.precomputed) {
-          if (output.length >= MAX_POLYLINES) break
-          if (pe.isHatchBoundary && psBlock.hasSolidHatch) continue
-          const entityLayer = pe.rawLayer || '0'
-          if (layerSet.size > 0 && !layerSet.has(entityLayer)) continue
-          const verts: number[][] = pe.vertices.map(v => [v[0], v[1]])
-          output.push({ vertices: verts, layer: entityLayer, colorNumber: pe.colorNumber })
-        }
-
-        // 2) entityChunks (INSERT, TEXT, MTEXT, HATCH, etc.)
-        for (const chunk of psBlock.entityChunks) {
-          if (output.length >= MAX_POLYLINES) break
-          const { type: eType, codes: eCodes } = parseGroupCodes(chunk)
-          const eLayer = eCodes.get(8)?.[0]?.trim() || '0'
-          if (layerSet.size > 0 && !layerSet.has(eLayer)) continue
-
-          if ((eType === 'TEXT' || eType === 'MTEXT') && texts.length < MAX_TEXTS) {
-            const colorNum = eCodes.get(62)?.[0] ? parseInt(eCodes.get(62)![0]) : -1
-            const td = extractTextEntity(eType, eCodes, eLayer, colorNum, [], textStyleMap)
-            if (td) texts.push(td)
-          } else if (eType === 'HATCH' && hatches.length < MAX_HATCHES) {
-            const hd = parseHatchEntity(chunk, eLayer)
-            if (hd) hatches.push(hd)
-          } else {
-            entityToPolyline(eType, eCodes, blocks, eLayer, [], 0, layerSet, output, texts, hatches, textStyleMap)
-          }
-        }
-      }
+      expandPaperBlocks(psBlockNames)
       console.log(`[fast-worker] Paper Space fallback: ${output.length}개 폴리라인, ${texts.length}개 텍스트, ${hatches.length}개 해치`)
     }
   }
@@ -2357,7 +2410,7 @@ self.onmessage = (e: MessageEvent<ParseRequest>) => {
   post({ type: 'boot' })
 
   try {
-    const result = parseDxfFast(e.data.dxfText, e.data.selectedLayers, progress)
+    const result = parseDxfFast(e.data.dxfText, e.data.selectedLayers, progress, e.data.space)
     post({
       type: 'result',
       polylines: result.polylines,

@@ -129,6 +129,11 @@ export interface DxfLayout {
   extMinY?: number       // code 24 — paper space limits min Y
   extMaxX?: number       // code 15 — paper space limits max X
   extMaxY?: number       // code 25 — paper space limits max Y
+  /** 이 레이아웃의 종이공간 BLOCK 이름 (`*Paper_Space`, `*Paper_Space0` ...).
+   *  저장 당시 활성 탭이었던 레이아웃은 종이공간 엔티티가 ENTITIES 섹션에
+   *  (code 67=1 로) 들어 있고 이 블록은 비어 있다. 나머지 탭은 반대다.
+   *  둘 다 읽어야 탭마다 제 도면틀이 들어온다. */
+  blockName?: string | null
 }
 
 /** 모형(Model) 탭인지 레이아웃 이름으로 판별한다.
@@ -165,6 +170,25 @@ export interface DxfViewport {
 
 /** Viewport 기반 클리핑 영역 */
 export type ViewportClip = { minX: number; minY: number; maxX: number; maxY: number }
+
+/**
+ * 파서가 DXF 의 **어느 공간**을 읽을 것인가.
+ *
+ * DXF 의 ENTITIES 섹션에는 모델공간과 (저장 당시 활성이던) 한 레이아웃의
+ * 종이공간 엔티티가 **섞여서** 들어 있다. code 67 = 1 이 종이공간 표시이고
+ * code 410 이 어느 탭인지 이름으로 알려준다. 전엔 이 둘을 아예 안 봐서
+ * 종이공간 도형(도면틀·표제란)이 모형 페이지에 같이 쏟아졌다.
+ */
+export type ParseSpace =
+  /**
+   * 모델공간. `excludePaper` 는 "종이 엔티티는 제 탭에서 따로 들어간다" 는
+   * 뜻이다 — 탭을 여러 장으로 나눌 때만 켠다. 레이아웃이 하나뿐인 파일에서
+   * 켜면 도면이 통째로 사라진다: DWG→DXF 변환물은 도형이 전부 종이공간에만
+   * 있는 경우가 흔하고, 그 땐 한 장에 다 넣는 게 맞다.
+   */
+  | { kind: 'model'; excludePaper?: boolean }
+  /** 종이 레이아웃 한 장. ENTITIES 의 code 410 일치분 + blockName 블록 내용. */
+  | { kind: 'paper'; layoutName: string; blockName?: string | null }
 
 /** 레이아웃 하나를 어떻게 페이지로 만들 것인가. */
 export interface LayoutTarget {

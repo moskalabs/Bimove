@@ -789,6 +789,13 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
             (ownerHandle && layoutByBlockRecord.get(ownerHandle)) ||
             blockToLayout.get(blockName) ||
             ''
+          // 이 레이아웃의 종이공간 블록 이름을 적어둔다. 파서가 탭별 도면틀을
+          // 꺼낼 때 쓴다 — 비활성 탭의 종이 엔티티는 ENTITIES 가 아니라 이
+          // 블록 안에만 있다. (DxfLayout.blockName 주석 참고)
+          if (currentLayoutName && /^\*paper_space/i.test(blockName)) {
+            const owner = layouts.find(l => l.name === currentLayoutName)
+            if (owner) owner.blockName = blockName
+          }
           // "*" 로 시작하는 블록에는 치수 블록(*D0, *D1 ... 수백 개)도 섞여 있다.
           // 전부 찍으면 콘솔이 그걸로 덮여서 정작 볼 줄이 묻힌다.
           if (/^\*(paper_space|model_space)/i.test(blockName)) {

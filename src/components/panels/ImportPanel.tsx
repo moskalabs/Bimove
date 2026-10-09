@@ -6,7 +6,7 @@ import { useToast } from '../../context/ToastContext'
 import { uploadImage } from '../../lib/project'
 import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2, getLastImportReport, ViewportClipMissedError } from '../../lib/dxf'
 import type { ViewportClip } from '../../lib/dxf-shared'
-import { buildLayoutTargets } from '../../lib/dxf-shared'
+import { buildLayoutTargets, type ParseSpace } from '../../lib/dxf-shared'
 import type { LayoutImportInfo } from '../CadPreview'
 import { lazyWithReload } from '../../lib/lazyWithReload'
 import { importPdf } from '../../lib/pdfImport'
@@ -185,25 +185,49 @@ export function ImportPanel() {
           }
 
           setLoading(`"${layout.name}" 임포트 중... (${i + 1}/${targets.length})`)
-          try {
-            const count = await commitCadImportV2(
-              editor, dxfText, selectedLayers,
-              prev.fileName, prev.fileSize, prev.isDwg,
-              (progress: string) => setLoading(`[${layout.name}] ${progress}`),
-              clip,
-            )
-            totalCount += count
-            importedLayouts++
-            console.log(`[Import] Layout "${layout.name}": ${count}개 요소`)
-          } catch (err) {
-            // clip 이 도형을 하나도 못 잡았다 = clip 이 틀렸다. 모델공간 전체를
-            // 복사하면 "모형" 페이지의 복제본이 생기니 도형은 넣지 않는다.
-            // 그래도 **페이지는 남긴다** — 탭 개수가 원본과 맞아야 뭐가 비었는지
-            // 보인다. 전엔 여기서 지워버려서 탭이 조용히 사라졌다.
-            if (!(err instanceof ViewportClipMissedError)) throw err
-            console.warn(`[Import] Layout "${layout.name}": ${err.message} → 빈 페이지로 둔다`)
-            empty.push(layout.name)
+          const commit = (c: ViewportClip | null, space: ParseSpace) => commitCadImportV2(
+            editor, dxfText, selectedLayers,
+            prev.fileName, prev.fileSize, prev.isDwg,
+            (progress: string) => setLoading(`[${layout.name}] ${progress}`),
+            c, space,
+          )
+
+          // 종이 탭은 **종이공간** 을 먼저 읽는다. 도면틀·표제란·시트 캡션
+          // ("COVER", "평 면 (1/50)" 같은 것)은 모델공간이 아니라 거기 있고,
+          // 뷰포트가 하나도 없어도 존재한다. 그래서 뷰포트 유무와 무관하게
+          // 시도한다 — geometry 플래그는 아래 모델공간 폴백에서만 본다.
+          let count = 0
+          if (!layout.isModelSpace) {
+            count = await commit(null, {
+              kind: 'paper', layoutName: layout.name, blockName: layout.blockName,
+            })
+            console.log(`[Import] Layout "${layout.name}": 종이공간 ${count}개 요소`)
           }
+
+          if (count === 0) {
+            // 모형 탭이거나, 종이공간이 비었다 (DWG→DXF 변환에서 종이 엔티티가
+            // 날아간 파일이 그렇다). 기존 경로 — 모델공간을 뷰포트 clip 으로
+            // 잘라 넣는다.
+            if (!geometry) { empty.push(layout.name); continue }
+            if (!layout.isModelSpace) {
+              console.warn(`[Import] Layout "${layout.name}": 종이공간이 비었다 → 모델공간 clip 으로 재시도`)
+            }
+            try {
+              count = await commit(clip, { kind: 'model', excludePaper: targets.length > 1 })
+            } catch (err) {
+              // clip 이 도형을 하나도 못 잡았다 = clip 이 틀렸다. 모델공간 전체를
+              // 복사하면 "모형" 페이지의 복제본이 생기니 도형은 넣지 않는다.
+              // 그래도 **페이지는 남긴다** — 탭 개수가 원본과 맞아야 뭐가 비었는지
+              // 보인다. 전엔 여기서 지워버려서 탭이 조용히 사라졌다.
+              if (!(err instanceof ViewportClipMissedError)) throw err
+              console.warn(`[Import] Layout "${layout.name}": ${err.message} → 빈 페이지로 둔다`)
+              empty.push(layout.name)
+              continue
+            }
+          }
+          totalCount += count
+          importedLayouts++
+          console.log(`[Import] Layout "${layout.name}": ${count}개 요소`)
         }
 
         // Model Space 페이지로 복귀
@@ -217,8 +241,8 @@ export function ImportPanel() {
         toast(`"${prev.fileName}" ${fmt} 가져옴 (${importedLayouts}개 레이아웃, ${totalCount.toLocaleString()}개 요소)`, 'success')
         if (empty.length > 0) {
           toast(
-            `레이아웃 ${empty.map(n => `"${n}"`).join(', ')} 은(는) 뷰포트를 못 찾아 빈 페이지로 들어왔습니다. ` +
-            `원본 DWG 의 뷰포트 정보가 변환 과정에서 손실된 경우입니다.`,
+            `레이아웃 ${empty.map(n => `"${n}"`).join(', ')} 은(는) 도형을 못 찾아 빈 페이지로 들어왔습니다. ` +
+            `원본 DWG 의 종이공간/뷰포트 정보가 변환 과정에서 손실된 경우입니다.`,
             'info',
           )
         }

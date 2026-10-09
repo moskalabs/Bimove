@@ -1921,12 +1921,13 @@ export function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
  * - UI 스레드 블로킹 없음 (Worker)
  * - 진행률 콜백 지원
  */
-import type { PolylineData, TextData, HatchData, LinetypeDef, LayerInfo, WorkerOut, SkipReport } from './dxf-fast-worker'
+import type { PolylineData, TextData, HatchData, LinetypeDef, LayerInfo, WorkerOut, SkipReport, ParseSpace } from './dxf-fast-worker'
 
 function runFastWorker(
   dxfText: string,
   selectedLayers: string[],
   onProgress?: (msg: string) => void,
+  space?: ParseSpace,
 ): Promise<{ polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo>; skipped: SkipReport }> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(
@@ -1995,7 +1996,7 @@ function runFastWorker(
       reject(new Error(`Worker 에러: ${err.message || '(메시지 없음)'}`))
     }
 
-    worker.postMessage({ type: 'parse', dxfText, selectedLayers })
+    worker.postMessage({ type: 'parse', dxfText, selectedLayers, space })
   })
 }
 
@@ -2605,6 +2606,7 @@ export async function commitCadImportV2(
   _isDwg: boolean,
   onProgress?: (msg: string) => void,
   viewportClip?: ViewportClip | null,
+  space?: ParseSpace,
 ): Promise<number> {
   const t0 = performance.now()
   const layerArr = [...selectedLayers]
@@ -2621,7 +2623,7 @@ export async function commitCadImportV2(
   let workerLayers: Record<string, LayerInfo>
   let workerSkipped: SkipReport
   try {
-    const result = await runFastWorker(dxfText, layerArr, onProgress)
+    const result = await runFastWorker(dxfText, layerArr, onProgress, space)
     polylines = result.polylines
     insUnits = result.insUnits
     workerTexts = result.texts || []
@@ -2692,7 +2694,10 @@ export async function commitCadImportV2(
   //
   // 텍스트/해치 필터도 같은 clip 을 따라야 하므로 이 아래로는 이걸 쓴다.
   // (clip 이 통째로 빗나간 경우엔 되돌리지 않고 던진다 — 아래 참고.)
-  const effectiveClip = viewportClip
+  //
+  // 종이 모드에선 좌표가 **종이(mm)** 공간이다. viewportClip 은 모델공간
+  // 상자라서 그대로 대면 전부 걸러진다 — 무시한다.
+  const effectiveClip = space?.kind === 'paper' ? null : viewportClip
   if (effectiveClip) {
     // Viewport AABB 클리핑 (정확한 레이아웃 기반)
     const cMinX = effectiveClip.minX * scale
