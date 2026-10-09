@@ -383,6 +383,20 @@ function SnapSvgIcon({ mode, color }: { mode: string; color: string }) {
   }
 }
 
+/** 자석 아이콘 — 스냅 켜짐/꺼짐을 한눈에 */
+function MagnetIcon({ color, size = 16 }: { color: string; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+      <path
+        d="M4 2v5a4 4 0 0 0 8 0V2"
+        stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none"
+      />
+      <line x1="4" y1="2" x2="4" y2="5" stroke={color} strokeWidth="3" strokeLinecap="round" />
+      <line x1="12" y1="2" x2="12" y2="5" stroke={color} strokeWidth="3" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 const SNAP_OPTIONS: SnapOptionDef[] = [
   { mode: 'endpoint',      label: '끝점',   icon: <SnapSvgIcon mode="endpoint" color="#f5a623" />, color: '#f5a623' },
   { mode: 'midpoint',      label: '중간점', icon: <SnapSvgIcon mode="midpoint" color="#f5a623" />, color: '#f5a623' },
@@ -463,11 +477,15 @@ function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleC
 
   return (
     <div className="rbar-view-section">
-      {/* 거리 표시 바 */}
-      <div className="rbar-distance-bar">
-        <div className="rbar-distance-icon">
-          <RotateCw size={16} strokeWidth={1.75} />
-        </div>
+      {/* 거리 표시 바 — 왼쪽 자석이 스냅 토글 */}
+      <div className="rbar-distance-bar" ref={snapRef}>
+        <button
+          className={`rbar-distance-icon rbar-snap-btn${anySnapActive ? ' active' : ''}`}
+          onClick={() => setSnapOpen(prev => !prev)}
+          title="스냅 상세설정"
+        >
+          <MagnetIcon color={anySnapActive ? '#f5a623' : '#999'} size={16} />
+        </button>
         <button className="rbar-zoom-btn" onClick={zoomOut} title="축소">
           <ChevronDown size={14} strokeWidth={2} />
         </button>
@@ -477,19 +495,7 @@ function ViewSection({ toolId: _toolId, scale }: { toolId: string; scale: ScaleC
         <button className="rbar-zoom-btn" onClick={zoomIn} title="확대">
           <ChevronUp size={14} strokeWidth={2} />
         </button>
-      </div>
 
-      {/* 스냅 드롭다운 */}
-      <div className="rbar-snap-dropdown" ref={snapRef}>
-        <button
-          className={`rbar-snap-toggle${anySnapActive ? ' active' : ''}`}
-          onClick={() => setSnapOpen(prev => !prev)}
-          title="스냅 상세설정"
-        >
-          <span className="rbar-snap-toggle-icon"><SnapSvgIcon mode="endpoint" color={anySnapActive ? '#f5a623' : '#888'} /></span>
-          <span>스냅</span>
-          <ChevronUp size={12} style={{ transform: snapOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
-        </button>
         {snapOpen && (
           <div className="rbar-snap-popup">
             {SNAP_OPTIONS.map(opt => {

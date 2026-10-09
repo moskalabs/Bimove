@@ -598,6 +598,7 @@
 }
 
 .rbar-distance-bar {
+  position: relative; /* 스냅 팝업 기준 */
   display: flex;
   align-items: center;
   gap: 6px;
@@ -605,7 +606,6 @@
   background: #fff;
   border: 1px solid #e8e8e8;
   border-radius: 8px;
-  margin-bottom: 8px;
 }
 
 .rbar-distance-icon {
@@ -614,7 +614,22 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #ea4335;
+}
+
+/* 거리 바 왼쪽의 스냅(자석) 토글 */
+.rbar-snap-btn {
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s;
+}
+.rbar-snap-btn:hover { background: #f0f0f0; }
+.rbar-snap-btn.active {
+  border-color: #f5a623;
+  background: rgba(245, 166, 35, 0.12);
 }
 
 .rbar-zoom-btn {
@@ -645,33 +660,7 @@
   line-height: 1.4;
 }
 
-/* 스냅 드롭다운 */
-.rbar-snap-dropdown {
-  position: relative;
-}
-
-.rbar-snap-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 6px 10px;
-  font-size: 12px;
-  color: #666;
-  background: #f8f8f8;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.rbar-snap-toggle:hover { background: #f0f0f0; }
-.rbar-snap-toggle.active {
-  color: #1a73e8;
-  border-color: #b8d4f8;
-  background: #e8f0fe;
-}
-.rbar-snap-toggle-icon { font-size: 13px; }
-
+/* 스냅 팝업 — 거리 바 위로 뜬다 */
 .rbar-snap-popup {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -2221,8 +2210,8 @@ html[data-dark="true"] .rbar-view-section { background: #1e1e22; border-color: #
 html[data-dark="true"] .rbar-distance-bar { background: #2a2a30; border-color: #444; }
 html[data-dark="true"] .rbar-distance-value { color: #ddd; }
 html[data-dark="true"] .rbar-zoom-btn:hover { background: #333; color: #ddd; }
-html[data-dark="true"] .rbar-snap-toggle { background: #2a2a30; color: #bbb; border-color: #444; }
-html[data-dark="true"] .rbar-snap-toggle.active { background: #1a3a5c; color: #5aa3f0; border-color: #5aa3f0; }
+html[data-dark="true"] .rbar-snap-btn:hover { background: #333; }
+html[data-dark="true"] .rbar-snap-btn.active { background: rgba(245, 166, 35, 0.18); border-color: #f5a623; }
 html[data-dark="true"] .rbar-snap-popup { background: #2a2a30; border-color: #444; box-shadow: 0 -4px 16px rgba(0,0,0,0.4); }
 html[data-dark="true"] .rbar-snap-item { background: transparent; color: #bbb; }
 html[data-dark="true"] .rbar-snap-item:hover { background: #333; }
