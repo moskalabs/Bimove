@@ -366,6 +366,36 @@ export function extractSection(dxf: string, name: string, gc: (c: number) => str
   return end >= start ? dxf.substring(start, end) : null
 }
 
+/**
+ * IMAGEDEF 핸들 → 참조 파일 경로.
+ *
+ * DXF/DWG 는 래스터 픽셀을 품지 않는다. IMAGE 엔티티는 OBJECTS 섹션의
+ * IMAGEDEF 를 가리키고(코드 340 → 핸들), IMAGEDEF 는 바깥 파일 경로(코드 1)만
+ * 들고 있다. AutoCAD 가 사진을 보여주는 건 그 파일이 옆에 있기 때문이다 —
+ * 우리는 파일을 못 받았으니 테두리와 **빠진 파일 이름**까지만 보여준다.
+ */
+function parseImageDefs(dxf: string, gc: (c: number) => string): Map<string, string> {
+  const defs = new Map<string, string>()
+  if (dxf.indexOf('IMAGEDEF') < 0) return defs   // 흔한 경우: 이미지 없는 도면
+  const objs = extractSection(dxf, 'OBJECTS', gc)
+  if (!objs) return defs
+
+  const marker = `${gc(0)}\nIMAGEDEF\n`
+  const sep = `${gc(0)}\n`
+  let i = indexOfLineStart(objs, marker)
+  while (i >= 0) {
+    const bodyStart = i + gc(0).length + 1       // 'IMAGEDEF' 줄부터
+    const next = indexOfLineStart(objs, sep, bodyStart)
+    const { codes } = parseGroupCodes(objs.substring(bodyStart, next < 0 ? objs.length : next))
+    const handle = codes.get(5)?.[0]?.trim()
+    const path = codes.get(1)?.[0]?.trim()
+    if (handle && path) defs.set(handle.toUpperCase(), path)
+    if (next < 0) break
+    i = indexOfLineStart(objs, marker, next)
+  }
+  return defs
+}
+
 /** Parse $INSUNITS from HEADER section */
 function parseInsUnits(dxf: string, gc: (c: number) => string): number {
   const hdr = extractSection(dxf, 'HEADER', gc)
@@ -1737,7 +1767,8 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   const layerDefs = parseLayerDefs(dxfText, gc)
   const layerLtMap = layerDefsToLinetypeMap(layerDefs)
   const textStyleMap = parseTextStyles(dxfText, gc)
-  console.log(`[fast-worker] ${linetypeMap.size}개 LTYPE, ${layerDefs.size}개 LAYER, ${textStyleMap.size}개 STYLE, $LTSCALE=${ltscale}`)
+  const imageDefs = parseImageDefs(dxfText, gc)
+  console.log(`[fast-worker] ${linetypeMap.size}개 LTYPE, ${layerDefs.size}개 LAYER, ${textStyleMap.size}개 STYLE, ${imageDefs.size}개 IMAGEDEF, $LTSCALE=${ltscale}`)
 
   // 2. Blocks
   progress('블록 정의 파싱', 10)
@@ -2121,7 +2152,12 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
       // OLE2FRAME OOM 을 막는 커밋에서 "비기하 엔티티" 로 같이 묶여 들어가는
       // 바람에, 주석 글씨는 나오는데 그게 어디를 가리키는지 알려주는 선이
       // 통째로 사라졌다. 도면에서 지시선이 없으면 주석이 무의미하다.
-      if (type === 'OLE2FRAME' || type === 'OLEFRAME' || type === 'IMAGE' ||
+      // IMAGE 는 여기 있으면 안 된다. 래스터 이미지는 **도면 위에 자리를
+      // 차지하는 요소**고, codesToPolyline 의 case 'IMAGE' 가 테두리를 그릴 줄
+      // 안다. OLE2FRAME OOM 을 막는 커밋에 휩쓸려 들어와서, AutoCAD 에서는
+      // 보이던 이미지가 불러오면 흔적도 없이 사라졌다 (LEADER 와 같은 사고).
+      // IMAGE 엔티티 자체는 수백 바이트다 — OOM 과 무관하다.
+      if (type === 'OLE2FRAME' || type === 'OLEFRAME' ||
           type === 'WIPEOUT' || type === 'VIEWPORT' || type === 'ATTDEF' ||
           type === 'TOLERANCE' ||
           type === 'ACAD_PROXY_ENTITY' || type === 'BODY' || type === 'REGION' ||
@@ -2190,6 +2226,30 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
           if (lw !== undefined && output[pi].lineweight === undefined) output[pi].lineweight = lw
           if (resolvedColor >= 0 && output[pi].colorNumber < 0) output[pi].colorNumber = resolvedColor
           if (tr !== undefined && output[pi].transparency === undefined) output[pi].transparency = tr
+        }
+
+        // 래스터 이미지는 테두리만 나온다 (픽셀이 파일 안에 없다 —
+        // parseImageDefs 주석 참고). 빈 네모만 덩그러니 있으면 뭔지 알 수
+        // 없으니 어떤 파일이 빠졌는지 가운데에 적어준다.
+        if (type === 'IMAGE' && output.length > prevLen && texts.length < MAX_TEXTS) {
+          const defHandle = codes.get(340)?.[0]?.trim().toUpperCase()
+          const name = (defHandle ? imageDefs.get(defHandle) : undefined)?.split(/[\\/]/).pop()
+          const v = output[prevLen].vertices
+          if (name && v.length >= 3) {
+            const w = Math.abs(v[2][0] - v[0][0])
+            const h = Math.abs(v[2][1] - v[0][1])
+            if (w > 0 && h > 0) {
+              texts.push({
+                x: (v[0][0] + v[2][0]) / 2,
+                y: (v[0][1] + v[2][1]) / 2,
+                text: name,
+                height: Math.min(h / 12, w / Math.max(name.length * 0.6, 1)),
+                layer: entityLayer,
+                colorNumber: resolvedColor,
+                attachPt: 5,   // middle center
+              })
+            }
+          }
         }
       }
 
