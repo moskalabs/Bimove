@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, Suspense } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from 'react'
 import { Tldraw, createSessionStateSnapshotSignal } from 'tldraw'
 import type { Editor, TLEditorSnapshot } from 'tldraw'
 import 'tldraw/tldraw.css'
@@ -35,11 +35,11 @@ import { BlockTool } from './tools/BlockTool'
 import { CommentTool } from './tools/CommentTool'
 import { DimensionTool } from './tools/DimensionTool'
 import { EditorContext } from './context/EditorContext'
-import { ProjectContext } from './context/ProjectContext'
-import { loadSnapshot, dropLegacySnapshot, saveThumbnail, touchProject, resolveSnapshot } from './lib/projectStore'
+import { ProjectContext, ProjectNameContext } from './context/ProjectContext'
+import { loadSnapshot, dropLegacySnapshot, saveThumbnail, touchProject, resolveSnapshot, renameProject } from './lib/projectStore'
 import { readRecordSnapshot, writeFullRecords, writeRecordDiff, type SnapshotLike } from './lib/snapshotRecords'
 import { createDebouncedSaver } from './lib/debouncedSave'
-import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, saveProjectVersion } from './lib/supabaseSync'
+import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, saveProjectVersion, renameProject as renameProjectOnServer } from './lib/supabaseSync'
 import { saveVersion, getVersion, type Version } from './lib/versions'
 import { pushVersion } from './lib/versionSync'
 import { backupServerSnapshot } from './lib/conflictBackup'
@@ -130,11 +130,43 @@ interface PendingCadPreview {
   isDwg: boolean
 }
 
-function EditorView({ projectId, onBack }: { projectId: string; projectName?: string; onBack: () => void }) {
+function EditorView({ projectId, projectName: initialProjectName, onBack }: { projectId: string; projectName?: string; onBack: () => void }) {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [show3D, setShow3D] = useState(false)
   const [pendingCadPreview, setPendingCadPreview] = useState<PendingCadPreview | null>(null)
   const { toast } = useToast()
+
+  // ── 프로젝트 이름 ──
+  //
+  // 화면(오른쪽 패널 "파일명")은 입력한 그대로 즉시 바뀌고, 저장만 디바운스한다.
+  // 서버가 정본이다 — 로컬 목록에는 대시보드에서 연 프로젝트가 아예 없을 수도
+  // 있어서, 로컬만 쓰면 이름이 어디에도 안 남는다.
+  //
+  // projectId 는 이 컴포넌트가 살아 있는 동안 바뀌지 않는다 (프로젝트를 바꾸면
+  // 대시보드를 거치면서 언마운트된다). 그래서 saver 를 한 번만 만들어 둔다.
+  const [projectName, setProjectNameState] = useState(initialProjectName ?? '')
+  const projectNameRef = useRef(projectName)
+  const [nameSaver] = useState(() => createDebouncedSaver(() => {
+    const next = projectNameRef.current.trim()
+    if (!next) return  // 빈 이름은 저장하지 않는다 — 지우는 중일 뿐이다
+    renameProject(projectId, next)
+    void renameProjectOnServer(projectId, next).catch(err => {
+      console.warn('[project] 이름 저장 실패', err)
+    })
+  }, 800))
+  // 이름 고치고 바로 대시보드로 나가도 사라지지 않게, 언마운트 때는 flush.
+  useEffect(() => () => nameSaver.flush(), [nameSaver])
+
+  const setProjectName = useCallback((name: string) => {
+    projectNameRef.current = name
+    setProjectNameState(name)
+    nameSaver.schedule()
+  }, [nameSaver])
+
+  const projectNameValue = useMemo(
+    () => ({ name: projectName, setName: setProjectName }),
+    [projectName, setProjectName],
+  )
 
   // Supabase에서 로드 시 받아온 서버 타임스탬프 (충돌 방지용)
   const serverUpdatedAtRef = useRef<string | undefined>(undefined)
@@ -632,6 +664,7 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
 
   return (
     <ProjectContext.Provider value={projectId}>
+    <ProjectNameContext.Provider value={projectNameValue}>
     <EditorContext.Provider value={editor}>
       <div className="bimova-layout">
         <TopBar />
@@ -702,6 +735,7 @@ function EditorView({ projectId, onBack }: { projectId: string; projectName?: st
         )}
       </div>
     </EditorContext.Provider>
+    </ProjectNameContext.Provider>
     </ProjectContext.Provider>
   )
 }

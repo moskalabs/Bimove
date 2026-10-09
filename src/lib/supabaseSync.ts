@@ -306,9 +306,13 @@ export async function deleteProject(projectId: string) {
 }
 
 export async function renameProject(projectId: string, name: string) {
+  // updated_at 은 **일부러** 건드리지 않는다. 이건 스냅샷 저장의 optimistic
+  // lock 기준값이자 "서버 쪽이 더 최신인가" 판정 기준이라(resolveSnapshot),
+  // 이름만 바꿨는데 올리면 열려 있는 에디터가 남의 저장으로 오해해 충돌 복구에
+  // 들어가고, 아직 안 올라간 로컬 작업이 서버의 옛 도면에 밀린다.
   await supabase
     .from('projects')
-    .update({ name, updated_at: new Date().toISOString() })
+    .update({ name })
     .eq('id', projectId)
 }
 

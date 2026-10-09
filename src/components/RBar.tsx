@@ -17,7 +17,7 @@ import {
   type ScaleConfig,
 } from '../lib/scaleConfig'
 import { createShareLink, copyToClipboard } from '../lib/shareLink'
-import { useProjectId } from '../context/ProjectContext'
+import { useProjectId, useProjectName } from '../context/ProjectContext'
 import { useToast } from '../context/ToastContext'
 import { VersionHistoryPanel } from './VersionHistoryPanel'
 import {
@@ -28,7 +28,6 @@ import {
   getSnapUiState, setSnapUiMode, type SnapUiMode,
 } from '../lib/settings'
 import { drawingState } from '../lib/drawingState'
-import { getProjects, renameProject } from '../lib/projectStore'
 
 export type SelInfo = {
   id: TLShapeId
@@ -153,17 +152,10 @@ function TopActionBar() {
 }
 
 /* ── 프로젝트 정보: 파일명, 프로필 ── */
-function ProjectInfoSection() {
-  const projectId = useProjectId()
-  const [projectName, setProjectName] = useState(() => {
-    const p = getProjects().find(p => p.id === projectId)
-    return p?.name || '새 프로젝트'
-  })
-
-  const handleNameChange = (name: string) => {
-    setProjectName(name)
-    if (projectId) renameProject(projectId, name)
-  }
+export function ProjectInfoSection() {
+  // 이름은 EditorView 가 들고 있다 (ProjectNameContext). 여기서 localStorage 를
+  // 직접 뒤지면 대시보드에서 연 프로젝트는 목록에 없어서 "새 프로젝트" 로 보인다.
+  const { name: projectName, setName: setProjectName } = useProjectName()
 
   return (
     <section className="rbar-section">
@@ -173,7 +165,7 @@ function ProjectInfoSection() {
         <input
           className="rbar-prop-input"
           value={projectName}
-          onChange={e => handleNameChange(e.target.value)}
+          onChange={e => setProjectName(e.target.value)}
         />
       </div>
       <div className="rbar-prop-row">

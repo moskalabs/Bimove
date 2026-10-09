@@ -1,6 +1,7 @@
 import { useState, Suspense } from 'react'
 import { PageRecordType, type TLPageId } from 'tldraw'
 import { useEditor } from '../../context/EditorContext'
+import { useProjectName } from '../../context/ProjectContext'
 import { useToast } from '../../context/ToastContext'
 import { uploadImage } from '../../lib/project'
 import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2, getLastImportReport, ViewportClipMissedError } from '../../lib/dxf'
@@ -42,8 +43,24 @@ interface PreviewData {
 export function ImportPanel() {
   const editor = useEditor()
   const { toast } = useToast()
+  const { setName: setProjectName } = useProjectName()
   const [loading, setLoading] = useState<string | null>(null)
   const [previewData, setPreviewData] = useState<PreviewData | null>(null)
+
+  /**
+   * 가져온 도면 파일명을 프로젝트 이름으로 올린다.
+   *
+   * 오른쪽 패널의 칸 이름이 그냥 "파일명" 이다. 도면을 불러왔는데 거기 "새
+   * 프로젝트" 라고 적혀 있으면 어느 도면인지 알 길이 없다. 사용자가 지어둔
+   * 이름을 덮어쓰게 되지만, 그 칸은 그대로 고칠 수 있다.
+   *
+   * **임포트가 실제로 성공했을 때만** 부른다 — 취소하거나 0개 가져온 경우까지
+   * 이름을 바꾸면 화면에 없는 도면 이름이 남는다.
+   */
+  const adoptFileName = (fileName: string) => {
+    const base = fileName.replace(/\.(dxf|dwg)$/i, '').trim()
+    if (base) setProjectName(base)
+  }
 
   const notify = {
     onSuccess: (msg: string) => toast(msg, 'success'),
@@ -213,6 +230,7 @@ export function ImportPanel() {
         }, 400)
 
         const fmt = prev.isDwg ? 'DWG' : 'DXF'
+        adoptFileName(prev.fileName)
         toast(`"${prev.fileName}" ${fmt} 가져옴 (${importedLayouts}개 레이아웃, ${totalCount.toLocaleString()}개 요소)`, 'success')
         if (skipped.length > 0) {
           toast(
@@ -249,6 +267,7 @@ export function ImportPanel() {
         if (count === 0) {
           toast('선택한 레이어에 표시할 도형이 없습니다.', 'info')
         } else {
+          adoptFileName(prev.fileName)
           toast(`"${prev.fileName}" ${fmt} 가져옴 (${count.toLocaleString()}개 요소, ${selectedLayers.size}개 레이어)`, 'success')
         }
         const missed = summarizeImportReport()
