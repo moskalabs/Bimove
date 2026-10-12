@@ -12,12 +12,15 @@ import { aciToHex as aciToHexFull, detectPadding, isModelSpaceLayout, makeGcForm
  * 있는 경우가 많아 기본 포함. 안 보려면 사용자가 직접 체크 해제. */
 const EXCLUDE_LAYER_PATTERNS = /^(VIEWPORT|PAPER[-_ ]?SPACE|\*PAPER|\*MODEL)/i
 
-interface LayerInfo {
+export interface LayerInfo {
   name: string
   color: string
   segCount: number
   likelyStructural: boolean
   excluded?: boolean   // 비출력/보조 레이어 (DEFPOINTS, TB-* 등)
+  /** AutoCAD 에서 꺼졌거나(gc 62 음수) 동결된(gc 70 bit 0) 레이어.
+   *  원본에서 안 보이던 도형이니 기본 선택에서 뺀다. */
+  hidden?: '꺼짐' | '동결'
   approx?: boolean  // 대용량 파일 샘플링 시 true
 }
 
@@ -65,10 +68,13 @@ export default function CadPreview({
         const result = extractLayersLightweight(dxfText)
         setLayers(result)
 
+        // AutoCAD 에서 꺼졌거나 동결된 레이어는 기본으로 안 고른다. 목록에는
+        // 남겨서 직접 켤 수 있게 한다 — 도형을 숨기는 쪽도 틀릴 수 있으니까.
+        const pickable = (l: LayerInfo) => !EXCLUDE_LAYER_PATTERNS.test(l.name) && !l.hidden
         const hasStructural = result.some((l) => l.likelyStructural)
         const initialSelected = hasStructural
-          ? new Set(result.filter((l) => l.likelyStructural && !EXCLUDE_LAYER_PATTERNS.test(l.name)).map((l) => l.name))
-          : new Set(result.filter((l) => !EXCLUDE_LAYER_PATTERNS.test(l.name)).map((l) => l.name))
+          ? new Set(result.filter((l) => l.likelyStructural && pickable(l)).map((l) => l.name))
+          : new Set(result.filter(pickable).map((l) => l.name))
         setSelected(initialSelected)
 
         // 레이아웃/뷰포트 파싱
@@ -217,6 +223,7 @@ export default function CadPreview({
                 {layer.name}
                 {layer.likelyStructural && <span className="cad-layer-tag">구조</span>}
                 {layer.excluded && <span className="cad-layer-tag" style={{ background: '#666', color: '#ccc' }}>보조</span>}
+                {layer.hidden && <span className="cad-layer-tag" style={{ background: '#8a4b2a', color: '#ffd9c2' }}>{layer.hidden}</span>}
               </span>
               <span className="cad-layer-seg">{layer.approx ? '~' : ''}{layer.segCount.toLocaleString()}</span>
             </label>
@@ -255,7 +262,7 @@ export default function CadPreview({
  *  **발견조차 못 한다** — 그래서 끊긴 경우 테이블 정의 레이어는 버리지 않는다. */
 const MAX_ENTITIES_SCAN = 200_000
 
-function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
+export function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
   // 0. \r\n → \n 정규화 (필수 — 패턴 매칭에 \n 통일 필요)
   const hadCR = rawDxfText.indexOf('\r') >= 0
   const dxfText = hadCR
@@ -271,6 +278,7 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
   const GC8 = `\n${gc(8)}\n`                          // 레이어 그룹 코드
   const GC2 = `\n${gc(2)}\n`                          // 이름 그룹 코드
   const GC62 = `\n${gc(62)}\n`                        // 색상 그룹 코드
+  const GC70 = `\n${gc(70)}\n`                        // 레이어 플래그 (bit 0 = 동결)
   const ENDSEC = `\n${gc(0)}\nENDSEC`
   const SEC_TABLES = `\n${gc(0)}\nSECTION\n${gc(2)}\nTABLES\n`
   const SEC_ENTITIES = `\n${gc(0)}\nSECTION\n${gc(2)}\nENTITIES\n`
@@ -278,8 +286,13 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
 
   console.log(`[CadPreview] 길이: ${dxfText.length}, 패딩: ${padded}`)
 
-  // --- 1. TABLES → LAYER 정의 (이름 + 색상) ---
-  const layerDefs = new Map<string, number>()
+  // --- 1. TABLES → LAYER 정의 (이름 + 색상 + 표시 여부) ---
+  /** AutoCAD 의 레이어 끄기/동결은 DXF 에 이렇게 들어온다:
+   *   - gc 62 가 **음수** → 꺼짐 (절대값이 색)
+   *   - gc 70 의 bit 0 → 동결
+   *  전엔 Math.abs() 로 색만 뽑고 부호를 버려서, 원본에서 안 보이던 도형이
+   *  Bimove 에선 전부 켜진 채로 쏟아졌다. */
+  const layerDefs = new Map<string, { aci: number; hidden?: '꺼짐' | '동결' }>()
   const tablesIdx = dxfText.indexOf(SEC_TABLES)
   if (tablesIdx >= 0) {
     const tablesBody = tablesIdx + SEC_TABLES.length
@@ -301,13 +314,25 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
 
           const ci = dxfText.indexOf(GC62, pos)
           let color = 7
+          let off = false
           if (ci >= 0 && ci < lEnd) {
             const cvs = ci + GC62.length
             const cvn = dxfText.indexOf('\n', cvs)
-            color = Math.abs(parseInt(dxfText.substring(cvs, (cvn >= 0 && cvn <= lEnd) ? cvn : lEnd)))
-            if (isNaN(color)) color = 7
+            const signed = parseInt(dxfText.substring(cvs, (cvn >= 0 && cvn <= lEnd) ? cvn : lEnd))
+            if (!isNaN(signed)) { off = signed < 0; color = Math.abs(signed) || 7 }
           }
-          layerDefs.set(name, color)
+
+          const fi = dxfText.indexOf(GC70, pos)
+          let frozen = false
+          if (fi >= 0 && fi < lEnd) {
+            const fvs = fi + GC70.length
+            const fvn = dxfText.indexOf('\n', fvs)
+            const flags = parseInt(dxfText.substring(fvs, (fvn >= 0 && fvn <= lEnd) ? fvn : lEnd))
+            // bit 0 = 동결. bit 2(잠김)는 보이는 상태라 건드리지 않는다.
+            if (!isNaN(flags)) frozen = (flags & 1) !== 0
+          }
+
+          layerDefs.set(name, { aci: color, hidden: off ? '꺼짐' : frozen ? '동결' : undefined })
         }
         pos = lStart
       }
@@ -446,15 +471,24 @@ function extractLayersLightweight(rawDxfText: string): LayerInfo[] {
       keptUnscanned++
     }
 
-    const aci = layerDefs.get(name) ?? 7
+    const def = layerDefs.get(name)
     result.push({
       name,
-      color: aciToHex(aci),
+      color: aciToHex(def?.aci ?? 7),
       segCount: count,
       likelyStructural: STRUCTURAL_KEYWORDS.test(name),
       excluded: EXCLUDE_LAYER_PATTERNS.test(name),
+      hidden: def?.hidden,
       approx: extrapolated,
     })
+  }
+
+  // 조용히 빼면 "도형이 왜 없지" 가 되고, 조용히 넣으면 "이 동그라미 뭐지" 가
+  // 된다. 어느 쪽이든 이유가 콘솔에 남아야 한다.
+  const hiddenLayers = result.filter(l => l.hidden)
+  if (hiddenLayers.length > 0) {
+    console.warn(`[CadPreview] AutoCAD 에서 안 보이는 레이어 ${hiddenLayers.length}개 → 기본 선택에서 제외: ` +
+      hiddenLayers.map(l => `${l.name}(${l.hidden}, ${l.segCount}개)`).join(', '))
   }
 
   if (keptUnscanned > 0) {
