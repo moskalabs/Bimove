@@ -380,8 +380,11 @@ describe('parseDxfSegments: HATCH', () => {
     expect(segs.length).toBe(27)
   })
 
+  // 각도는 **도(度)** 다. 예전에는 이 테스트가 `endAngle: 2 * Math.PI` 를
+  // 넘기고 조각 수만 셌다 — 코드가 라디안으로 읽어도 24 가 나오니 단위
+  // 버그가 그대로 통과했다. 이제 도형이 실제로 타원인지까지 본다.
   it('parses HATCH with ELLIPSE edges (type=3)', () => {
-    const segs = parseEntities([{
+    const ellipse = (startAngle: number, endAngle: number) => parseEntities([{
       type: 'HATCH',
       boundaryPaths: [{
         edges: [{
@@ -389,14 +392,30 @@ describe('parseDxfSegments: HATCH', () => {
           center: { x: 0, y: 0 },
           majorAxisEndPoint: { x: 100, y: 0 },
           minorAxisRatio: 0.5,
-          startAngle: 0,
-          endAngle: 2 * Math.PI,
+          startAngle, endAngle,
         }],
       }],
     }])
 
+    const segs = ellipse(0, 360)
     // Full ellipse → 24 segments (HATCH ellipse uses N=24)
     expect(segs.length).toBe(24)
+
+    // 모든 끝점이 타원 위에 있다 (x/100)^2 + (y/50)^2 = 1.
+    for (const sg of segs) {
+      expect((sg.x1 / 100) ** 2 + (sg.y1 / 50) ** 2).toBeCloseTo(1, 6)
+    }
+    // 한 바퀴를 돌아 제자리로 — 장축 양 끝을 다 지난다.
+    const xs = segs.map(sg => sg.x1)
+    expect(Math.max(...xs)).toBeCloseTo(100, 6)
+    expect(Math.min(...xs)).toBeCloseTo(-100, 6)
+
+    // 90도짜리 모서리 호는 1사분면에만 머문다 — 라디안으로 읽으면
+    // 90 rad = 14 바퀴라 점들이 타원 전체에 흩어졌다.
+    for (const sg of ellipse(0, 90)) {
+      expect(sg.x1).toBeGreaterThan(-1e-6)
+      expect(sg.y1).toBeGreaterThan(-1e-6)
+    }
   })
 
   it('parses HATCH with polyline boundary', () => {

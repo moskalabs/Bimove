@@ -313,3 +313,93 @@ export function defLineSpacing(angleDeg: number, offX: number, offY: number): nu
   const t = angleDeg * Math.PI / 180
   return Math.abs(-offX * Math.sin(t) + offY * Math.cos(t))
 }
+
+/**
+ * 호(弧)·타원 호를 선분으로 펴서 점 목록으로 돌려준다.
+ *
+ * **각도는 도(度) 다.** 이름에 Deg 를 박아둔 건 사고 이력 때문이다 — HATCH
+ * 테두리의 타원 호 edge 네 군데가 gc 50/51 을 라디안으로 썼고, `51 = 360`
+ * 이 57 바퀴가 되면서 고정 샘플링한 자기교차 다각형이 단색 채움(nonzero)
+ * 으로 타원을 가득 메운 회색 원반이 됐다. 바로 옆 호 edge 는 변환을 제대로
+ * 하고 있었으니, 복붙 네 벌이 각자 단위를 정하게 둔 게 원인이다.
+ *
+ * 그래서 샘플링은 여기 한 군데만 둔다. 주의: **ELLIPSE 엔티티**의 gc 41/42
+ * 는 라디안이다 (그리고 dxf-parser 는 ARC 의 50/51 을 라디안으로 바꿔서
+ * 준다). 그쪽 값을 여기 넣을 땐 도로 되돌려서 넣어야 한다.
+ */
+export interface ArcSampleDeg {
+  /** 중심 */
+  cx: number
+  cy: number
+  /** 장축 반경. 원이면 반지름. */
+  rx: number
+  /** 단축 반경. 원이면 rx 와 같은 값. 0 이하/비정상이면 rx 로 본다. */
+  ry?: number
+  /** 장축 기울기 (**라디안** — atan2 결과를 그대로 넣는 자리다). 원이면 0. */
+  rot?: number
+  /** 시작 각도 (도) */
+  startDeg: number
+  /** 끝 각도 (도) */
+  endDeg: number
+  /** gc 73. false 면 시작/끝을 뒤집는다. */
+  ccw?: boolean
+  /** 한 조각이 덮는 각도 (도). 기본 15. */
+  stepDeg?: number
+  /** 조각 수를 직접 지정 (stepDeg 를 무시한다). 기존 호출부 호환용. */
+  segments?: number
+}
+
+/** 한 바퀴. 스윕은 이걸 넘을 수 없다. */
+const FULL_TURN_DEG = 360
+
+/**
+ * 스윕(시작→끝 각도 차이)을 도 단위로 정규화한다. 항상 0 초과 360 이하.
+ *
+ * 이게 안전망의 핵심이다. 단위를 또 틀리든, DXF 가 쓰레기 값을 주든,
+ * 테두리가 **한 바퀴를 넘게 돌 수는 없다** — 자기교차 다각형이 단색으로
+ * 채워져 거대한 원반이 되는 사고가 여기서 끊긴다.
+ */
+export function normalizeArcSweepDeg(
+  startDeg: number, endDeg: number, ccw = true,
+): { startDeg: number; sweepDeg: number } {
+  let a = Number.isFinite(startDeg) ? startDeg : 0
+  let b = Number.isFinite(endDeg) ? endDeg : FULL_TURN_DEG
+  if (!ccw) { const tmp = a; a = b; b = tmp }
+  let sweep = b - a
+  // 끝각이 시작각보다 작으면 0도를 지나 돌아온 것이다.
+  if (sweep <= 0) sweep += FULL_TURN_DEG
+  // 그래도 음수거나 한 바퀴를 넘으면 값이 깨진 것이다. 한 바퀴로 자른다.
+  if (!(sweep > 0) || sweep > FULL_TURN_DEG) sweep = FULL_TURN_DEG
+  return { startDeg: a, sweepDeg: sweep }
+}
+
+/**
+ * 호/타원 호 샘플링. 끝점을 포함하므로 조각 N 개면 점은 N+1 개다.
+ *
+ * 조각 수는 **도 단위로** 센다. 라디안으로 되돌려 세면 한 바퀴가
+ * 24.000000000000004 가 되어 ceil 이 조각을 하나 더 만든다.
+ */
+export function sampleArcDeg(o: ArcSampleDeg): Array<[number, number]> {
+  const { startDeg, sweepDeg } = normalizeArcSweepDeg(o.startDeg, o.endDeg, o.ccw ?? true)
+  const rx = Number.isFinite(o.rx) ? o.rx : 0
+  const ry = o.ry !== undefined && Number.isFinite(o.ry) && o.ry > 0 ? o.ry : rx
+  const rot = Number.isFinite(o.rot ?? 0) ? (o.rot ?? 0) : 0
+  const cosR = Math.cos(rot), sinR = Math.sin(rot)
+
+  const step = o.stepDeg !== undefined && o.stepDeg > 0 ? o.stepDeg : 15
+  const N = o.segments !== undefined && o.segments >= 1
+    ? Math.floor(o.segments)
+    : Math.max(3, Math.ceil(sweepDeg / step))
+
+  const toRad = Math.PI / 180
+  const t0 = startDeg * toRad
+  const dt = (sweepDeg * toRad) / N
+
+  const pts: Array<[number, number]> = []
+  for (let i = 0; i <= N; i++) {
+    const t = t0 + dt * i
+    const lx = rx * Math.cos(t), ly = ry * Math.sin(t)
+    pts.push([o.cx + lx * cosR - ly * sinR, o.cy + lx * sinR + ly * cosR])
+  }
+  return pts
+}

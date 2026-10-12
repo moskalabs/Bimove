@@ -10,7 +10,7 @@
  * - Zero npm dependencies (dxf-shared is internal)
  */
 
-import { aciToHex, trueColorToHex, detectPadding, makeGcFormatter, decodeDxfSpecialChars, cleanMtextFormatting, defLineSpacing, type HatchPatternLine, type ParseSpace } from './dxf-shared'
+import { aciToHex, trueColorToHex, detectPadding, makeGcFormatter, decodeDxfSpecialChars, cleanMtextFormatting, defLineSpacing, sampleArcDeg, type HatchPatternLine, type ParseSpace } from './dxf-shared'
 
 export type { HatchPatternLine, ParseSpace }
 
@@ -1075,16 +1075,11 @@ export function parseHatchEntity(chunk: string, entityLayer: string): HatchData 
             else if (c === 97) break
             pi++
           }
-          let saRad = sa * Math.PI / 180, eaRad = ea * Math.PI / 180
-          if (!ccw) { const tmp = saRad; saRad = eaRad; eaRad = tmp }
-          if (eaRad <= saRad) eaRad += 2 * Math.PI
-          const steps = Math.max(3, Math.ceil(((eaRad - saRad) * 180) / (Math.PI * 15)))
-          const dt = (eaRad - saRad) / steps
-          for (let s = 0; s <= steps; s++) {
-            const t = saRad + dt * s
-            const px = cx + r * Math.cos(t), py = cy + r * Math.sin(t)
-            edgeParts.push(s === 0 && !started ? `M${px},${py}` : `L${px},${py}`)
-            if (s === 0) started = true
+          for (const [px, py] of sampleArcDeg({
+            cx, cy, rx: r, startDeg: sa, endDeg: ea, ccw: !!ccw,
+          })) {
+            edgeParts.push(started ? `L${px},${py}` : `M${px},${py}`)
+            started = true
           }
           sumX += cx; sumY += cy; ptCount++
         } else if (edgeType === 3) {
@@ -1100,26 +1095,15 @@ export function parseHatchEntity(chunk: string, entityLayer: string): HatchData 
             else if (c === 97) break
             pi++
           }
-          const a = Math.hypot(mx, my), b = a * ratio
-          const rot = Math.atan2(my, mx)
-          const cosR = Math.cos(rot), sinR = Math.sin(rot)
-          // gc 50/51 은 **도(度)** 다 — 바로 위 호(弧) edge 와 같다. 라디안으로 쓰면
-          // 360 이 57 바퀴가 되고, 고정 18 점으로 샘플링한 자기교차 다각형이
-          // 단색 채움(nonzero) 때문에 타원 전체를 메운 회색 원반이 된다.
-          if (!eccw) { const tmp = esa; esa = eea; eea = tmp }
-          if (eea <= esa) eea += 360
-          // 호와 같은 기준(15도에 한 조각)으로 쪼갠다. 18 고정이면 작은 모서리
-          // 호에는 과하고 한 바퀴 전체에는 모자란다. 나눗셈은 도(度) 로 한다 —
-          // 라디안으로 되돌리면 360도가 24.000000000000004 가 되어 조각이 하나 더 생긴다.
-          const N = Math.max(3, Math.ceil((eea - esa) / 15))
-          const ddt = ((eea - esa) * Math.PI / 180) / N
-          const esaRad = esa * Math.PI / 180
-          for (let s = 0; s <= N; s++) {
-            const t = esaRad + ddt * s
-            const lx = a * Math.cos(t), ly = b * Math.sin(t)
-            const px = cx + lx * cosR - ly * sinR, py = cy + lx * sinR + ly * cosR
-            edgeParts.push(s === 0 && !started ? `M${px},${py}` : `L${px},${py}`)
-            if (s === 0) started = true
+          // gc 50/51 은 **도(度)** 다 — 호 edge 와 같다. sampleArcDeg 가 단위와
+          // 한 바퀴 제한을 쥐고 있으므로 여기서 각도 산수를 하지 않는다.
+          const a = Math.hypot(mx, my)
+          for (const [px, py] of sampleArcDeg({
+            cx, cy, rx: a, ry: a * ratio, rot: Math.atan2(my, mx),
+            startDeg: esa, endDeg: eea, ccw: !!eccw,
+          })) {
+            edgeParts.push(started ? `L${px},${py}` : `M${px},${py}`)
+            started = true
           }
           sumX += cx; sumY += cy; ptCount++
         } else if (edgeType === 4) {

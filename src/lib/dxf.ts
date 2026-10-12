@@ -5,7 +5,7 @@ import { createShapeId, type Editor } from 'tldraw'
 import { getScaleConfig } from './scaleConfig'
 import { reloadForStaleChunk } from './lazyWithReload'
 import { getDefaultWallThicknessMm } from './settings'
-import { ACI_TO_HEX as ACI_TABLE, trueColorToHex as trueColorToHexShared, decodeDxfSpecialChars as decodeSpecialCharsShared, STRUCTURAL_KEYWORDS, defLineSpacing, type ViewportClip, type HatchPatternLine } from './dxf-shared'
+import { ACI_TO_HEX as ACI_TABLE, trueColorToHex as trueColorToHexShared, decodeDxfSpecialChars as decodeSpecialCharsShared, STRUCTURAL_KEYWORDS, defLineSpacing, sampleArcDeg, type ViewportClip, type HatchPatternLine } from './dxf-shared'
 
 const MAX_SEGMENTS = 100_000
 
@@ -581,38 +581,31 @@ export function parseDxfSegments(
                 segs.push({ x1: edge.start.x, y1: edge.start.y, x2: edge.end.x, y2: edge.end.y, layer, lineweight, color })
               } else if (edge.type === 2 && edge.center && edge.radius) {
                 // ARC edge
-                const cx = edge.center, r = edge.radius
-                let sa = (edge.startAngle ?? 0) * Math.PI / 180
-                let ea = (edge.endAngle ?? 360) * Math.PI / 180
-                if (edge.isCounterClockwise === false) { const tmp = sa; sa = ea; ea = tmp }
-                if (ea <= sa) ea += 2 * Math.PI
-                const steps = Math.max(3, Math.ceil(((ea - sa) * 180) / (Math.PI * 10)))
-                const dt = (ea - sa) / steps
-                for (let i = 0; i < steps && segs.length < maxSegments; i++) {
-                  const t0 = sa + dt * i, t1 = sa + dt * (i + 1)
+                const cx = edge.center
+                const pts = sampleArcDeg({
+                  cx: cx.x, cy: cx.y, rx: edge.radius,
+                  startDeg: edge.startAngle ?? 0, endDeg: edge.endAngle ?? 360,
+                  ccw: edge.isCounterClockwise !== false, stepDeg: 10,
+                })
+                for (let i = 0; i + 1 < pts.length && segs.length < maxSegments; i++) {
                   segs.push({
-                    x1: cx.x + r * Math.cos(t0), y1: cx.y + r * Math.sin(t0),
-                    x2: cx.x + r * Math.cos(t1), y2: cx.y + r * Math.sin(t1),
+                    x1: pts[i][0], y1: pts[i][1], x2: pts[i + 1][0], y2: pts[i + 1][1],
                     layer, lineweight, color,
                   })
                 }
               } else if (edge.type === 3 && edge.center && edge.majorAxisEndPoint && edge.minorAxisRatio) {
                 // ELLIPSE edge
-                const cx = edge.center, maj = edge.majorAxisEndPoint, ratio = edge.minorAxisRatio
-                const a = Math.hypot(maj.x, maj.y), b = a * ratio
-                const rot = Math.atan2(maj.y, maj.x)
-                const cosR = Math.cos(rot), sinR = Math.sin(rot)
-                const sa = edge.startAngle ?? 0
-                let ea = edge.endAngle ?? (2 * Math.PI)
-                if (ea <= sa) ea += 2 * Math.PI
-                const N = 24, dt = (ea - sa) / N
-                for (let i = 0; i < N && segs.length < maxSegments; i++) {
-                  const t0 = sa + dt * i, t1 = sa + dt * (i + 1)
-                  const lx0 = a * Math.cos(t0), ly0 = b * Math.sin(t0)
-                  const lx1 = a * Math.cos(t1), ly1 = b * Math.sin(t1)
+                const cx = edge.center, maj = edge.majorAxisEndPoint
+                const a = Math.hypot(maj.x, maj.y)
+                const pts = sampleArcDeg({
+                  cx: cx.x, cy: cx.y, rx: a, ry: a * edge.minorAxisRatio,
+                  rot: Math.atan2(maj.y, maj.x),
+                  startDeg: edge.startAngle ?? 0, endDeg: edge.endAngle ?? 360,
+                  ccw: edge.isCounterClockwise !== false, segments: 24,
+                })
+                for (let i = 0; i + 1 < pts.length && segs.length < maxSegments; i++) {
                   segs.push({
-                    x1: cx.x + lx0 * cosR - ly0 * sinR, y1: cx.y + lx0 * sinR + ly0 * cosR,
-                    x2: cx.x + lx1 * cosR - ly1 * sinR, y2: cx.y + lx1 * sinR + ly1 * cosR,
+                    x1: pts[i][0], y1: pts[i][1], x2: pts[i + 1][0], y2: pts[i + 1][1],
                     layer, lineweight, color,
                   })
                 }
@@ -667,34 +660,26 @@ function boundaryToSvgPath(bp: HatchBoundaryPath): string {
         if (!started) { parts.push(`M${edge.start.x},${edge.start.y}`); started = true }
         parts.push(`L${edge.end.x},${edge.end.y}`)
       } else if (edge.type === 2 && edge.center && edge.radius) {
-        const cx = edge.center, r = edge.radius
-        let sa = (edge.startAngle ?? 0) * Math.PI / 180
-        let ea = (edge.endAngle ?? 360) * Math.PI / 180
-        if (edge.isCounterClockwise === false) { const tmp = sa; sa = ea; ea = tmp }
-        if (ea <= sa) ea += 2 * Math.PI
-        const steps = Math.max(3, Math.ceil(((ea - sa) * 180) / (Math.PI * 15)))
-        const dt = (ea - sa) / steps
-        for (let i = 0; i <= steps; i++) {
-          const t = sa + dt * i
-          const px = cx.x + r * Math.cos(t), py = cx.y + r * Math.sin(t)
-          parts.push(i === 0 && !started ? `M${px},${py}` : `L${px},${py}`)
-          if (i === 0) started = true
+        const cx = edge.center
+        for (const [px, py] of sampleArcDeg({
+          cx: cx.x, cy: cx.y, rx: edge.radius,
+          startDeg: edge.startAngle ?? 0, endDeg: edge.endAngle ?? 360,
+          ccw: edge.isCounterClockwise !== false,
+        })) {
+          parts.push(started ? `L${px},${py}` : `M${px},${py}`)
+          started = true
         }
       } else if (edge.type === 3 && edge.center && edge.majorAxisEndPoint && edge.minorAxisRatio) {
-        const cx = edge.center, maj = edge.majorAxisEndPoint, ratio = edge.minorAxisRatio
-        const a = Math.hypot(maj.x, maj.y), b = a * ratio
-        const rot = Math.atan2(maj.y, maj.x)
-        const cosR = Math.cos(rot), sinR = Math.sin(rot)
-        const sa = edge.startAngle ?? 0
-        let ea = edge.endAngle ?? (2 * Math.PI)
-        if (ea <= sa) ea += 2 * Math.PI
-        const N = 18, dt = (ea - sa) / N
-        for (let i = 0; i <= N; i++) {
-          const t = sa + dt * i
-          const lx = a * Math.cos(t), ly = b * Math.sin(t)
-          const px = cx.x + lx * cosR - ly * sinR, py = cx.y + lx * sinR + ly * cosR
-          parts.push(i === 0 && !started ? `M${px},${py}` : `L${px},${py}`)
-          if (i === 0) started = true
+        const cx = edge.center, maj = edge.majorAxisEndPoint
+        const a = Math.hypot(maj.x, maj.y)
+        for (const [px, py] of sampleArcDeg({
+          cx: cx.x, cy: cx.y, rx: a, ry: a * edge.minorAxisRatio,
+          rot: Math.atan2(maj.y, maj.x),
+          startDeg: edge.startAngle ?? 0, endDeg: edge.endAngle ?? 360,
+          ccw: edge.isCounterClockwise !== false,
+        })) {
+          parts.push(started ? `L${px},${py}` : `M${px},${py}`)
+          started = true
         }
       }
     }
@@ -1330,17 +1315,11 @@ export function parseRawHatches(
               else if (c === 97) break
               i++
             }
-            // Arc → line approximation
-            let saRad = sa * Math.PI / 180, eaRad = ea * Math.PI / 180
-            if (!ccw) { const tmp = saRad; saRad = eaRad; eaRad = tmp }
-            if (eaRad <= saRad) eaRad += 2 * Math.PI
-            const steps = Math.max(3, Math.ceil(((eaRad - saRad) * 180) / (Math.PI * 15)))
-            const dt = (eaRad - saRad) / steps
-            for (let s = 0; s <= steps; s++) {
-              const t = saRad + dt * s
-              const px = cx + r * Math.cos(t), py = cy + r * Math.sin(t)
-              edgeParts.push(s === 0 && !started ? `M${px},${py}` : `L${px},${py}`)
-              if (s === 0) started = true
+            for (const [px, py] of sampleArcDeg({
+              cx, cy, rx: r, startDeg: sa, endDeg: ea, ccw: !!ccw,
+            })) {
+              edgeParts.push(started ? `L${px},${py}` : `M${px},${py}`)
+              started = true
             }
             sumX += cx; sumY += cy; ptCount++
           } else if (edgeType === 3) {
@@ -1356,26 +1335,15 @@ export function parseRawHatches(
               else if (c === 97) break
               i++
             }
-            const a = Math.hypot(mx, my), b = a * ratio
-            const rot = Math.atan2(my, mx)
-            const cosR = Math.cos(rot), sinR = Math.sin(rot)
-            // gc 50/51 은 **도(度)** 다 — 바로 위 호(弧) edge 와 같다. 라디안으로 쓰면
-            // 360 이 57 바퀴가 되고, 고정 18 점으로 샘플링한 자기교차 다각형이
-            // 단색 채움(nonzero) 때문에 타원 전체를 메운 회색 원반이 된다.
-            if (!eccw) { const tmp = esa; esa = eea; eea = tmp }
-            if (eea <= esa) eea += 360
-            // 호와 같은 기준(15도에 한 조각)으로 쪼갠다. 18 고정이면 작은 모서리
-            // 호에는 과하고 한 바퀴 전체에는 모자란다. 나눗셈은 도(度) 로 한다 —
-            // 라디안으로 되돌리면 360도가 24.000000000000004 가 되어 조각이 하나 더 생긴다.
-            const N = Math.max(3, Math.ceil((eea - esa) / 15))
-            const ddt = ((eea - esa) * Math.PI / 180) / N
-            const esaRad = esa * Math.PI / 180
-            for (let s = 0; s <= N; s++) {
-              const t = esaRad + ddt * s
-              const lx = a * Math.cos(t), ly = b * Math.sin(t)
-              const px = cx + lx * cosR - ly * sinR, py = cy + lx * sinR + ly * cosR
-              edgeParts.push(s === 0 && !started ? `M${px},${py}` : `L${px},${py}`)
-              if (s === 0) started = true
+            // gc 50/51 은 **도(度)** 다 — 호 edge 와 같다. sampleArcDeg 가 단위와
+            // 한 바퀴 제한을 쥐고 있으므로 여기서 각도 산수를 하지 않는다.
+            const a = Math.hypot(mx, my)
+            for (const [px, py] of sampleArcDeg({
+              cx, cy, rx: a, ry: a * ratio, rot: Math.atan2(my, mx),
+              startDeg: esa, endDeg: eea, ccw: !!eccw,
+            })) {
+              edgeParts.push(started ? `L${px},${py}` : `M${px},${py}`)
+              started = true
             }
             sumX += cx; sumY += cy; ptCount++
           } else if (edgeType === 4) {
