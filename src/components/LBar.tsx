@@ -8,16 +8,21 @@ import { MaterialsPanel } from './panels/MaterialsPanel'
 import { LayoutPanel } from './panels/LayoutPanel'
 import { ImportPanel } from './panels/ImportPanel'
 import { useEditor } from '../context/EditorContext'
-import { useProjectId } from '../context/ProjectContext'
+import { useProjectId, useProjectName } from '../context/ProjectContext'
 import { exportDxf } from '../lib/dxf'
 import { exportPng } from '../lib/exportPng'
 import { printReport } from '../lib/reportExport'
-import { getProjects } from '../lib/projectStore'
 
 /* ── 햄버거 메뉴 드롭다운 ── */
-function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onClose: () => void; onImport: () => void }) {
+// export 는 테스트용이다 — LBar 를 통째로 띄우면 editor 목이 필요하다.
+export function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onClose: () => void; onImport: () => void }) {
   const editor = useEditor()
   const projectId = useProjectId()
+  // 이름은 ProjectNameContext 가 들고 있다. 여기서 localStorage 목록을 직접
+  // 뒤지면 (a) 대시보드(서버)에서 연 프로젝트는 그 목록에 없고 (b) 도면을
+  // 막 가져온 직후엔 저장 디바운스(800ms) 전이라, 둘 다 "새 프로젝트" 로
+  // 보인다. RBar 의 "파일명" 칸은 진짜 이름을 보여주는데 이 메뉴만 어긋났다.
+  const { name: projectName } = useProjectName()
   const [exportSub, setExportSub] = useState(false)
 
   if (!open) return null
@@ -30,10 +35,7 @@ function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onClose: ()
       <div className="lbar-menu-dropdown" onClick={(e) => e.stopPropagation()}>
         <div className="lbar-menu-section">
           <div className="lbar-menu-header">홈</div>
-          <div className="lbar-menu-item active">● {(() => {
-            const p = getProjects().find(p => p.id === projectId)
-            return p?.name || '새 프로젝트'
-          })()}</div>
+          <div className="lbar-menu-item active">● {projectName.trim() || '새 프로젝트'}</div>
         </div>
         <div className="lbar-menu-divider" />
         <div className="lbar-menu-section">
