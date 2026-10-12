@@ -166,10 +166,50 @@ export interface DxfViewport {
   clipMinY: number       // centerY - viewHeight/2
   clipMaxX: number       // centerX + viewWidth/2
   clipMaxY: number       // centerY + viewHeight/2
+  // 아래 네 개는 **종이 위의 창** 이다 (code 10/20 = 중심, 40/41 = 크기).
+  // 위의 clip* 은 그 창이 비추는 모델공간 영역이고, 이건 창 자체의 위치다.
+  paperCX: number        // code 10
+  paperCY: number        // code 20
+  paperW: number         // code 40
+  paperH: number         // code 41
 }
 
 /** Viewport 기반 클리핑 영역 */
 export type ViewportClip = { minX: number; minY: number; maxX: number; maxY: number }
+
+/**
+ * 뷰포트 하나의 **모델 → 종이** 사상.
+ *
+ * 종이 탭에는 도면틀만 있고 평면도는 없다. 평면도는 모델공간에 있고,
+ * 뷰포트가 그걸 축척을 걸어 종이 위 창에 비춘다. 그 창 안으로 모델 도형을
+ * 끌어오려면 좌표를 이렇게 옮긴다:
+ *
+ *   paperX = paperCX + (modelX - modelCX) * scale
+ *
+ * 그리고 종이 좌표의 창 사각형으로 잘라낸다 — 안 자르면 평면도가 도면틀
+ * 밖으로 흘러넘쳐 표제란을 덮는다.
+ */
+export interface ViewportProjection {
+  /** 종이 위 창 (mm) */
+  paperCX: number; paperCY: number; paperW: number; paperH: number
+  /** 이 창이 비추는 모델공간 중심 (gc 17+12 / 27+22) */
+  modelCX: number; modelCY: number
+  /** 종이 단위 / 모델 단위 = gc 41 / gc 45 */
+  scale: number
+}
+
+/** DxfViewport → 모델→종이 사상. 축척을 못 구하면 null. */
+export function toViewportProjection(vp: DxfViewport): ViewportProjection | null {
+  // viewHeight 는 parseViewportEntity 가 이미 > 0 을 보장하지만, 이 함수는
+  // 테스트/외부에서도 불린다. 0 이면 scale 이 Infinity 가 되어 좌표가 전부
+  // NaN 으로 번진다 — 그 전에 끊는다.
+  if (!(vp.viewHeight > 0) || !(vp.paperH > 0) || !(vp.paperW > 0)) return null
+  return {
+    paperCX: vp.paperCX, paperCY: vp.paperCY, paperW: vp.paperW, paperH: vp.paperH,
+    modelCX: vp.centerX, modelCY: vp.centerY,
+    scale: vp.paperH / vp.viewHeight,
+  }
+}
 
 /**
  * 파서가 DXF 의 **어느 공간**을 읽을 것인가.
@@ -187,8 +227,14 @@ export type ParseSpace =
    * 있는 경우가 흔하고, 그 땐 한 장에 다 넣는 게 맞다.
    */
   | { kind: 'model'; excludePaper?: boolean }
-  /** 종이 레이아웃 한 장. ENTITIES 의 code 410 일치분 + blockName 블록 내용. */
-  | { kind: 'paper'; layoutName: string; blockName?: string | null }
+  /**
+   * 종이 레이아웃 한 장. ENTITIES 의 code 410 일치분 + blockName 블록 내용.
+   *
+   * `viewports` 가 있으면 그 창들을 통해 **모델공간 도형까지** 종이 좌표로
+   * 끌어온다 (도면틀 + 평면도가 한 장에 들어온다). 워커는 이 필드를 안 본다 —
+   * 사상은 메인 스레드(commitCadImportV2)에서 한다.
+   */
+  | { kind: 'paper'; layoutName: string; blockName?: string | null; viewports?: ViewportProjection[] }
 
 /** 레이아웃 하나를 어떻게 페이지로 만들 것인가. */
 export interface LayoutTarget {
@@ -197,6 +243,8 @@ export interface LayoutTarget {
   clip: ViewportClip | null
   /** 도형을 넣을 것인가. false 면 탭 자리만 잡고 비워 둔다. */
   geometry: boolean
+  /** 이 탭의 뷰포트들. 모델 도형을 종이 좌표로 끌어올 때 쓴다. */
+  viewports: ViewportProjection[]
 }
 
 /**
@@ -214,12 +262,12 @@ export function buildLayoutTargets(
   const targets: LayoutTarget[] = []
   for (const layout of [...layouts].sort((a, b) => a.tabOrder - b.tabOrder)) {
     if (layout.isModelSpace) {
-      targets.push({ layout, clip: null, geometry: true })
+      targets.push({ layout, clip: null, geometry: true, viewports: [] })
       continue
     }
     const vps = viewportsByLayout.get(layout.name)
     if (!vps || vps.length === 0) {
-      targets.push({ layout, clip: null, geometry: false })
+      targets.push({ layout, clip: null, geometry: false, viewports: [] })
       continue
     }
     targets.push({
@@ -231,6 +279,7 @@ export function buildLayoutTargets(
         maxY: Math.max(...vps.map(v => v.clipMaxY)),
       },
       geometry: true,
+      viewports: vps.map(toViewportProjection).filter((p): p is ViewportProjection => p !== null),
     })
   }
   return targets

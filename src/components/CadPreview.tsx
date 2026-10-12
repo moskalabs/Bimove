@@ -578,6 +578,8 @@ function parseViewportEntity(
     clipMinY: centerY - viewHeight / 2,
     clipMaxX: centerX + viewWidth / 2,
     clipMaxY: centerY + viewHeight / 2,
+    // 종이 위 창의 위치/크기. 모델 도형을 이 창 안으로 끌어올 때 쓴다.
+    paperCX: num(10), paperCY: num(20), paperW: vpWidth, paperH: vpHeight,
   }
 
   // clip 위치가 도형과 안 맞는 파일이 있다. 어떤 코드를 빠뜨렸는지

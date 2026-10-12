@@ -1922,6 +1922,7 @@ export function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
  * - 진행률 콜백 지원
  */
 import type { PolylineData, TextData, HatchData, LinetypeDef, LayerInfo, WorkerOut, SkipReport, ParseSpace } from './dxf-fast-worker'
+import { projectThroughViewport, viewportPaperRect } from './dxfViewportProject'
 
 function runFastWorker(
   dxfText: string,
@@ -2646,6 +2647,48 @@ export async function commitCadImportV2(
   }
   const parseMs = (performance.now() - t0).toFixed(0)
   console.log(`[CAD V2] 파싱 완료: ${polylines.length}개 폴리라인, ${workerHatches.length}개 해치 (${parseMs}ms)`)
+
+  // 1b. 종이 탭이면 뷰포트를 통해 **모델공간 평면도**까지 끌어온다.
+  //
+  // 여기까지 읽은 건 도면틀·표제란뿐이다 (종이공간). 평면도는 모델공간에
+  // 있고 뷰포트가 축척을 걸어 비춘다. 같은 호출 안에서 합쳐야 자동 맞춤이
+  // 한 번만 돌아 둘의 상대 위치가 유지된다 — 따로 임포트하면 각자 캔버스에
+  // 꽉 차게 맞춰져서 겹쳐 버린다.
+  //
+  // 파일을 한 번 더 읽는 값은 치른다. 모델공간은 `excludePaper` 로 읽어야
+  // 한다 — 안 그러면 저장 당시 활성 탭의 종이 엔티티(도면틀)가 모델 도형인
+  // 줄 알고 뷰포트 축척으로 쪼그라든 채 창 안에 또 들어온다.
+  if (space?.kind === 'paper' && space.viewports && space.viewports.length > 0) {
+    onProgress?.('뷰포트 안쪽 도면 가져오는 중...')
+    const tv = performance.now()
+    try {
+      const m = await runFastWorker(dxfText, layerArr, onProgress, { kind: 'model', excludePaper: true })
+      let addedPl = 0, addedTx = 0, addedHa = 0
+      for (const vp of space.viewports) {
+        const p = projectThroughViewport(m, vp)
+        polylines.push(...p.polylines)
+        workerTexts.push(...p.texts)
+        workerHatches.push(...p.hatches)
+        addedPl += p.polylines.length; addedTx += p.texts.length; addedHa += p.hatches.length
+        const r = viewportPaperRect(vp)
+        console.log(`[CAD V2] 뷰포트 사상: 1/${(1 / vp.scale).toFixed(0)} 축척, ` +
+          `창 (${r.minX.toFixed(0)},${r.minY.toFixed(0)})~(${r.maxX.toFixed(0)},${r.maxY.toFixed(0)}) ` +
+          `→ 폴리라인 ${p.polylines.length}개 (창 밖 ${p.dropped.polylines}개 버림), ` +
+          `글자 ${p.texts.length}개 (${p.dropped.texts}개), 해치 ${p.hatches.length}개 (${p.dropped.hatches}개)`)
+      }
+      console.log(`[CAD V2] 뷰포트 ${space.viewports.length}개 합계: ` +
+        `+${addedPl}개 폴리라인, +${addedTx}개 글자, +${addedHa}개 해치 ` +
+        `(${(performance.now() - tv).toFixed(0)}ms)`)
+      if (addedPl === 0 && addedTx === 0 && addedHa === 0) {
+        console.warn(`[CAD V2] 뷰포트 안이 비었다 — 모델공간 ${m.polylines.length}개 폴리라인 중 ` +
+          `창에 걸리는 게 없다. 뷰 중심(12/22 + 17/27) 이 틀렸을 수 있다.`)
+      }
+    } catch (vpErr) {
+      // 뷰포트 안쪽을 못 가져와도 도면틀은 이미 있다. 통째로 실패시키면
+      // 1단계에서 얻은 페이지까지 잃는다.
+      console.error('[CAD V2] 뷰포트 사상 실패 → 도면틀만 넣는다:', vpErr)
+    }
+  }
 
   // 레이어 lineweight/color 정보 로그
   const lwLayers = Object.entries(workerLayers).filter(([, v]) => v.lineweight)

@@ -159,7 +159,7 @@ export function ImportPanel() {
         const modelPageId = editor.getCurrentPageId()
 
         for (let i = 0; i < targets.length; i++) {
-          const { layout, clip, geometry } = targets[i]
+          const { layout, clip, geometry, viewports } = targets[i]
           // AutoCAD "Model" → 한국어 "모형" 매핑
           const displayName = layout.isModelSpace && layout.name === 'Model' ? '모형' : layout.name
 
@@ -199,7 +199,7 @@ export function ImportPanel() {
           let count = 0
           if (!layout.isModelSpace) {
             count = await commit(null, {
-              kind: 'paper', layoutName: layout.name, blockName: layout.blockName,
+              kind: 'paper', layoutName: layout.name, blockName: layout.blockName, viewports,
             })
             console.log(`[Import] Layout "${layout.name}": 종이공간 ${count}개 요소`)
           }

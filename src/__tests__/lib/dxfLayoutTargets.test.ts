@@ -12,12 +12,19 @@ const layout = (name: string, tabOrder: number, isModelSpace = false): DxfLayout
   name, isModelSpace, tabOrder, paperWidth: 420, paperHeight: 297,
 })
 
-const vp = (layoutName: string, cx: number, cy: number, w: number, h: number): DxfViewport => ({
+// paper* 는 종이 위 창이다. clip* 과 달리 여기 테스트들은 대부분 안 쓰므로
+// A3 가운데 200x150 창을 기본값으로 둔다 (축척은 paperH / viewHeight).
+const vp = (
+  layoutName: string, cx: number, cy: number, w: number, h: number,
+  paper?: { cx: number; cy: number; w: number; h: number },
+): DxfViewport => ({
   layoutName,
   centerX: cx, centerY: cy,
   viewWidth: w, viewHeight: h,
   clipMinX: cx - w / 2, clipMinY: cy - h / 2,
   clipMaxX: cx + w / 2, clipMaxY: cy + h / 2,
+  paperCX: paper?.cx ?? 210, paperCY: paper?.cy ?? 148.5,
+  paperW: paper?.w ?? 200, paperH: paper?.h ?? 150,
 })
 
 describe('buildLayoutTargets', () => {
@@ -71,5 +78,34 @@ describe('buildLayoutTargets', () => {
 
   it('레이아웃이 없으면 빈 배열', () => {
     expect(buildLayoutTargets([], new Map())).toEqual([])
+  })
+
+  // 2단계: 종이 탭에 모델 도형을 끌어오려면 창마다 모델→종이 사상이 필요하다.
+  it('뷰포트마다 모델→종이 사상을 같이 넘긴다', () => {
+    const vps = new Map([['배치1', [
+      vp('배치1', 1000, 2000, 20000, 15000, { cx: 210, cy: 148.5, w: 200, h: 150 }),
+    ]]])
+    const targets = buildLayoutTargets([layout('Model', 0, true), layout('배치1', 1)], vps)
+
+    expect(targets[0].viewports).toEqual([])
+    expect(targets[1].viewports).toHaveLength(1)
+    const p = targets[1].viewports[0]
+    expect(p.modelCX).toBe(1000)
+    expect(p.modelCY).toBe(2000)
+    expect(p.scale).toBeCloseTo(150 / 15000, 12)   // 1/100
+    expect(p.paperCX).toBe(210)
+    expect(p.paperH).toBe(150)
+  })
+
+  // viewHeight 0 이면 scale 이 Infinity → 좌표가 전부 NaN 이 된다. clip 은
+  // 그래도 쓸 수 있으니 탭은 살리고 사상만 뺀다.
+  it('축척을 못 구하는 뷰포트는 사상에서 빠진다', () => {
+    const bad = vp('배치1', 0, 0, 0, 0)
+    const vps = new Map([['배치1', [bad, vp('배치1', 10, 10, 100, 100)]]])
+    const targets = buildLayoutTargets([layout('배치1', 1)], vps)
+
+    expect(targets[0].geometry).toBe(true)
+    expect(targets[0].viewports).toHaveLength(1)
+    expect(targets[0].viewports[0].modelCX).toBe(10)
   })
 })
