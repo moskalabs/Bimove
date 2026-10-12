@@ -935,7 +935,7 @@ function isHatchEdgeEnd(c: number): boolean {
 }
 
 /** Parse a HATCH entity from its group-code text chunk → HatchData or null */
-function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null {
+export function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null {
   const lines = chunk.split('\n')
   // Build sequential pairs for stateful parsing
   const pairs: Array<{ code: number; value: string }> = []
@@ -1089,23 +1089,33 @@ function parseHatchEntity(chunk: string, entityLayer: string): HatchData | null 
           sumX += cx; sumY += cy; ptCount++
         } else if (edgeType === 3) {
           // Ellipse edge
-          let cx = 0, cy = 0, mx = 0, my = 0, ratio = 1, esa = 0, eea = 2 * Math.PI
+          let cx = 0, cy = 0, mx = 0, my = 0, ratio = 1, esa = 0, eea = 360, eccw = 1
           while (pi < pairs.length && !isHatchEdgeEnd(pairs[pi].code)) {
             const c = pairs[pi].code, v = parseFloat(pairs[pi].value) || 0
             if (c === 10) cx = v; else if (c === 20) cy = v
             else if (c === 11) mx = v; else if (c === 21) my = v
             else if (c === 40) ratio = v
             else if (c === 50) esa = v; else if (c === 51) eea = v
+            else if (c === 73) eccw = v
             else if (c === 97) break
             pi++
           }
           const a = Math.hypot(mx, my), b = a * ratio
           const rot = Math.atan2(my, mx)
           const cosR = Math.cos(rot), sinR = Math.sin(rot)
-          if (eea <= esa) eea += 2 * Math.PI
-          const N = 18, ddt = (eea - esa) / N
+          // gc 50/51 은 **도(度)** 다 — 바로 위 호(弧) edge 와 같다. 라디안으로 쓰면
+          // 360 이 57 바퀴가 되고, 고정 18 점으로 샘플링한 자기교차 다각형이
+          // 단색 채움(nonzero) 때문에 타원 전체를 메운 회색 원반이 된다.
+          if (!eccw) { const tmp = esa; esa = eea; eea = tmp }
+          if (eea <= esa) eea += 360
+          // 호와 같은 기준(15도에 한 조각)으로 쪼갠다. 18 고정이면 작은 모서리
+          // 호에는 과하고 한 바퀴 전체에는 모자란다. 나눗셈은 도(度) 로 한다 —
+          // 라디안으로 되돌리면 360도가 24.000000000000004 가 되어 조각이 하나 더 생긴다.
+          const N = Math.max(3, Math.ceil((eea - esa) / 15))
+          const ddt = ((eea - esa) * Math.PI / 180) / N
+          const esaRad = esa * Math.PI / 180
           for (let s = 0; s <= N; s++) {
-            const t = esa + ddt * s
+            const t = esaRad + ddt * s
             const lx = a * Math.cos(t), ly = b * Math.sin(t)
             const px = cx + lx * cosR - ly * sinR, py = cy + lx * sinR + ly * cosR
             edgeParts.push(s === 0 && !started ? `M${px},${py}` : `L${px},${py}`)
