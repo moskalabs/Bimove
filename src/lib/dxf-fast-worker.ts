@@ -59,6 +59,7 @@ export interface HatchData {
   patternDefLines: number// gc 78: 패턴 정의선 수 (2 이상이면 격자형)
   patternDefs: HatchPatternLine[] // 해석된 정의선. 비어 있으면 패턴명으로 추정해야 한다
   solidFill: boolean     // gc 70: 1 = 단색 채움 (패턴명과 무관)
+  hatchStyle?: number    // gc 75: 0=Normal(섬 홀 뚫기) 1=Outer 2=Ignore(홀 무시)
   color?: string         // hex color
   layer: string
   cx: number; cy: number // centroid
@@ -955,6 +956,7 @@ export function parseHatchEntity(chunk: string, entityLayer: string): HatchData 
   let patternSpacing = 0
   let patternDefAngle = 0
   let patternDefLines = 0
+  let hatchStyle = 0
   let numBoundaryPaths = 0
 
   // Parse header fields until group code 91 (boundary path count)
@@ -1201,6 +1203,7 @@ export function parseHatchEntity(chunk: string, entityLayer: string): HatchData 
     if (c === 0 || c === 47 || c === 98 || c === 450) break
     if (c === 52) patternAngle = parseFloat(v) || 0
     else if (c === 41) patternScale = parseFloat(v) || 1
+    else if (c === 75) hatchStyle = parseInt(v) || 0
     else if (c === 78) patternDefLines = parseInt(v) || 0
     else if (c === 53) { flushDef(); inDef = true; dAngle = parseFloat(v) || 0 }
     else if (inDef) {
@@ -1228,6 +1231,7 @@ export function parseHatchEntity(chunk: string, entityLayer: string): HatchData 
     patternDefLines,
     patternDefs,
     solidFill,
+    hatchStyle,
     color,
     layer,
     cx: sumX / ptCount,

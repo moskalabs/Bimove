@@ -75,11 +75,31 @@ type DxfHatchEntry = {
   n?: number    // 패턴 정의선 수. 2 이상이면 격자형 해치.
   dl?: DxfDefLine[] // 해석된 정의선. 있으면 패턴명 추측 없이 이걸 그대로 그린다.
   c?: string; f?: number; dim?: number
+  hs?: number   // DXF gc 75 해치 스타일. 2(Ignore) 면 섬(홀)을 무시하고 전부 채운다.
 }
 
 /** 단색 채움인지: DXF gc 70 이 1 이거나 패턴명이 SOLID 계열 (예: "SOLID,_O"). */
 function isSolidHatch(h: DxfHatchEntry): boolean {
   return h.f === 1 || h.p.toUpperCase().split(',')[0] === 'SOLID'
+}
+
+/**
+ * 해치 채움 규칙.
+ *
+ * 해치 하나의 테두리는 여러 루프로 온다 — 바깥 루프 하나에 섬(홀) 여러 개.
+ * AutoCAD 기본 스타일(gc 75 = 0, Normal) 은 **홀짝(odd parity)** 으로, 홀을
+ * 뚫는다. 그런데 루프를 전부 이어 붙인 d 를 SVG 기본값인 nonzero 로 채우면
+ * 안쪽 루프가 바깥과 같은 방향으로 감겨 있을 때 홀이 메워진다 — 도넛이
+ * 통짜 원반이 되고, 자기교차 테두리는 덩어리로 번진다. DXF 를 쓴 프로그램이
+ * 홀을 어느 방향으로 감았는지에 따라 걸리니, 파일마다 되기도 하고 안 되기도
+ * 한다. 그래서 기본을 evenodd 로 둔다.
+ *
+ * gc 75 = 2 (Ignore) 는 "홀을 무시하고 다 채워라" 라서 nonzero 가 맞다.
+ * gc 75 = 1 (Outer) 는 바깥과 첫 섬 사이만 채우라는 뜻이고, 2단 중첩까지는
+ * evenodd 와 결과가 같다.
+ */
+function hatchFillRule(h: DxfHatchEntry): 'evenodd' | 'nonzero' {
+  return h.hs === 2 ? 'nonzero' : 'evenodd'
 }
 
 /** 해치 한 칸을 가로지르는 패턴 반복 횟수 한계.
@@ -631,14 +651,15 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
         if (hd.isSolid) {
           return (
             <path key={`h${i}`} d={h.d}
-              fill={hd.color} stroke="none" opacity={0.85} pointerEvents="none" />
+              fill={hd.color} fillRule={hatchFillRule(h)}
+              stroke="none" opacity={0.85} pointerEvents="none" />
           )
         }
         // 패턴 해치: 패턴만 (단색 배경을 깔면 큰 해치가 회색 덩어리로 보인다).
         // 정의선이 여러 개면 패턴마다 path 를 하나씩 겹쳐서 교차 해치를 만든다.
         return hd.ids.map(pid => (
-          <path key={pid} d={h.d} fill={`url(#${pid})`} stroke="none"
-            opacity={0.85} pointerEvents="none" />
+          <path key={pid} d={h.d} fill={`url(#${pid})`} fillRule={hatchFillRule(h)}
+            stroke="none" opacity={0.85} pointerEvents="none" />
         ))
       })}
       {shape.props.pathData && (
@@ -882,10 +903,12 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
         {hatches.map((h, i) => {
           const hd = svgHatchDefs[i]
           if (hd.isSolid) {
-            return <path key={`h${i}`} d={h.d} fill={hd.color} stroke="none" opacity={0.85} />
+            return <path key={`h${i}`} d={h.d} fill={hd.color}
+              fillRule={hatchFillRule(h)} stroke="none" opacity={0.85} />
           }
           return hd.ids.map(pid => (
-            <path key={pid} d={h.d} fill={`url(#${pid})`} stroke="none" opacity={0.85} />
+            <path key={pid} d={h.d} fill={`url(#${pid})`}
+              fillRule={hatchFillRule(h)} stroke="none" opacity={0.85} />
           ))
         })}
         {shape.props.pathData && (

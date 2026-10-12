@@ -364,6 +364,7 @@ export type DxfHatch = {
   patternDefLines: number// 패턴 정의선 수 (2 이상 = 격자형)
   patternDefs: HatchPatternLine[] // 해석된 정의선. 비어 있으면 패턴명으로 추정해야 한다
   solidFill: boolean     // gc 70: 1 = 단색 채움
+  hatchStyle?: number    // gc 75: 0=Normal(섬 홀 뚫기) 1=Outer 2=Ignore(홀 무시)
   patternAngle: number   // 패턴 회전 (도, 기본 0)
   color?: string
   layer?: string
@@ -726,6 +727,7 @@ export function parseDxfHatches(
     const patternScale = (e.patternScale as number) ?? 1
     const patternAngle = (e.patternAngle as number) ?? 0
     const solidFill = (e.solidFill as boolean) ?? ((e.fillType as string) === 'SOLID')
+    const hatchStyle = (e.hatchStyle as number) ?? 0
     // dxf-parser 는 패턴 정의선(gc 78/53/45/46)을 노출하지 않는다 → 0 (shape 쪽이 추정값으로 폴백)
     const patternSpacing = 0, patternDefAngle = 0, patternDefLines = 0
     const patternDefs: HatchPatternLine[] = []
@@ -761,6 +763,7 @@ export function parseDxfHatches(
         patternDefLines,
         patternDefs,
         solidFill,
+        hatchStyle,
         color,
         layer,
         cx: sumX / ptCount,
@@ -1184,6 +1187,7 @@ export function parseRawHatches(
     let patternScale = 1
     let patternAngle = 0
     let solidFill = false
+    let hatchStyle = 0
     let patternSpacing = 0
     let patternDefAngle = 0
     let patternDefLines = 0
@@ -1443,6 +1447,7 @@ export function parseRawHatches(
       if (c === 0 || c === 47 || c === 98 || c === 450) break
       if (c === 52) patternAngle = parseFloat(v) || 0
       else if (c === 41) patternScale = parseFloat(v) || 1
+      else if (c === 75) hatchStyle = parseInt(v) || 0
       else if (c === 78) patternDefLines = parseInt(v) || 0
       else if (c === 53) { flushDef(); inDef = true; dAngle = parseFloat(v) || 0 }
       else if (inDef) {
@@ -1471,6 +1476,7 @@ export function parseRawHatches(
         patternDefLines,
         patternDefs,
         solidFill,
+        hatchStyle,
         color,
         layer,
         cx: sumX / ptCount,
@@ -1997,7 +2003,7 @@ export function getLastImportReport(): SkipReport {
 /** 좌표 변환된 텍스트 */
 type PxText = { x: number; y: number; text: string; height: number; rotation?: number; color?: string; layer?: string; attachPt?: number; width?: number; fontName?: string }
 /** 좌표 변환된 해치 */
-type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; patternSpacing: number; patternDefAngle: number; patternDefLines: number; patternDefs: HatchPatternLine[]; solidFill?: boolean; color?: string; layer: string; cx: number; cy: number }
+type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; patternSpacing: number; patternDefAngle: number; patternDefLines: number; patternDefs: HatchPatternLine[]; solidFill?: boolean; hatchStyle?: number; color?: string; layer: string; cx: number; cy: number }
 
 const COORD_LIMIT = 1e8
 const MAX_FINAL_SEGS = 100_000
@@ -2348,6 +2354,8 @@ function packHatchPattern(hh: PxHatch) {
     a: hasDef ? hh.patternDefAngle : hh.patternAngle,
     ...(hasDef ? { sp: +hh.patternSpacing.toFixed(2), n: hh.patternDefLines } : {}),
     ...(dl.length > 0 ? { dl } : {}),
+    // gc 75. 기본값(0=Normal) 은 안 싣는다 — 해치가 수만 개면 JSON 이 커진다.
+    ...(hh.hatchStyle ? { hs: hh.hatchStyle } : {}),
   }
 }
 
@@ -2381,6 +2389,7 @@ function transformWorkerHatches(workerHatches: HatchData[], textScale: number): 
           dashes: d.dashes.map(v => v * textScale),
         })),
         solidFill: h.solidFill,
+        hatchStyle: h.hatchStyle,
         color: h.color,
         layer: h.layer,
         cx: h.cx * textScale,
