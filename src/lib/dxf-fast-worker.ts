@@ -1031,7 +1031,12 @@ export function parseHatchEntity(chunk: string, entityLayer: string): HatchData 
             // Center of arc
             const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2
             const d = Math.sqrt(Math.max(0, r * r - chord * chord / 4))
-            const sign = p1.bulge > 0 ? 1 : -1
+            // 중심은 현의 수직선 위, 중점에서 d 만큼 떨어진 곳이다. 어느 쪽이냐가
+            // |bulge| 로 갈린다 — 반원을 넘는 호(|bulge| > 1)는 중심이 **부푼 쪽**
+            // 으로 넘어온다. 안 뒤집으면 호가 거울처럼 반대로 그려져서, 작은 호가
+            // 엉뚱한 방향으로 부푼 덩어리가 된다. LWPOLYLINE 쪽 bulgeArc 는 이미
+            // theta 로 같은 판정을 한다.
+            const sign = (p1.bulge > 0 ? 1 : -1) * (Math.abs(p1.bulge) > 1 ? -1 : 1)
             const cx = mx - sign * d * dy / chord
             const cy = my + sign * d * dx / chord
             // Generate arc points
