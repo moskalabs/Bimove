@@ -26,7 +26,32 @@ function dxfLayerColor(name: string): string {
 // 투명도 3단계: 100% → 30% → 0%
 type OpacityLevel = 1 | 0.3 | 0
 const OPACITY_CYCLE: OpacityLevel[] = [1, 0.3, 0]
-const OPACITY_ICON: Record<OpacityLevel, string> = { 1: '👁', 0.3: '🔅', 0: '🙈' }
+
+/** 패널 아이콘은 전부 같은 식구로 그린다 — 24 그리드 / currentColor 선 / 굵기 2.
+ *  (이모지는 OS 폰트마다 모양이 제각각이라 🙈 처럼 톤이 튀는 게 섞였다.) */
+function Svg({ children }: { children: React.ReactNode }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {children}
+    </svg>
+  )
+}
+
+const EYE = <><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></>
+
+/** 보임 / 반투명 / 숨김. 반투명은 아이콘 자체를 흐리게 — 하는 일과 그림이 같다. */
+const OPACITY_ICON: Record<OpacityLevel, React.ReactElement> = {
+  1: <Svg>{EYE}</Svg>,
+  0.3: <span style={{ opacity: 0.45, display: 'inline-flex' }}><Svg>{EYE}</Svg></span>,
+  0: (
+    <Svg>
+      <path d="M10.7 5.1A9.9 9.9 0 0 1 12 5c6.4 0 10 7 10 7a18 18 0 0 1-2.6 3.6" />
+      <path d="M6.6 6.6A18 18 0 0 0 2 12s3.6 7 10 7a9.6 9.6 0 0 0 5.4-1.6" />
+      <path d="m3 3 18 18" />
+    </Svg>
+  ),
+}
 
 export function LayersPanel() {
   const editor = useEditor()
@@ -144,7 +169,9 @@ export function LayersPanel() {
             className={`dxf-grayscale-btn${isGrayscale ? ' on' : ''}`}
             onClick={() => { const v = !isGrayscale; setGrayscaleMode(v); setIsGrayscale(v) }}
           >
-            {isGrayscale ? '⬛ Grayscale ON' : '🎨 Grayscale OFF'}
+            {/* 반만 채운 원 — 켜고 끄고가 버튼 색 반전으로 이미 보이니 글자만 바뀐다 */}
+            <Svg><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" /></Svg>
+            Grayscale {isGrayscale ? 'ON' : 'OFF'}
           </button>
         </div>
       )}

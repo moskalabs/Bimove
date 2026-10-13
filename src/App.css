@@ -865,12 +865,17 @@ html[data-dark="true"] .import-panel-body .import-info-box { background: #2a2a30
   cursor: pointer;
   font-size: 14px;
   padding: 4px 6px;
-  color: #aaa;
+  color: #888;
   border-radius: 4px;
-  transition: background 0.1s;
+  transition: background 0.1s, color 0.1s;
   flex-shrink: 0;
   line-height: 1;
+  /* SVG 아이콘이 글자 baseline 에 끌려 내려가지 않게 */
+  display: inline-flex;
+  align-items: center;
 }
+
+.layer-vis-btn:hover { color: #333; }
 
 .layer-vis-btn:hover {
   background: #eee;
@@ -896,7 +901,10 @@ html[data-dark="true"] .import-panel-body .import-info-box { background: #2a2a30
   color: #555;
   transition: all 0.15s;
   line-height: 1.4;
-  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .dxf-grayscale-btn.on {
@@ -2167,7 +2175,8 @@ html[data-dark="true"] .layer-tab:hover { color: #aaa; }
 html[data-dark="true"] .layer-tab.active { color: #5aa3f0; border-bottom-color: #5aa3f0; background: #282838; }
 html[data-dark="true"] .layer-row:hover { background: #2a2a30; }
 html[data-dark="true"] .layer-count { color: #666; }
-html[data-dark="true"] .layer-vis-btn:hover { background: #333; }
+html[data-dark="true"] .layer-vis-btn { color: #777; }
+html[data-dark="true"] .layer-vis-btn:hover { background: #333; color: #ddd; }
 html[data-dark="true"] .layer-empty { color: #666; }
 html[data-dark="true"] .dxf-grayscale-bar { border-color: #333; }
 html[data-dark="true"] .dxf-grayscale-btn { background: #2a2a30; border-color: #444; color: #aaa; }
