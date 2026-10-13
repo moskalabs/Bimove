@@ -804,6 +804,12 @@ function parseGroupCodes(text: string): { type: string; codes: Map<number, strin
   const lines = text.split('\n')
   const type = lines[0]?.trim() || ''
   const codes = new Map<number, string[]>()
+  // LWPOLYLINE 의 bulge(gc 42) 는 0 인 꼭짓점에서 통째로 생략된다. 그냥 모으면
+  // 42 배열이 "bulge 가 있는 꼭짓점" 순서가 돼서 꼭짓점 번호와 어긋나고,
+  // 직선이어야 할 변이 남의 bulge 를 물려받아 엉뚱한 호로 부푼다. 그래서 42 를
+  // 만날 때마다 지금까지 읽은 10 의 개수에 맞춰 '0' 으로 빈자리를 메운다.
+  // ELLIPSE·INSERT 도 42 를 쓰지만 뜻이 달라서, LWPOLYLINE 에서만 손댄다.
+  const alignBulge = type === 'LWPOLYLINE'
 
   for (let i = 1; i < lines.length - 1; i += 2) {
     const code = parseInt(lines[i].trim())
@@ -811,6 +817,10 @@ function parseGroupCodes(text: string): { type: string; codes: Map<number, strin
     const val = lines[i + 1]?.trim() ?? ''
     let arr = codes.get(code)
     if (!arr) { arr = []; codes.set(code, arr) }
+    if (alignBulge && code === 42) {
+      const nv = codes.get(10)?.length ?? 0
+      while (arr.length < nv - 1) arr.push('0')
+    }
     arr.push(val)
   }
   return { type, codes }
