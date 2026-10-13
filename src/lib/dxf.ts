@@ -2216,6 +2216,21 @@ function filterAndCleanSegments(rawSegsAll: RawSeg[]): RawSeg[] {
 /** 본체와 쓰레기를 가르는 "빈 공간" 의 크기 — 사분위 범위(IQR) 대비 배수.
  *  도면 본체는 좌표가 촘촘해서 내부 간격이 사실상 0 이므로 넉넉히 잡아도 된다. */
 const OUTLIER_GAP_RATIO = 0.25
+/** 떨어진 덩어리를 쓰레기로 보려면 좌표가 전체의 이 비율보다 적어야 한다.
+ *
+ *  실측 근거 (리닝 파일 모델공간, 좌표 74066개 / X 덩어리 9개):
+ *    -389551~-386923  4312개 (5.8%)   도면
+ *    -373241~-370034  4310개 (5.8%)   도면
+ *     106755~ 127756   938개 (1.3%)   도면
+ *     140115~ 192325   854개 (1.2%)   도면
+ *     364638~ 472153 63644개 (85.9%)  도면
+ *     503396 / 525732 / 553797 / 586998  각 2개 (0.003%)  쓰레기
+ *  진짜 쓰레기와 제일 작은 도면 사이가 400배 벌어져 있다. 0.3% 는 쓰레기의
+ *  100배, 제일 작은 도면의 1/4 — 양쪽에 여유가 있다. */
+const OUTLIER_CLUSTER_RATIO = 0.003
+/** 좌표가 적은 도면에서도 티끌은 걸러내도록 하는 절대 하한.
+ *  8개 = 세그먼트 4개. 이보다 적으면 도면이 아니라 길 잃은 점이다. */
+const OUTLIER_CLUSTER_MIN = 8
 /** 간격 기준으로도 이만큼 넘게 지우겠다면 전제가 틀린 것이다 — 통째로 포기한다. */
 const MAX_OUTLIER_DROP_RATIO = 0.5
 
@@ -2231,21 +2246,38 @@ const MAX_OUTLIER_DROP_RATIO = 0.5
  * 진짜 쓰레기의 특징은 "가장자리에 있다" 가 아니라 "뚝 떨어져 있다" 다. 그래서
  * 좌표를 정렬해놓고 사분위 범위 바깥으로 걸어나가다가 좌표 사이에 큰 빈 공간이
  * 나오면 거기서 자른다. 본체는 연속이라 안 잘리고, 떨어진 덩어리만 떨어져 나간다.
+ *
+ * 그런데 "본체는 하나" 라고 가정하면 안 된다. 모델공간에 도면 여러 장을 멀리
+ * 떼어놓은 파일이 흔하고 (리닝 파일은 네 덩어리), 그 땐 사분위에서 걸어나가는
+ * 방식이 **제일 큰 덩어리 하나만** 남기고 나머지를 쓰레기로 버린다. 실제로
+ * 세그먼트 37033개 중 11563개(31%) 가 날아갔고, 버려진 쪽 레이어가
+ * F-FUR-h / F_WALL / E-WIN — 가구, 벽, 창문이었다.
+ *
+ * 그래서 축 전체를 빈 공간에서 끊어 덩어리로 나눈 뒤, **좌표가 충분히 많은**
+ * 덩어리는 전부 본체로 인정하고 그 바깥만 자른다. 쓰레기는 "멀리 있다" 가
+ * 아니라 "멀리 있고 양이 티끌이다" 로 가린다.
  */
 function coreRange(sorted: Float64Array): [number, number] {
   const n = sorted.length
   const q1i = Math.floor(n * 0.25), q3i = Math.floor(n * 0.75)
   const gapLimit = (sorted[q3i] - sorted[q1i]) * OUTLIER_GAP_RATIO
   if (!(gapLimit > 0)) return [sorted[0], sorted[n - 1]]
-  let hi = sorted[n - 1]
-  for (let i = q3i; i < n - 1; i++) {
-    if (sorted[i + 1] - sorted[i] > gapLimit) { hi = sorted[i]; break }
+
+  const minCount = Math.max(OUTLIER_CLUSTER_MIN, n * OUTLIER_CLUSTER_RATIO)
+  let lo = NaN, hi = NaN
+  let start = 0
+  for (let i = 1; i <= n; i++) {
+    // 덩어리 경계: 배열 끝이거나, 앞 좌표와의 빈 공간이 한도를 넘었을 때
+    if (i < n && sorted[i] - sorted[i - 1] <= gapLimit) continue
+    if (i - start >= minCount) {
+      if (Number.isNaN(lo)) lo = sorted[start]   // 살아남은 첫 덩어리의 왼쪽 끝
+      hi = sorted[i - 1]                         // 갱신하며 마지막 덩어리의 오른쪽 끝
+    }
+    start = i
   }
-  let lo = sorted[0]
-  for (let i = q1i; i > 0; i--) {
-    if (sorted[i] - sorted[i - 1] > gapLimit) { lo = sorted[i]; break }
-  }
-  return [lo, hi]
+  // 살아남은 덩어리가 하나도 없다 — 도면 전체가 티끌 수준이라는 뜻이니
+  // 우리 전제가 틀렸다고 보고 건드리지 않는다.
+  return Number.isNaN(lo) ? [sorted[0], sorted[n - 1]] : [lo, hi]
 }
 
 /** 도면 본체에서 뚝 떨어진 세그먼트를 걷어낸다 (빈 공간 간격 기준) */
