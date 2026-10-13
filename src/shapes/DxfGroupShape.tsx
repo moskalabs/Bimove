@@ -83,6 +83,27 @@ function isSolidHatch(h: DxfHatchEntry): boolean {
   return h.f === 1 || h.p.toUpperCase().split(',')[0] === 'SOLID'
 }
 
+/** 마스킹으로 볼 밝기 하한. #ffffff = 1.0, #f0f0f0 = 0.94. */
+const MASK_HATCH_MIN_LUM = 0.9
+
+/**
+ * 흰색 단색 해치는 CAD 의 마스킹(가리개) 관용구 — 칠하지 않는다.
+ *
+ * 흰 종이 위에서 종이색과 같으니 원본에서는 안 보이고, 뒤에 깔린 선만 가린다.
+ * WIPEOUT 을 못 쓰는 블록 안에서 특히 자주 쓴다 (화분/사람/싱크 블록).
+ * 이걸 라이트 모드에서 darkenForLightBg 로 어둡게 보정하면 #ffffff → #737373
+ * 이 되어 반투명 회색 원반이 생기고, 다크 모드에서는 흰 덩어리가 된다.
+ *
+ * 가리개 자체를 재현하려면 캔버스 배경색으로 불투명하게 깔아야 하지만,
+ * 그러면 tldraw 의 z-order 상 먼저 그려진 **다른** shape 의 도형을 덮을 수
+ * 있다. 흰 배경에서는 안 그리는 것과 결과가 같으니 그냥 건너뛴다.
+ *
+ * 색이 없는(c 없음) 단색 해치는 대상이 아니다 — 기본색으로 보이는 게 현재 동작.
+ */
+export function isMaskHatch(h: DxfHatchEntry): boolean {
+  return isSolidHatch(h) && !!h.c && luminance(h.c) >= MASK_HATCH_MIN_LUM
+}
+
 /**
  * 해치 채움 규칙.
  *
@@ -648,6 +669,7 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
       {/* HATCH fills (아웃라인 뒤, 텍스트 앞) */}
       {hatches.map((h, i) => {
         const hd = hatchDefs[i]
+        if (isMaskHatch(h)) return null // 흰색 가리개 — 원본에서도 안 보인다
         if (hd.isSolid) {
           return (
             <path key={`h${i}`} d={h.d}
@@ -902,6 +924,7 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
         )}
         {hatches.map((h, i) => {
           const hd = svgHatchDefs[i]
+          if (isMaskHatch(h)) return null
           if (hd.isSolid) {
             return <path key={`h${i}`} d={h.d} fill={hd.color}
               fillRule={hatchFillRule(h)} stroke="none" opacity={0.85} />
