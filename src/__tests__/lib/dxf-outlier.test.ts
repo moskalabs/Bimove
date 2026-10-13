@@ -104,3 +104,25 @@ describe('removeOutlierSegments', () => {
     expect(removeOutlierSegments(enough)).toHaveLength(405)
   })
 })
+
+describe('removeOutlierSegments 공간별 분기', () => {
+  // 큰 도면 한 장 + 멀리 떨어진 작은 장 두 개. 모델공간이면 세 장 다 도면이고,
+  // 종이공간이면 시트 한 장이 곧 본체라 가까운 덩어리만 남아야 한다.
+  const big = body(100, 20)
+  const a = body(4, 8, 1_000_000, 1_000_000)
+  const b = body(4, 8, 2_000_000, 2_000_000)
+  const segs = [...big, ...a, ...b]
+
+  it('모델공간은 떨어진 도면 여러 장을 다 남긴다 (기본값)', () => {
+    expect(removeOutlierSegments(segs)).toHaveLength(segs.length)
+    expect(removeOutlierSegments(segs, 'model')).toHaveLength(segs.length)
+  })
+
+  it('종이공간 폴백은 덩어리 하나만 남긴다', () => {
+    // 종이 탭은 보통 clipToSheet 이 맡는다 — 이 경로는 limits 가 없는 파일용
+    // 폴백이다. 시트 밖에 가구를 세워둔 성수 Plan 탭이 이걸로 걸러진다.
+    const kept = removeOutlierSegments(segs, 'paper')
+    expect(kept).toHaveLength(big.length)
+    expect(kept.every(s => s.x1 < 1_000)).toBe(true)
+  })
+})

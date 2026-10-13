@@ -5,7 +5,7 @@ import { createShapeId, type Editor } from 'tldraw'
 import { getScaleConfig } from './scaleConfig'
 import { reloadForStaleChunk } from './lazyWithReload'
 import { getDefaultWallThicknessMm } from './settings'
-import { ACI_TO_HEX as ACI_TABLE, trueColorToHex as trueColorToHexShared, decodeDxfSpecialChars as decodeSpecialCharsShared, STRUCTURAL_KEYWORDS, defLineSpacing, sampleArcDeg, type ViewportClip, type HatchPatternLine } from './dxf-shared'
+import { ACI_TO_HEX as ACI_TABLE, trueColorToHex as trueColorToHexShared, decodeDxfSpecialChars as decodeSpecialCharsShared, STRUCTURAL_KEYWORDS, defLineSpacing, sampleArcDeg, type ViewportClip, type HatchPatternLine, type SheetRect } from './dxf-shared'
 
 const MAX_SEGMENTS = 100_000
 
@@ -2256,13 +2256,40 @@ const MAX_OUTLIER_DROP_RATIO = 0.5
  * 그래서 축 전체를 빈 공간에서 끊어 덩어리로 나눈 뒤, **좌표가 충분히 많은**
  * 덩어리는 전부 본체로 인정하고 그 바깥만 자른다. 쓰레기는 "멀리 있다" 가
  * 아니라 "멀리 있고 양이 티끌이다" 로 가린다.
+ *
+ * 단, "본체가 여럿" 은 모델공간 얘기다. 종이공간은 시트 한 장이 곧 본체라서
+ * 덩어리가 여럿일 이유가 없고, 시트 한참 밖에 가구를 세워둔 파일이 실제로 있다
+ * (성수 파일 Plan 탭 — F-FUR 437개가 종이에서 X 로 7백만 단위 떨어져 있다).
+ * 덩어리마다 좌표가 수천 개씩이라 양으로는 못 가린다. 그래서 종이에선 예전처럼
+ * 사분위에서 걸어나가 덩어리 하나만 남긴다.
  */
-function coreRange(sorted: Float64Array): [number, number] {
+function coreRange(sorted: Float64Array, spaceKind: ParseSpace['kind']): [number, number] {
   const n = sorted.length
   const q1i = Math.floor(n * 0.25), q3i = Math.floor(n * 0.75)
   const gapLimit = (sorted[q3i] - sorted[q1i]) * OUTLIER_GAP_RATIO
   if (!(gapLimit > 0)) return [sorted[0], sorted[n - 1]]
+  return spaceKind === 'paper'
+    ? oneBody(sorted, q1i, q3i, gapLimit)
+    : manyBodies(sorted, gapLimit)
+}
 
+/** 사분위에서 양쪽으로 걸어나가다 첫 빈 공간에서 끊는다 — 덩어리 하나만 남는다. */
+function oneBody(sorted: Float64Array, q1i: number, q3i: number, gapLimit: number): [number, number] {
+  const n = sorted.length
+  let hi = sorted[n - 1]
+  for (let i = q3i; i < n - 1; i++) {
+    if (sorted[i + 1] - sorted[i] > gapLimit) { hi = sorted[i]; break }
+  }
+  let lo = sorted[0]
+  for (let i = q1i; i > 0; i--) {
+    if (sorted[i] - sorted[i - 1] > gapLimit) { lo = sorted[i]; break }
+  }
+  return [lo, hi]
+}
+
+/** 축 전체를 빈 공간에서 끊어 덩어리로 나누고, 좌표가 충분히 많은 덩어리는 다 남긴다. */
+function manyBodies(sorted: Float64Array, gapLimit: number): [number, number] {
+  const n = sorted.length
   const minCount = Math.max(OUTLIER_CLUSTER_MIN, n * OUTLIER_CLUSTER_RATIO)
   let lo = NaN, hi = NaN
   let start = 0
@@ -2280,8 +2307,68 @@ function coreRange(sorted: Float64Array): [number, number] {
   return Number.isNaN(lo) ? [sorted[0], sorted[n - 1]] : [lo, hi]
 }
 
+/** 시트 범위를 이만큼 넉넉히 부풀려 쓴다.
+ *
+ *  limits 는 사람이 손으로 맞추는 값이라 도형보다 조금 작은 파일이 흔하다.
+ *  실측에서 20% 는 리닝 두 탭이 한 개도 안 잘리고 (도형이 limits 와 거의
+ *  같다), 성수 Plan 의 종이 밖 가구는 그대로 떨어져 나가는 선이다. */
+const SHEET_MARGIN_RATIO = 0.2
+
+/**
+ * 종이 탭의 세그먼트를 **시트 범위** 로 자른다.
+ *
+ * 종이공간에선 본체를 추측할 필요가 없다 — LAYOUT 이 limits(gc 14/24/15/25)로
+ * 시트 크기를 적어놓는다. 간격 기준 아웃라이어 필터는 여기서 양쪽으로 틀렸다.
+ *
+ *  - 성수 파일 Plan 탭: 시트(108k×92k) 밖 X -7,268,816 에 가구가 세워져 있다
+ *    (F-FUR 437개, C-FUR 16개). 덩어리마다 좌표가 수천 개씩이라 "양이 티끌"
+ *    로는 안 걸리고, bbox 가 60배 넓어져 자동 맞춤이 도면을 티끌로 만든다.
+ *  - 리닝 파일 Layout1: 거꾸로, 멀쩡한 시트를 Y 로 687 단위만 남기고 잘랐다
+ *    (시트 높이 47438). 사분위에서 걸어나가는 방식이 시트 안의 여백을
+ *    덩어리 경계로 오해한 것이다.
+ *
+ * limits 로 자르면 둘 다 끝난다 — 리닝 두 탭은 한 개도 안 잘리고, 성수 Plan 은
+ * 8222개(8%)만 떨어져 나가 bbox 가 시트의 1.1배로 돌아온다.
+ *
+ * 걸치기만 해도 남긴다 (뷰포트 클리핑과 같은 규칙). 실측에선 경계를 걸친
+ * 세그먼트가 하나도 없었지만, 도면틀을 가로지르는 긴 선을 반 토막 내는 것보다
+ * 남기는 쪽이 덜 틀린다.
+ */
+export function clipToSheet(segs: RawSeg[], sheet: SheetRect, scale: number): RawSeg[] {
+  const mx = (sheet.maxX - sheet.minX) * SHEET_MARGIN_RATIO
+  const my = (sheet.maxY - sheet.minY) * SHEET_MARGIN_RATIO
+  const loX = (sheet.minX - mx) * scale, hiX = (sheet.maxX + mx) * scale
+  // Y-flip (DXF Y+ → 화면 Y-) 이라 min/max 가 뒤집힌다
+  const loY = -(sheet.maxY + my) * scale, hiY = -(sheet.minY - my) * scale
+
+  const kept = segs.filter(s => {
+    const x2 = s.x1 + s.dx, y2 = s.y1 + s.dy
+    return Math.max(s.x1, x2) >= loX && Math.min(s.x1, x2) <= hiX &&
+           Math.max(s.y1, y2) >= loY && Math.min(s.y1, y2) <= hiY
+  })
+
+  // 시트 밖이 절반을 넘는다 — limits 가 도형과 안 맞는 파일이라는 뜻이니
+  // 우리 전제가 틀렸다고 보고 건드리지 않는다. (아웃라이어 필터와 같은 안전망)
+  if (kept.length < segs.length * (1 - MAX_OUTLIER_DROP_RATIO)) {
+    console.warn(`[CAD V2] 시트 자르기 거부: ${segs.length - kept.length}개를 지우려 함 — ` +
+                 `limits 가 도형과 안 맞는 듯해 건너뜀`)
+    return segs
+  }
+
+  if (kept.length === segs.length) {
+    console.log(`[CAD V2] 시트 밖 도형 없음 (${segs.length}개 유지)`)
+    return segs
+  }
+  console.log(`[CAD V2] 시트 밖 자르기: ${segs.length} → ${kept.length}개 ` +
+              `(시트 X ${loX.toFixed(0)}~${hiX.toFixed(0)}, Y ${loY.toFixed(0)}~${hiY.toFixed(0)}, 여유 ${SHEET_MARGIN_RATIO * 100}%)`)
+  return kept
+}
+
 /** 도면 본체에서 뚝 떨어진 세그먼트를 걷어낸다 (빈 공간 간격 기준) */
-export function removeOutlierSegments(segs: RawSeg[]): RawSeg[] {
+export function removeOutlierSegments(
+  segs: RawSeg[],
+  spaceKind: ParseSpace['kind'] = 'model',
+): RawSeg[] {
   const cnt = segs.length * 2
   if (cnt < 400) return segs
 
@@ -2292,8 +2379,8 @@ export function removeOutlierSegments(segs: RawSeg[]): RawSeg[] {
     ys[i * 2] = s.y1; ys[i * 2 + 1] = s.y1 + s.dy
   }
   xs.sort(); ys.sort()
-  const [loX, hiX] = coreRange(xs)
-  const [loY, hiY] = coreRange(ys)
+  const [loX, hiX] = coreRange(xs, spaceKind)
+  const [loY, hiY] = coreRange(ys, spaceKind)
 
   if (loX === xs[0] && hiX === xs[cnt - 1] && loY === ys[0] && hiY === ys[cnt - 1]) {
     console.log(`[CAD V2] 뚝 떨어진 아웃라이어 없음 — 필터 건너뜀 (${segs.length}개 유지)`)
@@ -2850,10 +2937,15 @@ export async function commitCadImportV2(
     }
     noteDrop('레이아웃 뷰포트 밖 도형', beforeVp - clipped.length)
     finalSegs = clipped
+  } else if (space?.kind === 'paper' && space.sheet) {
+    // 종이 탭은 시트 크기가 파일에 적혀 있다 — 간격으로 추측하지 않는다.
+    const beforeSheet = finalSegs.length
+    finalSegs = clipToSheet(finalSegs, space.sheet, scale)
+    noteDrop('종이 시트 밖 도형', beforeSheet - finalSegs.length)
   } else {
-    // 폴백: IQR 아웃라이어 필터 (레이아웃 없는 파일)
+    // 폴백: 간격 기준 아웃라이어 필터 (뷰포트도, 시트 범위도 없는 파일)
     const beforeOut = finalSegs.length
-    finalSegs = removeOutlierSegments(finalSegs)
+    finalSegs = removeOutlierSegments(finalSegs, space?.kind ?? 'model')
     noteDrop('본체에서 뚝 떨어진 도형', beforeOut - finalSegs.length)
   }
 

@@ -6,7 +6,7 @@ import { useToast } from '../../context/ToastContext'
 import { uploadImage } from '../../lib/project'
 import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2, getLastImportReport, ViewportClipMissedError } from '../../lib/dxf'
 import type { ViewportClip } from '../../lib/dxf-shared'
-import { buildLayoutTargets, unlabeledPaperOwner, type ParseSpace } from '../../lib/dxf-shared'
+import { buildLayoutTargets, unlabeledPaperOwner, sheetRect, type ParseSpace } from '../../lib/dxf-shared'
 import type { LayoutImportInfo } from '../CadPreview'
 import { lazyWithReload } from '../../lib/lazyWithReload'
 import { importPdf } from '../../lib/pdfImport'
@@ -204,6 +204,7 @@ export function ImportPanel() {
           if (!layout.isModelSpace) {
             count = await commit(null, {
               kind: 'paper', layoutName: layout.name, blockName: layout.blockName, viewports,
+              sheet: sheetRect(layout),
               ownsUnlabeledPaper: unlabeledOwner === null || unlabeledOwner === layout.name,
             })
             console.log(`[Import] Layout "${layout.name}": 종이공간 ${count}개 요소`)

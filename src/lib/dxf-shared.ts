@@ -211,6 +211,22 @@ export function toViewportProjection(vp: DxfViewport): ViewportProjection | null
   }
 }
 
+/** 종이 탭의 시트 범위 (종이 좌표, mm). ParseSpace 의 `sheet` 참고. */
+export interface SheetRect { minX: number; minY: number; maxX: number; maxY: number }
+
+/**
+ * LAYOUT limits 를 시트 범위로 꺼낸다.
+ *
+ * 넷 다 있고 가로·세로가 양수여야 쓴다. DWG→DXF 변환물에 0,0~0,0 이 그대로
+ * 남아 있는 파일이 있고, 그걸 시트로 믿으면 도형을 전부 잘라낸다.
+ */
+export function sheetRect(layout: DxfLayout): SheetRect | null {
+  const { extMinX: a, extMinY: b, extMaxX: c, extMaxY: d } = layout
+  if (a == null || b == null || c == null || d == null) return null
+  if (!(c > a) || !(d > b)) return null
+  return { minX: a, minY: b, maxX: c, maxY: d }
+}
+
 /**
  * 파서가 DXF 의 **어느 공간**을 읽을 것인가.
  *
@@ -245,6 +261,14 @@ export type ParseSpace =
        * 같은 시트가 탭마다 중복으로 들어온다.
        */
       ownsUnlabeledPaper?: boolean
+      /**
+       * 이 탭의 **시트 범위** (LAYOUT limits). 종이 좌표계다.
+       *
+       * 종이공간에선 "도면 본체" 가 추측이 아니다 — 시트 크기가 파일에 적혀
+       * 있다. 시트 한참 밖에 나간 도형을 잘라내는 데 쓴다. 워커는 이 필드를
+       * 안 본다 — 자르기는 메인 스레드(commitCadImportV2)에서 한다.
+       */
+      sheet?: SheetRect | null
     }
 
 /**
