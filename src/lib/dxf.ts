@@ -2014,7 +2014,14 @@ type PxText = { x: number; y: number; text: string; height: number; rotation?: n
 type PxHatch = { pathData: string; patternName: string; patternScale: number; patternAngle: number; patternSpacing: number; patternDefAngle: number; patternDefLines: number; patternDefs: HatchPatternLine[]; solidFill?: boolean; hatchStyle?: number; color?: string; layer: string; cx: number; cy: number }
 
 const COORD_LIMIT = 1e8
-const MAX_FINAL_SEGS = 100_000
+/**
+ * 한 임포트에서 화면에 올릴 세그먼트 상한.
+ *
+ * 넘으면 **짧은 것부터** 버린다 — [[filterAndCleanSegments]] 참고.
+ */
+export const MAX_FINAL_SEGS = 100_000
+/** 캡에 걸렸을 때 레이어마다 최소한 이만큼은 (긴 것부터) 남긴다. */
+export const MIN_SEGS_PER_LAYER = 20
 
 /** Floyd-Rivest quickselect — O(N) average */
 function nthElement(arr: Float64Array, k: number): number {
@@ -2145,6 +2152,59 @@ function polylinesToSegments(polylines: PolylineData[], scale: number): RawSeg[]
   return segs
 }
 
+/**
+ * 세그먼트가 상한을 넘으면 **짧은 것부터** 버린다.
+ *
+ * 예전엔 레이어마다 같은 비율로 균등 샘플링했다 — "특정 레이어만 통째로
+ * 날아가는 것" 을 막으려는 의도였는데, 비율이 **개수** 기준이라 거꾸로 갔다.
+ * 성수 파일 모델 탭 실측 (세그먼트 120206개, 73개 레이어) —
+ *
+ *    CO-HAT   73540개 (61%!)  중앙 길이   1.7  ← 해치 패턴, 눈에 안 보인다
+ *    F_WALL      53개         중앙 길이 540    ← 벽
+ *    TB-FORM    335개         중앙 길이 2400   ← 도면틀
+ *
+ * 해치가 예산의 61% 를 쥐고 있으니, 비율대로 깎으면 벽 53개 중 9개(17%)가
+ * 사라진다. 벽 한 줄이 통째로 없어져서 도면에 구멍이 뚫린 채로 나왔다.
+ *
+ * 길이순으로 바꾸면 같은 파일에서 잘리는 길이가 1.74 단위 — 어차피 화면에서
+ * 1px 도 안 되는 것들만 떨어져 나가고, F_WALL·E-WIN·CO-COL·TB-FORM·F-DIM·
+ * F-DOOR·F-STAIR 가 전부 100% 살아남는다. 사라지는 레이어도 없었다.
+ *
+ * 그래도 "짧은 선으로만 이뤄진 레이어" 가 통째로 날아갈 수는 있으니, 레이어마다
+ * 가장 긴 MIN_SEGS_PER_LAYER 개는 먼저 떼어 보장해 두고 나머지를 길이로 겨룬다.
+ */
+export function capByLength(segs: RawSeg[]): RawSeg[] {
+  // 비교에만 쓰므로 제곱 길이로 충분하다 (sqrt 는 로그 찍을 때만)
+  const len2 = (s: RawSeg) => s.dx * s.dx + s.dy * s.dy
+  const longestFirst = (a: RawSeg, b: RawSeg) => len2(b) - len2(a)
+
+  const byLayer = new Map<string, RawSeg[]>()
+  for (const s of segs) {
+    const key = s.layer || '0'
+    let arr = byLayer.get(key)
+    if (!arr) { arr = []; byLayer.set(key, arr) }
+    arr.push(s)
+  }
+
+  const kept: RawSeg[] = []
+  const rest: RawSeg[] = []
+  for (const [, layerSegs] of byLayer) {
+    layerSegs.sort(longestFirst)
+    const floor = Math.min(layerSegs.length, MIN_SEGS_PER_LAYER)
+    for (let i = 0; i < floor; i++) kept.push(layerSegs[i])
+    for (let i = floor; i < layerSegs.length; i++) rest.push(layerSegs[i])
+  }
+
+  rest.sort(longestFirst)
+  const room = Math.max(0, MAX_FINAL_SEGS - kept.length)
+  const cutAt = room < rest.length ? Math.sqrt(len2(rest[room])) : 0
+  for (let i = 0; i < room && i < rest.length; i++) kept.push(rest[i])
+
+  console.log(`[CAD V2] 세그먼트 캡: ${segs.length} → ${kept.length}개 ` +
+              `(${byLayer.size}개 레이어, 길이 ${cutAt.toFixed(2)} 미만 버림)`)
+  return kept
+}
+
 /** 세그먼트 정제: sanity → min length → merge → dedup → hard cap */
 function filterAndCleanSegments(rawSegsAll: RawSeg[]): RawSeg[] {
   // 좌표 sanity 필터
@@ -2184,31 +2244,8 @@ function filterAndCleanSegments(rawSegsAll: RawSeg[]): RawSeg[] {
   console.log(`[CAD V2] 중복제거: ${finalSegs.length} → ${dedupSegs.length}`)
   finalSegs = dedupSegs
 
-  // 하드 캡: 레이어별 비례 샘플링 (특정 레이어만 날아가는 것 방지)
-  if (finalSegs.length > MAX_FINAL_SEGS) {
-    const ratio = MAX_FINAL_SEGS / finalSegs.length
-    // 레이어별 그루핑
-    const byLayer = new Map<string, RawSeg[]>()
-    for (const s of finalSegs) {
-      const key = s.layer || '0'
-      let arr = byLayer.get(key)
-      if (!arr) { arr = []; byLayer.set(key, arr) }
-      arr.push(s)
-    }
-    // 각 레이어에서 비례 개수만큼 균등 샘플링 (최소 1개 보장)
-    const sampled: RawSeg[] = []
-    for (const [, layerSegs] of byLayer) {
-      const keep = Math.max(1, Math.round(layerSegs.length * ratio))
-      if (keep >= layerSegs.length) {
-        sampled.push(...layerSegs)
-      } else {
-        const step = layerSegs.length / keep
-        for (let i = 0; i < keep; i++) sampled.push(layerSegs[Math.floor(i * step)])
-      }
-    }
-    console.log(`[CAD V2] 세그먼트 캡: ${finalSegs.length} → ${sampled.length} (${byLayer.size}개 레이어 비례)`)
-    finalSegs = sampled
-  }
+  // 하드 캡: 짧은 세그먼트부터 버린다 (capByLength 참고)
+  if (finalSegs.length > MAX_FINAL_SEGS) finalSegs = capByLength(finalSegs)
 
   return finalSegs
 }
