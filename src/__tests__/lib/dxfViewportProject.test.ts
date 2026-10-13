@@ -241,6 +241,76 @@ describe('projectThroughViewport', () => {
   })
 })
 
+describe('projectThroughViewport - 뷰포트별 동결 레이어', () => {
+  /** VP 와 같은 창인데 천장 레이어 두 개를 꺼 둔 것 */
+  const VP_FRZ: ViewportProjection = { ...VP, frozenLayers: ['c-light', 'c-text'] }
+
+  const onLayer = <T extends { layer: string }>(o: T, layer: string): T => ({ ...o, layer })
+
+  it('동결 레이어 폴리라인은 안 넣는다', () => {
+    const r = projectThroughViewport({
+      polylines: [onLayer(pl([[0, 0], [100, 100]]), 'C-LIGHT'), pl([[0, 0], [100, 100]])],
+      texts: [], hatches: [],
+    }, VP_FRZ)
+    expect(r.polylines).toHaveLength(1)
+    expect(r.polylines[0].layer).toBe('0')
+  })
+
+  it('글자와 해치도 같이 막는다', () => {
+    const r = projectThroughViewport({
+      polylines: [],
+      texts: [onLayer(tx(0, 0), 'C-TEXT'), tx(0, 0)],
+      hatches: [onLayer(ha(0, 0, 'M0,0Z'), 'c-light'), ha(0, 0, 'M0,0Z')],
+    }, VP_FRZ)
+    expect(r.texts).toHaveLength(1)
+    expect(r.hatches).toHaveLength(1)
+    expect(r.frozen).toBe(2)
+  })
+
+  // 창 밖과 섞어 세면 "뷰 중심이 빗나갔다" 진단이 엉뚱해진다.
+  it('동결 손실은 dropped 가 아니라 frozen 으로 센다', () => {
+    const r = projectThroughViewport({
+      polylines: [onLayer(pl([[0, 0], [100, 100]]), 'C-LIGHT')],
+      texts: [], hatches: [],
+    }, VP_FRZ)
+    expect(r.frozen).toBe(1)
+    expect(r.dropped).toEqual({ polylines: 0, texts: 0, hatches: 0 })
+  })
+
+  // 오토캐드는 레이어 이름 대소문자를 구분하지 않는다. 테이블엔 "C-Light",
+  // 엔티티엔 "C-LIGHT" 로 들어오는 파일이 있다.
+  it('대소문자는 무시한다', () => {
+    const r = projectThroughViewport({
+      polylines: [onLayer(pl([[0, 0], [100, 100]]), 'C-LiGhT')],
+      texts: [], hatches: [],
+    }, { ...VP, frozenLayers: ['C-LIGHT'] })
+    expect(r.polylines).toEqual([])
+    expect(r.frozen).toBe(1)
+  })
+
+  it('동결 목록이 없거나 비면 아무것도 안 막는다', () => {
+    const src = {
+      polylines: [onLayer(pl([[0, 0], [100, 100]]), 'C-LIGHT')],
+      texts: [onLayer(tx(0, 0), 'C-TEXT')], hatches: [],
+    }
+    for (const vp of [VP, { ...VP, frozenLayers: [] }]) {
+      const r = projectThroughViewport(src, vp)
+      expect(r.polylines).toHaveLength(1)
+      expect(r.texts).toHaveLength(1)
+      expect(r.frozen).toBe(0)
+    }
+  })
+
+  it('동결 레이어는 창 밖 판정보다 먼저 걸러진다', () => {
+    const r = projectThroughViewport({
+      polylines: [onLayer(pl([[5000, 5000], [6000, 6000]]), 'C-LIGHT')],
+      texts: [], hatches: [],
+    }, VP_FRZ)
+    expect(r.frozen).toBe(1)
+    expect(r.dropped.polylines).toBe(0)
+  })
+})
+
 describe('toViewportProjection', () => {
   const base = (over: Partial<DxfViewport>): DxfViewport => ({
     layoutName: '배치1',
@@ -271,5 +341,12 @@ describe('toViewportProjection', () => {
 
   it('NaN 도 null', () => {
     expect(toViewportProjection(base({ viewHeight: NaN }))).toBeNull()
+  })
+
+  // CadPreview 가 gc 331 을 풀어 넣어준 값이 워커까지 가야 한다.
+  it('동결 레이어를 그대로 넘긴다', () => {
+    expect(toViewportProjection(base({ frozenLayers: ['c-light'] }))!.frozenLayers)
+      .toEqual(['c-light'])
+    expect(toViewportProjection(base({}))!.frozenLayers).toBeUndefined()
   })
 })

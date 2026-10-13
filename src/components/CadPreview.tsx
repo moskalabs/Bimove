@@ -507,6 +507,42 @@ function aciToHex(aci: number): string {
 }
 
 /**
+ * LAYER 테이블의 **핸들 → 이름**.
+ *
+ * VIEWPORT 의 뷰포트별 동결 레이어(gc 331)는 이름이 아니라 LAYER 레코드의
+ * 핸들로 들어온다. 이 표가 없으면 331 은 그냥 16진수 문자열일 뿐이라 쓸 수
+ * 없다. LAYER 테이블만 떼어 보므로 (TABLE/LAYER ~ ENDTAB) 비용은 작다 —
+ * 수백 MB 짜리 ENTITIES 는 건드리지 않는다.
+ */
+function extractLayerHandles(dxfText: string, gc: (n: number) => string): Map<string, string> {
+  const out = new Map<string, string>()
+  const TBL = `\n${gc(0)}\nTABLE\n${gc(2)}\nLAYER\n`
+  const start = dxfText.indexOf(TBL)
+  if (start < 0) return out
+  const body = start + TBL.length
+  const end = dxfText.indexOf(`\n${gc(0)}\nENDTAB`, body)
+  const lines = dxfText.substring(body, end > body ? end : body).split('\n')
+
+  let i = 0
+  while (i + 1 < lines.length) {
+    if (lines[i].trim() !== '0' || lines[i + 1].trim() !== 'LAYER') { i += 2; continue }
+    let handle = '', name = ''
+    let j = i + 2
+    // 쌍 단위로 걷는다. 값이 "0" 인 그룹코드(70 등)가 흔해서 줄바꿈+0 으로
+    // 자르면 레코드가 중간에 끊긴다 — 다른 스캐너들과 같은 이유다.
+    while (j + 1 < lines.length && lines[j].trim() !== '0') {
+      const code = lines[j].trim()
+      if (code === '5' && !handle) handle = lines[j + 1].trim()
+      else if (code === '2' && !name) name = lines[j + 1].trim()
+      j += 2
+    }
+    i = j
+    if (handle && name) out.set(handle.toUpperCase(), name)
+  }
+  return out
+}
+
+/**
  * VIEWPORT 엔티티 하나를 모델공간 clip 상자로 해석한다. 쓸 수 없으면 null.
  *
  * BLOCKS 의 레이아웃 블록 안과 ENTITIES 섹션 양쪽에 같은 형식으로 나오므로
@@ -518,6 +554,10 @@ function parseViewportEntity(
   layoutName: string,
   vpIndex: number,
   where: string,
+  /** gc 331 값들 (동결 레이어 핸들). 반복되는 코드라 vals 에는 못 담는다. */
+  frozenHandles: string[],
+  /** extractLayerHandles 결과 */
+  layerByHandle: Map<string, string>,
 ): DxfViewport | null {
   const num = (code: number): number => {
     const v = parseFloat(vals.get(code) ?? '')
@@ -569,6 +609,17 @@ function parseViewportEntity(
   const centerX = num(17) + num(12)
   const centerY = num(27) + num(22)
 
+  // 뷰포트별 동결 레이어. 핸들이 LAYER 테이블에 없으면 버린다 — 오토캐드가
+  // 뷰포트 속성 재정의를 담아두는 내부 레코드("<레이어> @ <id> <탭>")도 여기
+  // 섞여 들어오는데, 그건 도형이 없는 껍데기라 이름으로 바꿔도 쓸모가 없다.
+  const frozen: string[] = []
+  let unresolved = 0
+  for (const h of frozenHandles) {
+    const name = layerByHandle.get(h.toUpperCase())
+    if (name) frozen.push(name.toLowerCase())
+    else unresolved++
+  }
+
   const viewWidth = viewHeight * (vpWidth / vpHeight)
   const vp: DxfViewport = {
     layoutName,
@@ -580,6 +631,7 @@ function parseViewportEntity(
     clipMaxY: centerY + viewHeight / 2,
     // 종이 위 창의 위치/크기. 모델 도형을 이 창 안으로 끌어올 때 쓴다.
     paperCX: num(10), paperCY: num(20), paperW: vpWidth, paperH: vpHeight,
+    frozenLayers: frozen,
   }
 
   // clip 위치가 도형과 안 맞는 파일이 있다. 어떤 코드를 빠뜨렸는지
@@ -592,6 +644,11 @@ function parseViewportEntity(
     `view=(${num(12).toFixed(0)},${num(22).toFixed(0)}) target=(${num(17).toFixed(0)},${num(27).toFixed(0)}) h=${viewHeight.toFixed(0)} ` +
     `dir=(${num(16).toFixed(2)},${num(26).toFixed(2)},${num(36).toFixed(2)}) ucs=(${num(110).toFixed(0)},${num(120).toFixed(0)}) ` +
     `→ clip (${vp.clipMinX.toFixed(0)},${vp.clipMinY.toFixed(0)})~(${vp.clipMaxX.toFixed(0)},${vp.clipMaxY.toFixed(0)})`)
+  if (frozenHandles.length > 0) {
+    console.log(`[CadPreview] VIEWPORT "${layoutName}" (${where} ${vpIndex}번째) 동결 레이어 ` +
+      `${frozen.length}개${unresolved > 0 ? ` (핸들 ${unresolved}개는 LAYER 테이블에 없어 버림)` : ''}` +
+      (frozen.length ? `: ${frozen.join(', ')}` : ''))
+  }
 
   return vp
 }
@@ -665,6 +722,10 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
     : rawDxfText
   const padded = detectPadding(dxfText)
   const gc = makeGcFormatter(padded)
+
+  // VIEWPORT 의 gc 331(뷰포트별 동결 레이어)을 이름으로 풀려면 먼저 필요하다.
+  const layerByHandle = extractLayerHandles(dxfText, gc)
+  console.log(`[CadPreview] LAYER 핸들 ${layerByHandle.size}개`)
 
   // ── 1. OBJECTS 섹션에서 LAYOUT 파싱 ──
   const layouts: DxfLayout[] = []
@@ -807,10 +868,14 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
         const type = blkLines[k + 1].trim()
 
         const vals = new Map<number, string>()
+        // 331 은 **반복되는** 코드다 (동결 레이어마다 한 줄). vals 는 첫 값만
+        // 들고 있으므로 따로 모은다.
+        const frozenHandles: string[] = []
         let m = k + 2
         while (m + 1 < blkLines.length && blkLines[m].trim() !== '0') {
           const code = parseInt(blkLines[m].trim())
-          if (!Number.isNaN(code) && !vals.has(code)) vals.set(code, blkLines[m + 1])
+          if (code === 331) frozenHandles.push(blkLines[m + 1].trim())
+          else if (!Number.isNaN(code) && !vals.has(code)) vals.set(code, blkLines[m + 1])
           m += 2
         }
         k = m
@@ -847,7 +912,8 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
         if (!currentLayoutName) continue
 
         const vp = parseViewportEntity(
-          vals, currentLayoutName, bumpVpIndex(currentLayoutName), '블록 내')
+          vals, currentLayoutName, bumpVpIndex(currentLayoutName), '블록 내',
+          frozenHandles, layerByHandle)
         if (vp) pushVp(currentLayoutName, vp)
       }
 
@@ -886,6 +952,8 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
         // 본문은 **쌍 단위**로 걷는다. `\n 0\n` 으로 자르면 code 68(status) 의
         // 값이 0 일 때 엔티티가 중간에 끊겨 뒤의 45/69 를 못 읽는다.
         const vals = new Map<number, string>()
+        // 반복 코드 331 은 따로 모은다 (블록 스캐너와 같은 이유).
+        const frozenHandles: string[] = []
         let q = vi + VP_MARK.length
         while (q < entEnd) {
           const e1 = dxfText.indexOf('\n', q)
@@ -894,7 +962,8 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
           const e2 = dxfText.indexOf('\n', e1 + 1)
           if (e2 < 0 || e2 > entEnd) { q = entEnd; break }
           const code = parseInt(dxfText.substring(q, e1).trim())
-          if (!Number.isNaN(code) && !vals.has(code)) vals.set(code, dxfText.substring(e1 + 1, e2))
+          if (code === 331) frozenHandles.push(dxfText.substring(e1 + 1, e2).trim())
+          else if (!Number.isNaN(code) && !vals.has(code)) vals.set(code, dxfText.substring(e1 + 1, e2))
           q = e2 + 1
         }
         // q 는 다음 엔티티의 코드 줄("0") 머리를 가리킨다. VP_MARK 는 앞
@@ -919,7 +988,8 @@ export function extractLayoutsAndViewports(rawDxfText: string): {
           continue
         }
 
-        const vp = parseViewportEntity(vals, layoutName, bumpVpIndex(layoutName), 'ENTITIES 내')
+        const vp = parseViewportEntity(vals, layoutName, bumpVpIndex(layoutName), 'ENTITIES 내',
+          frozenHandles, layerByHandle)
         if (vp) pushVp(layoutName, vp)
       }
       console.log(`[CadPreview] ENTITIES 섹션 VIEWPORT ${found}개 발견`)

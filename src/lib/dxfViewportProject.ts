@@ -221,6 +221,9 @@ export interface ProjectResult {
   hatches: HatchData[]
   /** 창 밖이라 버린 개수 (폴리라인 / 글자 / 해치) */
   dropped: { polylines: number; texts: number; hatches: number }
+  /** 이 창에서 동결된 레이어라 아예 안 넣은 개수 (전체 합).
+   *  창 밖과 섞어 세면 "뷰 중심이 빗나갔다" 진단이 엉뚱해진다. */
+  frozen: number
 }
 
 /**
@@ -237,8 +240,19 @@ export function projectThroughViewport(
   const r = viewportPaperRect(vp)
   const dropped = { polylines: 0, texts: 0, hatches: 0 }
 
+  // 창마다 한 번만 만든다. 레이어 이름은 오토캐드에서 대소문자를 구분하지
+  // 않으므로 양쪽을 소문자로 맞춘다 — 테이블엔 "C-Light", 엔티티엔 "C-LIGHT"
+  // 로 들어오는 파일이 있다.
+  const frozenSet = vp.frozenLayers && vp.frozenLayers.length > 0
+    ? new Set(vp.frozenLayers.map(n => n.toLowerCase()))
+    : null
+  const isFrozen = (layer: string): boolean =>
+    frozenSet !== null && frozenSet.has(layer.toLowerCase())
+  let frozen = 0
+
   const polylines: PolylineData[] = []
   for (const pl of src.polylines) {
+    if (isFrozen(pl.layer)) { frozen++; continue }
     const moved = pl.vertices.map(v => projectPoint(vp, v[0], v[1]) as number[])
     const runs = clipPolyline(moved, r)
     if (runs.length === 0) { dropped.polylines++; continue }
@@ -247,6 +261,7 @@ export function projectThroughViewport(
 
   const texts: TextData[] = []
   for (const t of src.texts) {
+    if (isFrozen(t.layer)) { frozen++; continue }
     const [x, y] = projectPoint(vp, t.x, t.y)
     // 글자는 기준점이 창 안인지로만 본다. 절반 걸친 글자를 반으로 자르는 건
     // 의미가 없고, 축척이 걸린 모델 글자는 종이에선 아주 작다.
@@ -260,6 +275,7 @@ export function projectThroughViewport(
 
   const hatches: HatchData[] = []
   for (const h of src.hatches) {
+    if (isFrozen(h.layer)) { frozen++; continue }
     const [cx, cy] = projectPoint(vp, h.cx, h.cy)
     if (!inRect(r, cx, cy)) { dropped.hatches++; continue }
     hatches.push({
@@ -276,7 +292,7 @@ export function projectThroughViewport(
     })
   }
 
-  return { polylines, texts, hatches, dropped }
+  return { polylines, texts, hatches, dropped, frozen }
 }
 
 /**

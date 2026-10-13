@@ -172,6 +172,9 @@ export interface DxfViewport {
   paperCY: number        // code 20
   paperW: number         // code 40
   paperH: number         // code 41
+  /** 이 창에서 **동결된 레이어** 이름 (소문자). gc 331 참고.
+   *  없거나 빈 배열이면 전부 보인다. */
+  frozenLayers?: string[]
 }
 
 /** Viewport 기반 클리핑 영역 */
@@ -196,6 +199,19 @@ export interface ViewportProjection {
   modelCX: number; modelCY: number
   /** 종이 단위 / 모델 단위 = gc 41 / gc 45 */
   scale: number
+  /**
+   * 이 창에서만 끈 레이어 (소문자 이름).
+   *
+   * 오토캐드는 레이아웃마다 "이 창에서는 이 레이어를 안 보이게" 를 따로
+   * 갖는다 (VP freeze). 같은 평면을 두 번 비춰 놓고 한쪽은 천장, 다른 쪽은
+   * 바닥만 보여주는 식이다. 이걸 무시하면 두 창에 **모든 레이어가 겹쳐**
+   * 들어와 조명 심볼과 천장 글자가 평면도 위에 올라앉는다.
+   *
+   * Set 이 아니라 배열인 이유: 이 객체는 ParseSpace 에 실려 워커로
+   * postMessage 된다. 구조화 복제는 Set 도 나르지만, 배열이 JSON 경로가
+   * 섞여도 안전하다. 조회용 Set 은 쓰는 쪽에서 한 번 만든다.
+   */
+  frozenLayers?: string[]
 }
 
 /** DxfViewport → 모델→종이 사상. 축척을 못 구하면 null. */
@@ -208,6 +224,7 @@ export function toViewportProjection(vp: DxfViewport): ViewportProjection | null
     paperCX: vp.paperCX, paperCY: vp.paperCY, paperW: vp.paperW, paperH: vp.paperH,
     modelCX: vp.centerX, modelCY: vp.centerY,
     scale: vp.paperH / vp.viewHeight,
+    frozenLayers: vp.frozenLayers,
   }
 }
 

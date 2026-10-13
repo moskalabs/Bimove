@@ -2903,7 +2903,8 @@ export async function commitCadImportV2(
         console.log(`[CAD V2] 뷰포트 사상: 1/${(1 / vp.scale).toFixed(0)} 축척, ` +
           `창 (${r.minX.toFixed(0)},${r.minY.toFixed(0)})~(${r.maxX.toFixed(0)},${r.maxY.toFixed(0)}) ` +
           `→ 폴리라인 ${p.polylines.length}개 (창 밖 ${p.dropped.polylines}개 버림), ` +
-          `글자 ${p.texts.length}개 (${p.dropped.texts}개), 해치 ${p.hatches.length}개 (${p.dropped.hatches}개)`)
+          `글자 ${p.texts.length}개 (${p.dropped.texts}개), 해치 ${p.hatches.length}개 (${p.dropped.hatches}개)` +
+          (p.frozen > 0 ? `, 이 창에서 동결된 레이어라 뺀 것 ${p.frozen}개` : ''))
       }
       console.log(`[CAD V2] 뷰포트 ${space.viewports.length}개 합계: ` +
         `+${addedPl}개 폴리라인, +${addedTx}개 글자, +${addedHa}개 해치 ` +
