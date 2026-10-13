@@ -36,10 +36,10 @@ export function rectsOverlap(a: PaperRect, b: PaperRect): boolean {
 }
 
 /**
- * 종이공간 폴리라인들의 범위. 도면틀이 어디 있는지 보는 진단용이다.
- * 좌표가 하나도 없으면 null.
+ * 폴리라인들이 차지하는 범위. 도형이 어디 있는지 보는 진단용이고,
+ * 종이·모델 어느 좌표계든 그대로 쓴다. 좌표가 하나도 없으면 null.
  */
-export function paperFrameBounds(
+export function vertexBounds(
   polylines: Array<{ vertices: number[][] }>,
 ): PaperRect | null {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
@@ -54,6 +54,19 @@ export function paperFrameBounds(
     }
   }
   return minX <= maxX && minY <= maxY ? { minX, minY, maxX, maxY } : null
+}
+
+/**
+ * 뷰포트가 비추는 **모델공간** 영역. 창 안에 뭐가 들어올지는 이 사각형이
+ * 모델 도형과 겹치는지로 결정된다 — 안 겹치면 창이 통째로 빈다.
+ */
+export function viewportModelRect(vp: ViewportProjection): PaperRect {
+  const hw = vp.paperW / 2 / vp.scale
+  const hh = vp.paperH / 2 / vp.scale
+  return {
+    minX: vp.modelCX - hw, minY: vp.modelCY - hh,
+    maxX: vp.modelCX + hw, maxY: vp.modelCY + hh,
+  }
 }
 
 /** 모델 좌표 한 점 → 종이 좌표. */

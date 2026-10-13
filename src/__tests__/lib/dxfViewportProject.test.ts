@@ -7,7 +7,8 @@
  */
 import { describe, it, expect } from 'vitest'
 import {
-  projectPoint, viewportPaperRect, clipSegment, clipPolyline, projectThroughViewport,
+  projectPoint, viewportPaperRect, viewportModelRect, rectsOverlap, vertexBounds,
+  clipSegment, clipPolyline, projectThroughViewport,
   type PaperRect,
 } from '../../lib/dxfViewportProject'
 import { toViewportProjection, type DxfViewport, type ViewportProjection } from '../../lib/dxf-shared'
@@ -51,6 +52,32 @@ describe('projectPoint / viewportPaperRect', () => {
 
   it('창 사각형은 중심 ± 절반', () => {
     expect(viewportPaperRect(VP)).toEqual({ minX: 50, minY: 50, maxX: 150, maxY: 150 })
+  })
+})
+
+describe('viewportModelRect / rectsOverlap / vertexBounds', () => {
+  it('창이 비추는 모델 영역은 종이 창을 축척으로 되돌린 크기', () => {
+    expect(viewportModelRect(VP)).toEqual({ minX: -500, minY: -500, maxX: 500, maxY: 500 })
+  })
+
+  it('모서리만 닿아도 겹친 것으로 본다', () => {
+    expect(rectsOverlap(RECT, { minX: 10, minY: 10, maxX: 20, maxY: 20 })).toBe(true)
+    expect(rectsOverlap(RECT, { minX: 10.5, minY: 0, maxX: 20, maxY: 10 })).toBe(false)
+  })
+
+  it('폴리라인 범위는 모든 꼭짓점을 감싼다', () => {
+    expect(vertexBounds([pl([[0, 0], [5, -3]]), pl([[-2, 9]])]))
+      .toEqual({ minX: -2, minY: -3, maxX: 5, maxY: 9 })
+  })
+
+  it('꼭짓점이 없으면 null — Infinity 가 로그로 새 나가지 않게', () => {
+    expect(vertexBounds([])).toBeNull()
+    expect(vertexBounds([pl([])])).toBeNull()
+  })
+
+  it('NaN 좌표는 범위에서 빼고 센다', () => {
+    expect(vertexBounds([pl([[0, 0], [NaN, NaN], [4, 4]])]))
+      .toEqual({ minX: 0, minY: 0, maxX: 4, maxY: 4 })
   })
 })
 

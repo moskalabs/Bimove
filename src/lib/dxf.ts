@@ -1906,7 +1906,9 @@ export function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
  * - 진행률 콜백 지원
  */
 import type { PolylineData, TextData, HatchData, LinetypeDef, LayerInfo, WorkerOut, SkipReport, ParseSpace } from './dxf-fast-worker'
-import { projectThroughViewport, viewportPaperRect, rectsOverlap, paperFrameBounds } from './dxfViewportProject'
+import {
+  projectThroughViewport, viewportPaperRect, viewportModelRect, rectsOverlap, vertexBounds,
+} from './dxfViewportProject'
 
 function runFastWorker(
   dxfText: string,
@@ -2656,12 +2658,22 @@ export async function commitCadImportV2(
       // 통째로 줌아웃하기 때문이다. 창이 비었는지(=clip 에 아무것도 안 걸림)
       // 와 창이 엉뚱한 데 있는지(=걸렸지만 틀 밖) 는 전혀 다른 고장이라
       // 구분해서 찍는다.
-      const frame = paperFrameBounds(polylines)
+      const frame = vertexBounds(polylines)
       if (frame) {
         console.log(`[CAD V2] 종이공간 도형 범위: (${frame.minX.toFixed(0)},${frame.minY.toFixed(0)})~` +
           `(${frame.maxX.toFixed(0)},${frame.maxY.toFixed(0)}) — 폴리라인 ${polylines.length}개`)
       } else {
         console.warn('[CAD V2] 종이공간에 폴리라인이 없다 — 도면틀 없이 뷰포트 내용만 들어간다.')
+      }
+      // 모델공간 도형이 실제로 놓인 범위. 창이 통째로 비는 고장은 거의
+      // 여기서 갈린다 — 변환기가 쓴 뷰 중심(gc 12/22 + 17/27) 이 도형과
+      // 전혀 다른 자리를 가리키면 창이 비추는 모델 영역에 아무것도 없다.
+      // 그래서 "창에 걸릴 게 없다" 와 "뷰 중심이 빗나갔다" 를 구분하려면
+      // 모델 범위와 창이 비추는 영역을 같이 찍어 봐야 한다.
+      const mb = vertexBounds(m.polylines)
+      if (mb) {
+        console.log(`[CAD V2] 모델공간 도형 범위: (${mb.minX.toFixed(0)},${mb.minY.toFixed(0)})~` +
+          `(${mb.maxX.toFixed(0)},${mb.maxY.toFixed(0)}) — 폴리라인 ${m.polylines.length}개`)
       }
       let addedPl = 0, addedTx = 0, addedHa = 0
       for (const vp of space.viewports) {
@@ -2670,6 +2682,17 @@ export async function commitCadImportV2(
         workerTexts.push(...p.texts)
         workerHatches.push(...p.hatches)
         addedPl += p.polylines.length; addedTx += p.texts.length; addedHa += p.hatches.length
+        const mr = viewportModelRect(vp)
+        if (mb && !rectsOverlap(mb, mr)) {
+          // 겹치지 않으면 뷰 중심이 얼마나 빗나갔는지까지 찍는다. 이 차이가
+          // 모델 범위 중심과의 단순 평행이동이면 변환기가 뷰 중심을 안 쓴
+          // 것이고, 부호만 뒤집혔으면 비틀기(gc 51) 를 DCS 에 반영해야 한다.
+          const mcx = (mb.minX + mb.maxX) / 2, mcy = (mb.minY + mb.maxY) / 2
+          console.warn(`[CAD V2] 창이 비추는 모델 영역이 도형 밖이다 — ` +
+            `영역 (${mr.minX.toFixed(0)},${mr.minY.toFixed(0)})~(${mr.maxX.toFixed(0)},${mr.maxY.toFixed(0)}), ` +
+            `뷰 중심 (${vp.modelCX.toFixed(0)},${vp.modelCY.toFixed(0)}) vs 도형 중심 (${mcx.toFixed(0)},${mcy.toFixed(0)}), ` +
+            `차이 (${(mcx - vp.modelCX).toFixed(0)},${(mcy - vp.modelCY).toFixed(0)})`)
+        }
         const r = viewportPaperRect(vp)
         if (frame && !rectsOverlap(frame, r)) {
           console.warn(`[CAD V2] 뷰포트 창이 종이공간 도형 밖이다 — ` +
