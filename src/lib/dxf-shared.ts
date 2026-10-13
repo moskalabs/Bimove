@@ -341,7 +341,7 @@ export interface ArcSampleDeg {
   startDeg: number
   /** 끝 각도 (도) */
   endDeg: number
-  /** gc 73. false 면 시작/끝을 뒤집는다. */
+  /** gc 73. false(시계방향) 면 각도 부호를 뒤집어 음수로 쓸어간다. */
   ccw?: boolean
   /** 한 조각이 덮는 각도 (도). 기본 15. */
   stepDeg?: number
@@ -358,19 +358,36 @@ const FULL_TURN_DEG = 360
  * 이게 안전망의 핵심이다. 단위를 또 틀리든, DXF 가 쓰레기 값을 주든,
  * 테두리가 **한 바퀴를 넘게 돌 수는 없다** — 자기교차 다각형이 단색으로
  * 채워져 거대한 원반이 되는 사고가 여기서 끊긴다.
+ *
+ * ## gc 73 = 0 (시계방향)
+ *
+ * 이건 "경계를 시계방향으로 돌라" 가 아니다. **각도 자체가 시계방향으로
+ * 적힐 있다** 는 뜻이다. 부호를 뒤집어야 반시계 좌표계로 돌아온다.
+ *
+ * 리닝 dwg 화붆4 분록의 HATCH 테들리 path1 에서 실젝한 것:
+ *
+ *   edge1  c=(-5964.17,-6951.06) r=2944.69 sa=1.5506 ea=3.4880 ccw=0
+ *   edge2  c=(-3082.94,-7077.83) r=  78.15 sa=317.91 ea=397.05 ccw=1
+ *
+ * 시작/끝을 스앝하는 방식은 edge1 을 358.06도로 만들어 5885x5883 원반을
+ * 낳고, 끝점도 edge2 와 y 로 300 떨어진다. 부호를 뒤짐으면 1.94도 호가
+ * 되고 끝점이 edge2 와 소수점 둘째자리까지 맞아 고리가 닫힌다.
+ *
+ * 그래서 시계방향은 startDeg 를 네게이트하고 스솝을 **음수**로 낸다.
+ * 크기 자체는 반시계와 동일한 endDeg - startDeg 다.
  */
 export function normalizeArcSweepDeg(
   startDeg: number, endDeg: number, ccw = true,
 ): { startDeg: number; sweepDeg: number } {
-  let a = Number.isFinite(startDeg) ? startDeg : 0
-  let b = Number.isFinite(endDeg) ? endDeg : FULL_TURN_DEG
-  if (!ccw) { const tmp = a; a = b; b = tmp }
+  const a = Number.isFinite(startDeg) ? startDeg : 0
+  const b = Number.isFinite(endDeg) ? endDeg : FULL_TURN_DEG
   let sweep = b - a
   // 끝각이 시작각보다 작으면 0도를 지나 돌아온 것이다.
   if (sweep <= 0) sweep += FULL_TURN_DEG
   // 그래도 음수거나 한 바퀴를 넘으면 값이 깨진 것이다. 한 바퀴로 자른다.
   if (!(sweep > 0) || sweep > FULL_TURN_DEG) sweep = FULL_TURN_DEG
-  return { startDeg: a, sweepDeg: sweep }
+  // 시계방향은 각도가 시계방향으로 적힐 있다. 부호를 뒤집어 돌려랬다.
+  return ccw ? { startDeg: a, sweepDeg: sweep } : { startDeg: -a, sweepDeg: -sweep }
 }
 
 /**
@@ -389,7 +406,7 @@ export function sampleArcDeg(o: ArcSampleDeg): Array<[number, number]> {
   const step = o.stepDeg !== undefined && o.stepDeg > 0 ? o.stepDeg : 15
   const N = o.segments !== undefined && o.segments >= 1
     ? Math.floor(o.segments)
-    : Math.max(3, Math.ceil(sweepDeg / step))
+    : Math.max(3, Math.ceil(Math.abs(sweepDeg) / step))
 
   const toRad = Math.PI / 180
   const t0 = startDeg * toRad

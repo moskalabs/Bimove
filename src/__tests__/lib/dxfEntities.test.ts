@@ -356,7 +356,7 @@ describe('parseDxfSegments: HATCH', () => {
     expect(last.y2).toBeCloseTo(0, 0)
   })
 
-  it('parses HATCH with ARC edge counterclockwise=false (swapped angles)', () => {
+  it('parses HATCH with ARC edge counterclockwise=false (negated angles)', () => {
     const segs = parseEntities([{
       type: 'HATCH',
       boundaryPaths: [{
@@ -371,13 +371,17 @@ describe('parseDxfSegments: HATCH', () => {
       }],
     }])
 
-    expect(segs.length).toBeGreaterThan(0)
+    // gc 73 = 0 은 각도가 시계방향으로 적힐 있다는 뜻이다. 0→-90도,
+    // 즉 90도짜리 호 그대로다. 스앝하던 예전엔 270도로 부품었다.
+    // 90도 / 10도 = 9 조각.
+    expect(segs.length).toBe(9)
 
-    // With isCounterClockwise=false, angles are swapped: start→end becomes end→start
-    // So it goes from 90° to 0° + 360° = 0°+360° (the long way around, 270°)
-    // Or: swapped so sa=90°, ea=0° → ea<=sa → ea+360 → 270° arc
-    // 270° / 10° per step = 27 segments
-    expect(segs.length).toBe(27)
+    // (100,0) 에서 시작해 (0,-100) 에서 끔난다 — 4사분만.
+    expect(segs[0].x1).toBeCloseTo(100, 6)
+    expect(segs[0].y1).toBeCloseTo(0, 6)
+    const last = segs[segs.length - 1]
+    expect(last.x2).toBeCloseTo(0, 6)
+    expect(last.y2).toBeCloseTo(-100, 6)
   })
 
   // 각도는 **도(度)** 다. 예전에는 이 테스트가 `endAngle: 2 * Math.PI` 를

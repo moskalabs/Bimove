@@ -118,13 +118,20 @@ describe('HATCH 타원 호 테두리 — gc 50/51 은 도(度)', () => {
   })
 
   // 호 edge 는 gc 73 을 보는데 타원 edge 는 무시하고 있었다.
-  it('gc 73 = 0 (시계방향) 이면 시작/끝을 뒤집는다', () => {
+  it('gc 73 = 0 (시계방향) 이면 각도 부호를 뒤집는다', () => {
     const { worker, legacy } = bothPaths(ellipseEdge('0.0', '90.0', '0'))
     for (const path of [worker, legacy]) {
       const pts = points(path)
-      // 90도에서 시작해 0도+360 으로 가므로 첫 점은 (0,100).
-      expect(pts[0][0]).toBeCloseTo(0, 6)
-      expect(pts[0][1]).toBeCloseTo(100, 6)
+      // 0도에서 시작해 -90도로 내려가므로 4사분만에만 있다.
+      expect(pts[0][0]).toBeCloseTo(100, 6)
+      expect(pts[0][1]).toBeCloseTo(0, 6)
+      const last = pts[pts.length - 1]
+      expect(last[0]).toBeCloseTo(0, 6)
+      expect(last[1]).toBeCloseTo(-100, 6)
+      for (const [x, y] of pts) {
+        expect(x).toBeGreaterThan(-1e-6)
+        expect(y).toBeLessThan(1e-6)
+      }
     }
   })
 

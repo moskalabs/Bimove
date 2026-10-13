@@ -42,8 +42,23 @@ describe('normalizeArcSweepDeg — 스윕은 0 초과 360 이하', () => {
     expect(normalizeArcSweepDeg(Infinity, -Infinity)).toEqual({ startDeg: 0, sweepDeg: 360 })
   })
 
-  it('gc 73 = 0 (시계방향) 이면 시작/끝을 뒤집는다', () => {
-    expect(normalizeArcSweepDeg(0, 90, false)).toEqual({ startDeg: 90, sweepDeg: 270 })
+  // gc 73 = 0 은 "경계를 시계방향으로 돌라" 가 아니라 **각도가 시계방향으로
+  // 적혀 있다** 는 뜼이다. 부호를 뒤집어야 반시계 좌표계로 돌아온다.
+  it('gc 73 = 0 (시계방향) 이면 각도 부호를 뒤집고 음수로 쓸어간다', () => {
+    expect(normalizeArcSweepDeg(10, 30, false)).toEqual({ startDeg: -10, sweepDeg: -20 })
+    expect(normalizeArcSweepDeg(30, 10, false)).toEqual({ startDeg: -30, sweepDeg: -340 })
+  })
+
+  // 리닝 dwg 실제 값. 화붆4 분록 HATCH 테듄리 엔트리의 첫 edge:
+  //   c=(-5964.17,-6951.06) r=2944.69 sa=1.5506 ea=3.4880 ccw=0
+  // 부호를 안 뒤짐으면 1.94도 호가 358.06도가 되어 지름 5.9m 원반이 된다.
+  it('리닝 화붆4 — 1.94도 시계방향 호는 1.94도로 남는다', () => {
+    const { startDeg, sweepDeg } = normalizeArcSweepDeg(
+      1.5506117211140376, 3.4879782011650775, false,
+    )
+    expect(startDeg).toBeCloseTo(-1.5506117, 6)
+    expect(Math.abs(sweepDeg)).toBeCloseTo(1.9373665, 6)
+    expect(sweepDeg).toBeLessThan(0)
   })
 })
 
@@ -138,5 +153,46 @@ describe('sampleArcDeg — 각도는 도(度)', () => {
     const angles = pts.map(([x, y]) => Math.atan2(y, x))
     const wrapped = angles.filter((t, i) => i > 0 && t < angles[i - 1] - 1e-9)
     expect(wrapped).toHaveLength(1)
+  })
+
+  // 리닝 화붆4 분록의 HATCH 테듄리 path1 — edge 두 개가 고리를 이룬다.
+  // 시계방향 호의 부호를 뒤집지 않으면 끝점이 이웃과 보이지 않고 (y 로 300 떨어진다)
+  // bbox 가 5885x5883 으로 폴리며, 단색 취움에서 거대한 회색 원반이 납다.
+  it('리닝 화붆4 — 시계방향 호가 이웃 edge 와 고리를 이룬다', () => {
+    // edge1: ccw=0, 샘해보이는 반지름 2944.69 의 얕은 호
+    const big = sampleArcDeg({
+      cx: -5964.1711256793041684, cy: -6951.0634511949665466,
+      rx: 2944.6896182284449424,
+      startDeg: 1.5506117211140376, endDeg: 3.4879782011650775, ccw: false,
+    })
+    // edge2: ccw=1
+    const next = sampleArcDeg({
+      cx: -3082.9364105384456707, cy: -7077.8330258988289643,
+      rx: 78.1534579017938711,
+      startDeg: 317.9132770810475108, endDeg: 397.048132996673985, ccw: true,
+    })
+
+    const xs = big.map((p) => p[0]), ys = big.map((p) => p[1])
+    const w = Math.max(...xs) - Math.min(...xs)
+    const h = Math.max(...ys) - Math.min(...ys)
+    // 원반이면 5885. 실제 호는 100 남짓지리다.
+    expect(Math.max(w, h)).toBeLessThan(120)
+
+    // edge1 끝 → edge2 시작
+    expect(big[big.length - 1][0]).toBeCloseTo(next[0][0], 2)
+    expect(big[big.length - 1][1]).toBeCloseTo(next[0][1], 2)
+    // edge2 끝 → edge1 시작 (고리가 닫힌다)
+    expect(next[next.length - 1][0]).toBeCloseTo(big[0][0], 2)
+    expect(next[next.length - 1][1]).toBeCloseTo(big[0][1], 2)
+  })
+
+  it('시계방향 호는 반시계 호의 거울상이다', () => {
+    const cw = sampleArcDeg({ cx: 0, cy: 0, rx: 100, startDeg: 10, endDeg: 70, ccw: false })
+    const ccw = sampleArcDeg({ cx: 0, cy: 0, rx: 100, startDeg: 10, endDeg: 70, ccw: true })
+    expect(cw).toHaveLength(ccw.length)
+    for (let i = 0; i < cw.length; i++) {
+      expect(cw[i][0]).toBeCloseTo(ccw[i][0], 9)
+      expect(cw[i][1]).toBeCloseTo(-ccw[i][1], 9)
+    }
   })
 })
