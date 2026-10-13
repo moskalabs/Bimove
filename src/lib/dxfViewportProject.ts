@@ -69,6 +69,74 @@ export function viewportModelRect(vp: ViewportProjection): PaperRect {
   }
 }
 
+/** 사각형을 중심 기준으로 배율만큼 넓힌다. */
+function growRect(r: PaperRect, k: number): PaperRect {
+  const cx = (r.minX + r.maxX) / 2, cy = (r.minY + r.maxY) / 2
+  const hw = (r.maxX - r.minX) / 2 * k, hh = (r.maxY - r.minY) / 2 * k
+  return { minX: cx - hw, minY: cy - hh, maxX: cx + hw, maxY: cy + hh }
+}
+
+/** 폴리라인 AABB 의 중심. 어디쯤 있는지만 세는 용도다. */
+function centroid(pl: { vertices: number[][] }): [number, number] | null {
+  const b = vertexBounds([pl])
+  return b ? [(b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2] : null
+}
+
+/** 창이 통째로 빌 때, 왜 비었는지 가르는 숫자들. */
+export interface EmptyViewportProbe {
+  /** 창 중심에서 가장 가까운 도형까지의 편차 */
+  nearest: { dx: number; dy: number } | null
+  /** 창을 그대로 / 10배 / 100배 넓혔을 때 들어오는 폴리라인 수 */
+  inWindow: number
+  in10x: number
+  in100x: number
+  /** 뷰 중심 부호를 뒤집었을 때 들어오는 수 */
+  inFlipped: number
+}
+
+/**
+ * 창이 비었을 때 범인을 가린다. 세 가지 고장이 똑같은 증상을 낸다:
+ *
+ * - **뷰 중심이 엉뚱하다** → 창을 100배 넓혀도 0개, 가장 가까운 도형이
+ *   창 크기보다 훨씬 멀다.
+ * - **축척이 틀렸다** (gc 45 를 변환기가 gc 41 로 베껴 써서 1/1 이 된다)
+ *   → 창을 넓히면 갑자기 수천 개가 들어온다.
+ * - **비틀기(gc 51) 를 반영해야 한다** → 뷰 타깃(gc 17/27) 이 원점이면
+ *   180도 비틀기는 뷰 중심의 부호를 뒤집는 것과 같다. 뒤집은 쪽에서만
+ *   도형이 잡히면 그게 답이다.
+ *
+ * 개수는 폴리라인 AABB 중심으로 센다 — 정확한 클리핑이 아니라 "저 근처에
+ * 도형이 있냐" 를 보는 것이므로 충분하다.
+ */
+export function probeEmptyViewport(
+  polylines: Array<{ vertices: number[][] }>,
+  vp: ViewportProjection,
+): EmptyViewportProbe {
+  const r = viewportModelRect(vp)
+  const r10 = growRect(r, 10), r100 = growRect(r, 100)
+  const flipped: PaperRect = {
+    minX: -vp.modelCX - (r.maxX - r.minX) / 2, maxX: -vp.modelCX + (r.maxX - r.minX) / 2,
+    minY: -vp.modelCY - (r.maxY - r.minY) / 2, maxY: -vp.modelCY + (r.maxY - r.minY) / 2,
+  }
+  const out: EmptyViewportProbe = {
+    nearest: null, inWindow: 0, in10x: 0, in100x: 0, inFlipped: 0,
+  }
+  let best = Infinity
+  for (const pl of polylines) {
+    const c = centroid(pl)
+    if (!c) continue
+    const [x, y] = c
+    if (inRect(r, x, y)) out.inWindow++
+    if (inRect(r10, x, y)) out.in10x++
+    if (inRect(r100, x, y)) out.in100x++
+    if (inRect(flipped, x, y)) out.inFlipped++
+    const dx = x - vp.modelCX, dy = y - vp.modelCY
+    const d = dx * dx + dy * dy
+    if (d < best) { best = d; out.nearest = { dx, dy } }
+  }
+  return out
+}
+
 /** 모델 좌표 한 점 → 종이 좌표. */
 export function projectPoint(vp: ViewportProjection, x: number, y: number): [number, number] {
   return [

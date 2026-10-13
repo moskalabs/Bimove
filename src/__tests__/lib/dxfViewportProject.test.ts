@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   projectPoint, viewportPaperRect, viewportModelRect, rectsOverlap, vertexBounds,
-  clipSegment, clipPolyline, projectThroughViewport,
+  probeEmptyViewport, clipSegment, clipPolyline, projectThroughViewport,
   type PaperRect,
 } from '../../lib/dxfViewportProject'
 import { toViewportProjection, type DxfViewport, type ViewportProjection } from '../../lib/dxf-shared'
@@ -78,6 +78,35 @@ describe('viewportModelRect / rectsOverlap / vertexBounds', () => {
   it('NaN 좌표는 범위에서 빼고 센다', () => {
     expect(vertexBounds([pl([[0, 0], [NaN, NaN], [4, 4]])]))
       .toEqual({ minX: 0, minY: 0, maxX: 4, maxY: 4 })
+  })
+})
+
+describe('probeEmptyViewport', () => {
+  // 창이 비추는 모델 영역이 9500~10500 x -500~500 인 뷰포트.
+  // 뒤집은 중심은 -10000 이므로 창과 안 겹친다 — flip 판정이 의미를 갖는다.
+  const FAR = { paperCX: 0, paperCY: 0, paperW: 100, paperH: 100, modelCX: 10000, modelCY: 0, scale: 0.1 }
+
+  it('창 안에 있으면 전부 잡히고 편차는 0', () => {
+    expect(probeEmptyViewport([pl([[10000, 0]])], FAR)).toEqual({
+      nearest: { dx: 0, dy: 0 }, inWindow: 1, in10x: 1, in100x: 1, inFlipped: 0,
+    })
+  })
+
+  it('넓혔을 때만 잡히면 축척이 틀린 것 — ×10 에서 걸린다', () => {
+    const q = probeEmptyViewport([pl([[14000, 0]])], FAR)
+    expect([q.inWindow, q.in10x, q.in100x, q.inFlipped]).toEqual([0, 1, 1, 0])
+    expect(q.nearest).toEqual({ dx: 4000, dy: 0 })
+  })
+
+  it('부호 뒤집은 쪽에서만 잡히면 비틀기 미반영', () => {
+    const q = probeEmptyViewport([pl([[-10000, 0]])], FAR)
+    expect([q.inWindow, q.in10x, q.inFlipped]).toEqual([0, 0, 1])
+  })
+
+  it('도형이 없으면 nearest 는 null', () => {
+    expect(probeEmptyViewport([], FAR)).toEqual({
+      nearest: null, inWindow: 0, in10x: 0, in100x: 0, inFlipped: 0,
+    })
   })
 })
 

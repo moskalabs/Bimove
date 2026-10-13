@@ -1908,6 +1908,7 @@ export function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
 import type { PolylineData, TextData, HatchData, LinetypeDef, LayerInfo, WorkerOut, SkipReport, ParseSpace } from './dxf-fast-worker'
 import {
   projectThroughViewport, viewportPaperRect, viewportModelRect, rectsOverlap, vertexBounds,
+  probeEmptyViewport,
 } from './dxfViewportProject'
 
 function runFastWorker(
@@ -2682,6 +2683,16 @@ export async function commitCadImportV2(
         workerTexts.push(...p.texts)
         workerHatches.push(...p.hatches)
         addedPl += p.polylines.length; addedTx += p.texts.length; addedHa += p.hatches.length
+        // 창이 통째로 비었다 — 증상은 하나인데 원인이 셋이라 여기서 가른다.
+        // (뷰 중심 오류 / 축척 1:1 오인 / 비틀기 미반영)
+        if (p.polylines.length === 0 && m.polylines.length > 0) {
+          const q = probeEmptyViewport(m.polylines, vp)
+          console.warn(`[CAD V2] 빈 창 진단 — 창 안 ${q.inWindow}개, ×10 ${q.in10x}개, ` +
+            `×100 ${q.in100x}개, 중심뒤집기 ${q.inFlipped}개` +
+            (q.nearest
+              ? `, 가장 가까운 도형 편차 (${q.nearest.dx.toFixed(0)},${q.nearest.dy.toFixed(0)})`
+              : ''))
+        }
         const mr = viewportModelRect(vp)
         if (mb && !rectsOverlap(mb, mr)) {
           // 겹치지 않으면 뷰 중심이 얼마나 빗나갔는지까지 찍는다. 이 차이가
