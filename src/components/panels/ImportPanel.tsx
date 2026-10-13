@@ -6,7 +6,7 @@ import { useToast } from '../../context/ToastContext'
 import { uploadImage } from '../../lib/project'
 import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2, getLastImportReport, ViewportClipMissedError } from '../../lib/dxf'
 import type { ViewportClip } from '../../lib/dxf-shared'
-import { buildLayoutTargets, type ParseSpace } from '../../lib/dxf-shared'
+import { buildLayoutTargets, unlabeledPaperOwner, type ParseSpace } from '../../lib/dxf-shared'
 import type { LayoutImportInfo } from '../CadPreview'
 import { lazyWithReload } from '../../lib/lazyWithReload'
 import { importPdf } from '../../lib/pdfImport'
@@ -144,6 +144,10 @@ export function ImportPanel() {
       const targets = layoutInfo
         ? buildLayoutTargets(layoutInfo.layouts, layoutInfo.viewportsByLayout)
         : []
+      // gc 410 이 없는 종이 엔티티는 주인 탭 하나만 가져간다. 안 가리면 같은
+      // 시트가 탭마다 중복으로 들어온다 (unlabeledPaperOwner 주석 참고).
+      const unlabeledOwner = layoutInfo ? unlabeledPaperOwner(layoutInfo.layouts) : null
+      if (unlabeledOwner) console.log(`[Import] 소속 미표시 종이 엔티티 주인 탭: "${unlabeledOwner}"`)
       for (const t of targets) {
         if (!t.geometry) console.warn(`[Import] Layout "${t.layout.name}": 뷰포트 없음 → 빈 페이지만 만든다`)
         else if (t.clip) console.log(`[Import] Layout "${t.layout.name}" viewport clip: ` +
@@ -200,6 +204,7 @@ export function ImportPanel() {
           if (!layout.isModelSpace) {
             count = await commit(null, {
               kind: 'paper', layoutName: layout.name, blockName: layout.blockName, viewports,
+              ownsUnlabeledPaper: unlabeledOwner === null || unlabeledOwner === layout.name,
             })
             console.log(`[Import] Layout "${layout.name}": 종이공간 ${count}개 요소`)
           }

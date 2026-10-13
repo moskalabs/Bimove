@@ -65,6 +65,15 @@ function line(y: number, paperOf?: string): string {
     `${g(10)}\n0\n${g(20)}\n${y}\n${g(30)}\n0\n${g(11)}\n100\n${g(21)}\n${y}\n${g(31)}\n0\n`
 }
 
+/** 수평선 한 개 — 종이공간(67=1) 이지만 **소속 탭(410) 을 안 쓴 것**.
+ *
+ *  DWG→DXF 변환물에 실제로 있다 (리닝 파일의 종이 엔티티 865개 전부 410 없음).
+ */
+function unlabeledPaperLine(y: number): string {
+  return `${g(0)}\nLINE\n${g(8)}\nDRAW\n${g(67)}\n1\n` +
+    `${g(10)}\n0\n${g(20)}\n${y}\n${g(30)}\n0\n${g(11)}\n100\n${g(21)}\n${y}\n${g(31)}\n0\n`
+}
+
 /**
  * 모형 + 종이 2장짜리 최소 DXF.
  *
@@ -72,9 +81,12 @@ function line(y: number, paperOf?: string): string {
  *  y=10  "배치1" 종이공간 선 (활성 탭 → ENTITIES 에 67=1 로)
  *  y=20  "배치1" 종이공간 선
  *  y=30  "배치2" 종이공간 선 (비활성 탭 → *Paper_Space0 블록 안에만)
+ *  y=40  소속 미표시 종이 엔티티 (`unlabeled: true` 일 때만)
  */
-function makeDxf(opts: { modelLine?: boolean; paperLines?: boolean } = {}): string {
-  const { modelLine = true, paperLines = true } = opts
+function makeDxf(opts: {
+  modelLine?: boolean; paperLines?: boolean; unlabeled?: boolean
+} = {}): string {
+  const { modelLine = true, paperLines = true, unlabeled = false } = opts
 
   const header = `${g(0)}\nSECTION\n${g(2)}\nHEADER\n${g(9)}\n$INSUNITS\n${g(70)}\n4\n${g(0)}\nENDSEC\n`
 
@@ -92,6 +104,7 @@ function makeDxf(opts: { modelLine?: boolean; paperLines?: boolean } = {}): stri
     `${g(0)}\nSECTION\n${g(2)}\nENTITIES\n` +
     (modelLine ? line(0) : '') +
     (paperLines ? line(10, '배치1') + line(20, '배치1') : '') +
+    (unlabeled ? unlabeledPaperLine(40) : '') +
     `${g(0)}\nENDSEC\n`
 
   return header + blocks + entities + `${g(0)}\nEOF\n`
@@ -148,5 +161,51 @@ describe('종이공간 분리', () => {
     const polys = await callWorkerSync(makeDxf({ modelLine: false }), LAYERS,
       { kind: 'model', excludePaper: true })
     expect(polys).toHaveLength(0)
+  })
+})
+
+/**
+ * code 410(소속 레이아웃) 을 **아예 안 쓰는** 변환물.
+ *
+ * 증상: 탭이 2장인데 두 탭에 **같은 시트가 중복으로** 들어왔다. 실측 —
+ * 리닝 파일에서 Layout1 과 배치1 의 ENTITIES 읽기 결과가 폴리라인 3143개 /
+ * bbox 까지 완전히 동일했고, Layout1 의 종이 범위가 배치1 영역인 X 193124
+ * 까지 뻗어 화면맞춤이 덜 찼다.
+ *
+ * 원인: "410 이 없으면 이름으로 가릴 수 없으니 넣는 쪽이 낫다" 는 폴백이
+ * **모든 탭**에 적용됐다. 주인은 접미사 없는 `*Paper_Space` 를 가진 탭 하나다.
+ */
+describe('소속 미표시 종이 엔티티 (gc 410 없음)', () => {
+  const dxf = makeDxf({ unlabeled: true })
+
+  it('주인 탭(ownsUnlabeledPaper=true)은 가져간다', async () => {
+    const polys = await callWorkerSync(dxf, LAYERS,
+      { kind: 'paper', layoutName: '배치1', blockName: '*Paper_Space', ownsUnlabeledPaper: true })
+    expect(ys(polys)).toEqual([10, 20, 40])
+  })
+
+  it('남의 탭(ownsUnlabeledPaper=false)은 안 가져간다', async () => {
+    // 여기서 40 이 같이 들어오면 같은 시트가 탭마다 중복된다.
+    const polys = await callWorkerSync(dxf, LAYERS,
+      { kind: 'paper', layoutName: '배치2', blockName: '*Paper_Space0', ownsUnlabeledPaper: false })
+    expect(ys(polys)).toEqual([30])
+  })
+
+  it('플래그를 생략하면 예전 그대로 가져간다 (주인을 못 고른 파일)', async () => {
+    const polys = await callWorkerSync(dxf, LAYERS,
+      { kind: 'paper', layoutName: '배치2', blockName: '*Paper_Space0' })
+    expect(ys(polys)).toEqual([30, 40])
+  })
+
+  it('410 이 **있는** 엔티티는 플래그와 무관하게 이름으로 가린다', async () => {
+    // 주인 탭이라도 남의 410 은 안 받는다 — 기존 동작을 안 건드렸다는 보증.
+    const polys = await callWorkerSync(dxf, LAYERS,
+      { kind: 'paper', layoutName: '배치2', blockName: '*Paper_Space', ownsUnlabeledPaper: true })
+    expect(ys(polys)).toEqual([40])
+  })
+
+  it('모델공간 모드는 영향 없다', async () => {
+    const polys = await callWorkerSync(dxf, LAYERS, { kind: 'model', excludePaper: true })
+    expect(ys(polys)).toEqual([0])
   })
 })

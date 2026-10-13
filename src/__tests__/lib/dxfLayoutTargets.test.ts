@@ -6,7 +6,7 @@
  * **조용히 사라졌다**. 이제 탭 자리는 반드시 남긴다 (도형만 비운다).
  */
 import { describe, it, expect } from 'vitest'
-import { buildLayoutTargets, type DxfLayout, type DxfViewport } from '../../lib/dxf-shared'
+import { buildLayoutTargets, unlabeledPaperOwner, type DxfLayout, type DxfViewport } from '../../lib/dxf-shared'
 
 const layout = (name: string, tabOrder: number, isModelSpace = false): DxfLayout => ({
   name, isModelSpace, tabOrder, paperWidth: 420, paperHeight: 297,
@@ -25,6 +25,51 @@ const vp = (
   clipMaxX: cx + w / 2, clipMaxY: cy + h / 2,
   paperCX: paper?.cx ?? 210, paperCY: paper?.cy ?? 148.5,
   paperW: paper?.w ?? 200, paperH: paper?.h ?? 150,
+})
+
+/**
+ * gc 410 이 없는 ENTITIES 종이 엔티티의 주인 탭 고르기.
+ *
+ * DXF 는 저장 당시 활성 탭의 BLOCK_RECORD 를 접미사 없는 `*Paper_Space` 로
+ * 쓴다. 그 탭 하나만 가져가야 같은 시트가 중복으로 안 들어온다.
+ */
+describe('unlabeledPaperOwner', () => {
+  const withBlock = (name: string, blockName: string | null, isModelSpace = false): DxfLayout =>
+    ({ ...layout(name, 1, isModelSpace), blockName })
+
+  it('`*Paper_Space` 를 가진 탭을 고른다', () => {
+    expect(unlabeledPaperOwner([
+      withBlock('Model', null, true),
+      withBlock('Layout1', '*Paper_Space0'),
+      withBlock('배치1', '*Paper_Space'),
+    ])).toBe('배치1')
+  })
+
+  it('대소문자는 무시한다', () => {
+    expect(unlabeledPaperOwner([withBlock('배치1', '*PAPER_SPACE')])).toBe('배치1')
+  })
+
+  it('후보가 없으면 null — 예전처럼 모든 탭이 가져간다', () => {
+    expect(unlabeledPaperOwner([
+      withBlock('Layout1', '*Paper_Space0'),
+      withBlock('Layout2', '*Paper_Space1'),
+    ])).toBeNull()
+  })
+
+  it('후보가 둘이면 null — 못 고르면 잃는 쪽보다 중복이 낫다', () => {
+    expect(unlabeledPaperOwner([
+      withBlock('A', '*Paper_Space'),
+      withBlock('B', '*Paper_Space'),
+    ])).toBeNull()
+  })
+
+  it('모형 탭은 후보가 아니다', () => {
+    expect(unlabeledPaperOwner([withBlock('Model', '*Paper_Space', true)])).toBeNull()
+  })
+
+  it('blockName 이 없으면 후보가 아니다', () => {
+    expect(unlabeledPaperOwner([withBlock('Layout1', null)])).toBeNull()
+  })
 })
 
 describe('buildLayoutTargets', () => {

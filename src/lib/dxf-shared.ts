@@ -234,7 +234,40 @@ export type ParseSpace =
    * 끌어온다 (도면틀 + 평면도가 한 장에 들어온다). 워커는 이 필드를 안 본다 —
    * 사상은 메인 스레드(commitCadImportV2)에서 한다.
    */
-  | { kind: 'paper'; layoutName: string; blockName?: string | null; viewports?: ViewportProjection[] }
+  | {
+      kind: 'paper'; layoutName: string; blockName?: string | null
+      viewports?: ViewportProjection[]
+      /**
+       * ENTITIES 섹션에 있고 **gc 410(소속 레이아웃) 이 없는** 종이 엔티티를
+       * 이 탭이 가져갈 것인가. `undefined` 면 가져간다 (예전 동작).
+       *
+       * unlabeledPaperOwner() 가 고른 한 탭만 true 여야 한다 — 안 그러면
+       * 같은 시트가 탭마다 중복으로 들어온다.
+       */
+      ownsUnlabeledPaper?: boolean
+    }
+
+/**
+ * gc 410 이 없는 ENTITIES 섹션 종이 엔티티를 **어느 탭** 것으로 볼 것인가.
+ *
+ * DXF 는 저장 당시 활성이던 탭의 종이공간을 ENTITIES 섹션에 (gc 67=1 로)
+ * 넣고, 그 탭의 BLOCK_RECORD 이름을 접미사 없는 `*Paper_Space` 로 쓴다.
+ * 나머지 탭은 `*Paper_Space0`, `*Paper_Space1` ... 로 BLOCKS 섹션에 들어간다.
+ * 그래서 `*Paper_Space` 를 가진 레이아웃이 이 엔티티들의 주인이다.
+ *
+ * 왜 필요한가: gc 410 을 아예 안 쓰는 DWG→DXF 변환물이 있다 (리닝 파일의
+ * 종이 엔티티 865개 전부 410 이 없다). 그 땐 "이름으로 가릴 수 없으니 넣는
+ * 쪽이 낫다" 는 폴백이 **모든 탭에 같은 시트를 다 넣어** 버린다 — Layout1
+ * 의 종이 범위가 배치1 영역인 X 193124 까지 뻗고, 화면맞춤이 덜 찼다.
+ *
+ * 못 고르면 null 을 준다 (주인 후보가 없거나 둘 이상). 그 땐 예전처럼 모든
+ * 탭이 가져간다 — 중복이 나더라도 도형을 통째로 잃는 쪽이 더 나쁘다.
+ */
+export function unlabeledPaperOwner(layouts: DxfLayout[]): string | null {
+  const owners = layouts.filter(l =>
+    !l.isModelSpace && (l.blockName ?? '').trim().toLowerCase() === '*paper_space')
+  return owners.length === 1 ? owners[0].name : null
+}
 
 /** 레이아웃 하나를 어떻게 페이지로 만들 것인가. */
 export interface LayoutTarget {

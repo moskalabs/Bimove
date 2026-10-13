@@ -1951,11 +1951,17 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
           noteSkip('모델공간 엔티티 (종이 탭 아님)')
           sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
         }
-        // code 410 이 없는 건 R14 이전 포맷이다 — 종이공간이 하나뿐이라
-        // 이름으로 가릴 수가 없다. 버리는 것보다 넣는 쪽이 낫다.
         const c410 = idxIn(dxfText, GC410, eStart, eEnd)
-        if (c410 >= 0 && valAt(dxfText, c410 + GC410.length, eEnd) !== space.layoutName) {
-          noteSkip('다른 레이아웃의 종이공간 엔티티')
+        if (c410 >= 0) {
+          if (valAt(dxfText, c410 + GC410.length, eEnd) !== space.layoutName) {
+            noteSkip('다른 레이아웃의 종이공간 엔티티')
+            sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
+          }
+        } else if (space.ownsUnlabeledPaper === false) {
+          // code 410 을 아예 안 쓰는 변환물이 있다. 이름으로 가릴 수 없으니
+          // **주인 탭 하나**만 가져간다 (unlabeledPaperOwner 가 고른다). 전엔
+          // 전부 넣어서 같은 시트가 탭마다 중복으로 들어왔다.
+          noteSkip('소속 미표시 종이 엔티티 (다른 탭이 주인)')
           sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
         }
       } else if (dropPaper && entIsPaper) {
