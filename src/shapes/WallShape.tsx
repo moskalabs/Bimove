@@ -18,6 +18,7 @@ import { useEffect, useState } from 'react'
 import { getScaleConfig, formatLength } from '../lib/scaleConfig'
 import { getShowWallLengths, getGrayscaleMode } from '../lib/settings'
 import { renderPatternDef } from '../lib/wallPatterns'
+import { dxfStrokePx, screenStrokeWidth } from '../lib/dxfStroke'
 import type { PatternId } from '../lib/materialPresets'
 
 /** #ffffff 등 배경과 구분 안 되는 밝은 색 감지 */
@@ -257,16 +258,19 @@ function WallComponent({ shape }: { shape: WallShape }) {
     const rawDxf = (shape.meta?.dxfColor as string) || '#333'
     const dxfColor = isSelected ? '#1a73e8' : (isNearWhite(rawDxf) ? '#333' : rawDxf)
     const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
-    const baseSw = dxfLw > 0 ? Math.max(0.5, Math.min(dxfLw * 0.04, 6)) : 1.0
+    const baseSw = dxfStrokePx(dxfLw)
     const dxfTr = (shape.meta?.dxfTransparency as number) ?? 0
     const dxfOpacity = dxfTr > 0 ? Math.max(0.05, 1 - dxfTr / 100) : 1
-    // 줌에 따른 최소 화면 0.5px 보장
-    const zoom = editor.getZoomLevel()
-    const sw = isSelected ? Math.max(baseSw * 1.5, 1 / Math.max(zoom, 0.001)) : Math.max(baseSw, 0.5 / Math.max(zoom, 0.001))
+    // 화면 px 로 고정. 이전에는 max(baseSw, 0.5/zoom) 을 shape 좌표로 넣었는데,
+    // tldraw 가 컨테이너에 CSS scale(zoom) 을 걸기 때문에 실제 화면 두께는
+    // max(baseSw * zoom, 0.5) 였다 - 줌을 올릴수록 선이 끝없이 두꺼워졌다.
+    // DxfGroupShape 와 같은 --tl-scale 관용구로 통일한다. 자세한 설명은 lib/dxfStroke.
+    const swPx = isSelected ? baseSw * 1.5 : baseSw
     // 채워진 사각형이 아닌, 중심선만 렌더
     return (
       <SVGContainer>
-        <line x1={0} y1={0} x2={x2} y2={y2} stroke={dxfColor} strokeWidth={sw} strokeLinecap="round"
+        <line x1={0} y1={0} x2={x2} y2={y2} stroke={dxfColor} strokeWidth={swPx} strokeLinecap="round"
+          style={{ strokeWidth: screenStrokeWidth(swPx) }}
           {...(dxfOpacity < 1 ? { opacity: dxfOpacity } : {})} />
       </SVGContainer>
     )

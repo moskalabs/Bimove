@@ -18,7 +18,7 @@
  * 모형 탭은 줌이 1 이라 결과가 그대로 1px — 되던 건 안 건드린다.
  */
 import { describe, it, expect } from 'vitest'
-import { dxfStrokePx, screenStrokeWidth } from '../../shapes/DxfGroupShape'
+import { dxfStrokePx, screenStrokeWidth } from '../../lib/dxfStroke'
 import { readFileSync } from 'node:fs'
 
 describe('dxfStrokePx', () => {
@@ -92,5 +92,34 @@ describe('메인 path 렌더 (소스 가드)', () => {
 
   it('--tl-scale 기반 CSS 두께를 쓴다', () => {
     expect(mainPathJsx()).toContain('screenStrokeWidth(strokeW)')
+  })
+})
+
+describe('WallShape DXF 분기 (소스 가드)', () => {
+  // 세그먼트 100개 미만인 DXF 는 dxfgroup 이 아니라 wall shape 개별로 들어온다.
+  // 이쪽은 같은 버그의 반대 방향이었다: shape 좌표에 max(baseSw, 0.5/zoom) 을 넣어서
+  // 실제 화면 두께가 max(baseSw * zoom, 0.5) - 줌을 올리면 선이 끝없이 두꺼워졌다.
+  const src = readFileSync('src/shapes/WallShape.tsx', 'utf-8').replace(/\r\n/g, '\n')
+
+  /** `if (isDxf) {` 블록 본문 */
+  function dxfBranch(): string {
+    const i = src.indexOf('if (isDxf) {')
+    if (i < 0) throw new Error('isDxf 분기를 찾지 못했다')
+    const close = src.indexOf('\n  }\n', i)
+    if (close < 0) throw new Error('isDxf 분기의 끝을 찾지 못했다')
+    return src.slice(i, close)
+  }
+
+  it('두께를 getZoomLevel() 로 나누지 않는다', () => {
+    // 0.5 / zoom 류의 보정은 CSS transform 줌과 곱해져 상쇄되지 않는다
+    expect(dxfBranch()).not.toContain('getZoomLevel')
+  })
+
+  it('--tl-scale 기반 CSS 두께를 쓴다', () => {
+    expect(dxfBranch()).toContain('screenStrokeWidth(swPx)')
+  })
+
+  it('선택 상태는 1.5배만 두껍다 (줌과 무관)', () => {
+    expect(dxfBranch()).toContain('isSelected ? baseSw * 1.5 : baseSw')
   })
 })
