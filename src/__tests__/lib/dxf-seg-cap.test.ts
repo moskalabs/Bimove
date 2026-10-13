@@ -14,7 +14,7 @@
  * 규칙이 지키려던 "특정 레이어만 통째로 날아가는 것 방지" 도 그대로 남아 있다.
  */
 import { describe, it, expect } from 'vitest'
-import { capByLength, MAX_FINAL_SEGS, MIN_SEGS_PER_LAYER } from '../../lib/dxf'
+import { capByLength, filterAndCleanSegments, MAX_FINAL_SEGS, MIN_SEGS_PER_LAYER } from '../../lib/dxf'
 import type { RawSeg } from '../../lib/dxf'
 
 /** 길이 len 인 가로 세그먼트 n 개 */
@@ -37,10 +37,11 @@ function countByLayer(list: RawSeg[]): Map<string, number> {
 
 /**
  * 성수 모형 탭 모양: 해치가 예산을 다 먹고 구조물은 몇십 개뿐.
- * 개수는 실측 비율을 줄이지 않고 그대로 썼다 (120388개).
+ * 구조물 개수는 실측 그대로 쓰고, 해치만 **상한보다 넉넉히** 잡는다 —
+ * 상한값을 바꿔도 "넘치는 상황" 이라는 전제가 유지돼야 한다.
  */
 const SEONGSU = [
-  ...segs('CO-HAT', 120_000, 1.7),
+  ...segs('CO-HAT', MAX_FINAL_SEGS + 20_000, 1.7),
   ...segs('F_WALL', 53, 540),
   ...segs('TB-FORM', 335, 2400),
 ]
@@ -88,10 +89,15 @@ describe('capByLength', () => {
     expect(after.get('CO-HAT')).toBe(MAX_FINAL_SEGS - 53 - 335)
   })
 
-  it('예전 비례 샘플링이면 벽 9개가 지워졌다 (회귀)', () => {
+  it('예전 비례 샘플링이면 벽과 도면틀이 깎였다 (회귀)', () => {
     const old = countByLayer(proportionalSample(SEONGSU))
-    expect(old.get('F_WALL')).toBe(44)   // 53개 중 9개 삭제 = 도면의 구멍
-    expect(old.get('TB-FORM')).toBe(278) // 도면틀도 57개 날아갔다
+    // 비율 기준이라 길이와 무관하게 깎인다 — 벽 한 줄이 통째로 없어져 구멍이 뚫렸다.
+    expect(old.get('F_WALL')).toBeLessThan(53)
+    expect(old.get('TB-FORM')).toBeLessThan(335)
+    // 길이 기준(현행)은 같은 입력에서 둘 다 100% 지킨다
+    const now = countByLayer(capByLength(SEONGSU))
+    expect(now.get('F_WALL')).toBe(53)
+    expect(now.get('TB-FORM')).toBe(335)
   })
 
   it('버린 건 남긴 것보다 길지 않다', () => {
@@ -127,5 +133,93 @@ describe('capByLength', () => {
       ...segs('0', 15, 2),
     ]
     expect(countByLayer(capByLength(all)).get('0')).toBe(MIN_SEGS_PER_LAYER)
+  })
+})
+
+/**
+ * 상한값 자체의 회귀.
+ *
+ * 성수 파일 배치 탭 실측 — 정제가 끝난 세그먼트가 273,237개다. 상한이 100k
+ * 였을 때 그 중 173,237개(63.4%)가 잘렸고, CO-HAT 는 146,941개 중 3,521개
+ * (2%)만 남았다. 캡을 뺀 쪽을 래스터라이즈해 비교하니 지시선과 가구 디테일이
+ * 통째로 없어져 있었다 — 한이 본 "선 잘리는 부분" 이 이것이다.
+ */
+describe('상한값', () => {
+  /** 성수 배치 탭 실측 (정제 후) */
+  const SEONGSU_PLAN_SEGS = 273_237
+
+  it('성수 배치 탭이 한 개도 안 잘리고 들어온다', () => {
+    expect(MAX_FINAL_SEGS).toBeGreaterThanOrEqual(SEONGSU_PLAN_SEGS)
+  })
+
+  it('그래도 상한은 남아 있다 (망가진 파일 안전망)', () => {
+    expect(Number.isFinite(MAX_FINAL_SEGS)).toBe(true)
+    expect(MAX_FINAL_SEGS).toBeLessThanOrEqual(1_000_000)
+  })
+})
+
+/**
+ * 캡 손실은 **따로** 보고해야 한다.
+ *
+ * 예전엔 캡 손실이 '세그먼트 정제(...)' 한 줄에 합쳐졌는데, ImportPanel 은
+ * 그 사유로 시작하는 항목을 토스트에서 빼 버린다. 그래서 도면의 63% 가
+ * 날아가도 쓰는 사람에게는 아무 말도 안 나갔다.
+ */
+describe('filterAndCleanSegments 손실 보고', () => {
+  /**
+   * 병합에 안 걸리는 세그먼트 n 개.
+   *
+   * segs() 를 쓰면 안 된다 — 전부 x1=0 가로선이라 mergeDxfSegments 의 버킷 키
+   * (`round(perp/10)`) 가 10줄씩 묶고 구간이 완전히 겹쳐서 10:1 로 접힌다.
+   * 캡에 닿기 전에 입력이 사라지므로 캡 손실을 잴 수 없다. y 를 20 씩 띄우면
+   * 버킷이 세그먼트마다 하나씩이라 병합이 일어나지 않는다.
+   */
+  function scatter(layer: string, n: number, len: number): RawSeg[] {
+    const out: RawSeg[] = []
+    for (let i = 0; i < n; i++) out.push({ x1: 0, y1: i * 20, dx: len, dy: 0, layer })
+    return out
+  }
+
+  /** 성수 배치 탭 모양으로 상한을 2만개 넘긴다 */
+  const OVERFLOW = [
+    ...scatter('CO-HAT', MAX_FINAL_SEGS + 20_000, 1.7),
+    ...scatter('F_WALL', 53, 540),
+    ...scatter('TB-FORM', 335, 2400),
+  ]
+
+  function collect(input: RawSeg[]): Record<string, number> {
+    const report: Record<string, number> = {}
+    filterAndCleanSegments(input, (reason, n) => {
+      if (n > 0) report[reason] = (report[reason] ?? 0) + n
+    })
+    return report
+  }
+
+  it('캡에 걸리면 정제와 다른 사유로 센다', () => {
+    const report = collect(OVERFLOW)
+    const capKey = Object.keys(report).find(k => k.startsWith('세그먼트 상한'))
+    expect(capKey).toBeDefined()
+    expect(report[capKey!]).toBe(OVERFLOW.length - MAX_FINAL_SEGS)
+  })
+
+  it('캡 사유는 토스트에서 걸러지지 않는다', () => {
+    // ImportPanel.summarizeImportReport 가 빼는 접두사들
+    const capKey = Object.keys(collect(OVERFLOW)).find(k => k.startsWith('세그먼트 상한'))!
+    expect(capKey.startsWith('세그먼트 정제')).toBe(false)
+    expect(capKey.startsWith('도면 범위 밖')).toBe(false)
+  })
+
+  it('사유별 합이 실제 손실과 맞는다 (이중계상 없음)', () => {
+    const report: Record<string, number> = {}
+    const kept = filterAndCleanSegments(OVERFLOW, (reason, n) => {
+      if (n > 0) report[reason] = (report[reason] ?? 0) + n
+    })
+    const total = Object.values(report).reduce((a, b) => a + b, 0)
+    expect(total).toBe(OVERFLOW.length - kept.length)
+  })
+
+  it('캡에 안 걸리면 상한 사유를 안 띄운다', () => {
+    const report = collect(scatter('F_WALL', 10, 540))
+    expect(Object.keys(report).some(k => k.startsWith('세그먼트 상한'))).toBe(false)
   })
 })

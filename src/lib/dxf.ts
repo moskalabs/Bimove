@@ -2018,8 +2018,19 @@ const COORD_LIMIT = 1e8
  * 한 임포트에서 화면에 올릴 세그먼트 상한.
  *
  * 넘으면 **짧은 것부터** 버린다 — [[filterAndCleanSegments]] 참고.
+ *
+ * 100k 였다. 50k 로 시작해 한 번 올린 숫자고 근거는 없었는데, 성수 파일
+ * (24.11_성수_포레스트_평면-3) 배치 탭에서 실제로 도면을 깎고 있었다 —
+ * 정제 후 273,237개 중 **173,237개(63.4%)** 를 버렸고, CO-HAT 는 146,941개
+ * 중 3,521개(2%)만 살았다. 캡을 뺀 쪽을 래스터라이즈해서 나란히 놓고 보니
+ * 지시선·가구 디테일이 통째로 사라져 있었다 — "선 잘리는 부분" 이 이거다.
+ * 걱정하던 "해치가 다 들어와 검은 덩어리가 된다" 는 일어나지 않았다.
+ *
+ * 300k 면 그 파일이 한 개도 안 잘리고 들어온다. shape 당 3000개로 쪼개므로
+ * (maxSegsPerShape) 100개 안팎의 DxfGroup 이 되고, 그 정도는 이미 돌고 있다.
+ * 캡 자체는 남겨 둔다 — 망가진 파일에서 수백만 개가 나올 때의 안전망이다.
  */
-export const MAX_FINAL_SEGS = 100_000
+export const MAX_FINAL_SEGS = 300_000
 /** 캡에 걸렸을 때 레이어마다 최소한 이만큼은 (긴 것부터) 남긴다. */
 export const MIN_SEGS_PER_LAYER = 20
 
@@ -2205,8 +2216,17 @@ export function capByLength(segs: RawSeg[]): RawSeg[] {
   return kept
 }
 
-/** 세그먼트 정제: sanity → min length → merge → dedup → hard cap */
-function filterAndCleanSegments(rawSegsAll: RawSeg[]): RawSeg[] {
+/**
+ * 세그먼트 정제: sanity → min length → merge → dedup → hard cap
+ *
+ * `noteDrop` 을 주면 버린 개수를 **사유별로** 알려준다. 캡 손실을 정제 손실에
+ * 섞으면 안 된다 — ImportPanel 이 "세그먼트 정제" 로 시작하는 사유를 토스트에서
+ * 빼기 때문에, 섞어 두면 도면의 63% 가 날아가도 쓰는 사람한테는 무음이었다.
+ */
+export function filterAndCleanSegments(
+  rawSegsAll: RawSeg[],
+  noteDrop?: (reason: string, n: number) => void,
+): RawSeg[] {
   // 좌표 sanity 필터
   const saneSegs = rawSegsAll.filter((s) => {
     const x2 = s.x1 + s.dx, y2 = s.y1 + s.dy
@@ -2245,7 +2265,15 @@ function filterAndCleanSegments(rawSegsAll: RawSeg[]): RawSeg[] {
   finalSegs = dedupSegs
 
   // 하드 캡: 짧은 세그먼트부터 버린다 (capByLength 참고)
-  if (finalSegs.length > MAX_FINAL_SEGS) finalSegs = capByLength(finalSegs)
+  let capped = 0
+  if (finalSegs.length > MAX_FINAL_SEGS) {
+    const before = finalSegs.length
+    finalSegs = capByLength(finalSegs)
+    capped = before - finalSegs.length
+    noteDrop?.('세그먼트 상한 초과(짧은 선부터 생략)', capped)
+  }
+  noteDrop?.('세그먼트 정제(1px 미만·중복·동일선상 병합)',
+             rawSegsAll.length - finalSegs.length - capped)
 
   return finalSegs
 }
@@ -2931,8 +2959,8 @@ export async function commitCadImportV2(
     if (n > 0) report[reason] = (report[reason] ?? 0) + n
   }
 
-  let finalSegs = filterAndCleanSegments(rawSegsAll)
-  noteDrop('세그먼트 정제(1px 미만·중복·동일선상 병합)', rawSegsAll.length - finalSegs.length)
+  // 사유별 집계는 filterAndCleanSegments 안에서 한다 (캡 손실과 정제 손실을 가른다)
+  let finalSegs = filterAndCleanSegments(rawSegsAll, noteDrop)
 
   // 4. 아웃라이어 제거: Viewport 클리핑 또는 IQR fallback
   //
