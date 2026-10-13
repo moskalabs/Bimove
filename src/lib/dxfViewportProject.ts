@@ -30,6 +30,32 @@ export function viewportPaperRect(vp: ViewportProjection): PaperRect {
   }
 }
 
+/** 두 사각형이 겹치는가 (한 점이라도 닿으면 참). */
+export function rectsOverlap(a: PaperRect, b: PaperRect): boolean {
+  return a.minX <= b.maxX && b.minX <= a.maxX && a.minY <= b.maxY && b.minY <= a.maxY
+}
+
+/**
+ * 종이공간 폴리라인들의 범위. 도면틀이 어디 있는지 보는 진단용이다.
+ * 좌표가 하나도 없으면 null.
+ */
+export function paperFrameBounds(
+  polylines: Array<{ vertices: number[][] }>,
+): PaperRect | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const pl of polylines) {
+    for (const v of pl.vertices) {
+      const x = v[0], y = v[1]
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+      if (x < minX) minX = x
+      if (y < minY) minY = y
+      if (x > maxX) maxX = x
+      if (y > maxY) maxY = y
+    }
+  }
+  return minX <= maxX && minY <= maxY ? { minX, minY, maxX, maxY } : null
+}
+
 /** 모델 좌표 한 점 → 종이 좌표. */
 export function projectPoint(vp: ViewportProjection, x: number, y: number): [number, number] {
   return [

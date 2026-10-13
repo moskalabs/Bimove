@@ -1906,7 +1906,7 @@ export function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
  * - 진행률 콜백 지원
  */
 import type { PolylineData, TextData, HatchData, LinetypeDef, LayerInfo, WorkerOut, SkipReport, ParseSpace } from './dxf-fast-worker'
-import { projectThroughViewport, viewportPaperRect } from './dxfViewportProject'
+import { projectThroughViewport, viewportPaperRect, rectsOverlap, paperFrameBounds } from './dxfViewportProject'
 
 function runFastWorker(
   dxfText: string,
@@ -2650,6 +2650,19 @@ export async function commitCadImportV2(
     const tv = performance.now()
     try {
       const m = await runFastWorker(dxfText, layerArr, onProgress, { kind: 'model', excludePaper: true })
+      // 1단계에서 읽은 **종이공간** 도형(도면틀·표제란)의 범위. 뷰포트 창이
+      // 이 범위 밖에 있으면 평면도가 도면틀에서 멀찍이 떨어진 곳에 놓여
+      // "틀은 쬐끄맣고 안은 빈" 페이지가 된다 — 자동 맞춤이 둘을 다 담으려고
+      // 통째로 줌아웃하기 때문이다. 창이 비었는지(=clip 에 아무것도 안 걸림)
+      // 와 창이 엉뚱한 데 있는지(=걸렸지만 틀 밖) 는 전혀 다른 고장이라
+      // 구분해서 찍는다.
+      const frame = paperFrameBounds(polylines)
+      if (frame) {
+        console.log(`[CAD V2] 종이공간 도형 범위: (${frame.minX.toFixed(0)},${frame.minY.toFixed(0)})~` +
+          `(${frame.maxX.toFixed(0)},${frame.maxY.toFixed(0)}) — 폴리라인 ${polylines.length}개`)
+      } else {
+        console.warn('[CAD V2] 종이공간에 폴리라인이 없다 — 도면틀 없이 뷰포트 내용만 들어간다.')
+      }
       let addedPl = 0, addedTx = 0, addedHa = 0
       for (const vp of space.viewports) {
         const p = projectThroughViewport(m, vp)
@@ -2658,6 +2671,12 @@ export async function commitCadImportV2(
         workerHatches.push(...p.hatches)
         addedPl += p.polylines.length; addedTx += p.texts.length; addedHa += p.hatches.length
         const r = viewportPaperRect(vp)
+        if (frame && !rectsOverlap(frame, r)) {
+          console.warn(`[CAD V2] 뷰포트 창이 종이공간 도형 밖이다 — ` +
+            `창 (${r.minX.toFixed(0)},${r.minY.toFixed(0)})~(${r.maxX.toFixed(0)},${r.maxY.toFixed(0)}) vs ` +
+            `틀 (${frame.minX.toFixed(0)},${frame.minY.toFixed(0)})~(${frame.maxX.toFixed(0)},${frame.maxY.toFixed(0)}). ` +
+            `gc 10/20(창 중심) 이나 gc 40/41(창 크기) 을 변환기가 종이 좌표로 안 썼을 수 있다.`)
+        }
         console.log(`[CAD V2] 뷰포트 사상: 1/${(1 / vp.scale).toFixed(0)} 축척, ` +
           `창 (${r.minX.toFixed(0)},${r.minY.toFixed(0)})~(${r.maxX.toFixed(0)},${r.maxY.toFixed(0)}) ` +
           `→ 폴리라인 ${p.polylines.length}개 (창 밖 ${p.dropped.polylines}개 버림), ` +
