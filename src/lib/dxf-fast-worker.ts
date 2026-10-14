@@ -10,6 +10,7 @@
  * - Zero npm dependencies (dxf-shared is internal)
  */
 
+import { hexChunksToBytes, readOleBitmap, readOleFrameRect, rectFromCorners } from './dxfOle'
 import { aciToHex, trueColorToHex, detectPadding, makeGcFormatter, decodeDxfSpecialChars, cleanMtextFormatting, defLineSpacing, sampleArcDeg, type HatchPatternLine, type ParseSpace } from './dxf-shared'
 
 export type { HatchPatternLine, ParseSpace }
@@ -90,12 +91,29 @@ export interface LayerInfo {
  */
 export type SkipReport = Record<string, number>
 
+/**
+ * OLE2FRAME 안에서 꺼낸 래스터 이미지. 좌표는 DXF 모델 좌표 그대로다
+ * (Y-flip 전) — 메인 스레드가 다른 도형과 같은 변환을 걸어 배치한다.
+ *
+ * rgba 는 transferable 로 넘긴다. 1792x2326 짜리가 16MB 라 복사하면
+ * 워커와 메인에 같은 게 두 벌 생긴다.
+ */
+export type OleImageData = {
+  layer: string
+  width: number
+  height: number
+  rgba: Uint8Array
+  /** 데이터가 잘려 못 채운 줄이 있으면 실제로 채운 줄 수 */
+  validRows: number
+  minX: number; minY: number; maxX: number; maxY: number
+}
+
 export type WorkerOut =
   /** 모듈이 실제로 평가되어 핸들러가 돌기 시작했다는 신호. 메인 스레드가
    *  "청크 로딩 실패" 와 "워커 안의 런타임 에러" 를 구분하는 데 쓴다. */
   | { type: 'boot' }
   | { type: 'progress'; phase: string; percent: number }
-  | { type: 'result'; polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo>; skipped: SkipReport }
+  | { type: 'result'; polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo>; skipped: SkipReport; oleImages: OleImageData[] }
   | { type: 'error'; message: string }
 
 // ===== Internal types =====
@@ -1755,7 +1773,7 @@ function extractTextEntity(
   return { x, y, text, height, rotation, layer, colorNumber: colorNum, attachPt, width: mtextWidth, fontName }
 }
 
-function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void, space: ParseSpace = { kind: 'model' }): { polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo>; skipped: SkipReport } {
+function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void, space: ParseSpace = { kind: 'model' }): { polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo>; skipped: SkipReport; oleImages: OleImageData[] } {
   const t0 = performance.now()
   globalEntityEvals = 0  // 글로벌 카운터 리셋
   skipTally = {}
@@ -1847,6 +1865,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
 
   progress('도면 요소 변환', 30)
   const output: PolylineData[] = []
+  const oleImages: OleImageData[] = []
   const texts: TextData[] = []
   const hatches: HatchData[] = []
 
@@ -2196,10 +2215,24 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
         sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
       }
 
+      // OLE2FRAME 은 여기 있으면 안 된다. 덩치(수십 MB) 때문에 묶여 들어갔지만,
+      // 그 덩치의 정체는 **도면 위에 실제로 보이는 래스터 이미지**다. AutoCAD 는
+      // DWG 하나만 열어도 항공사진/배치도가 같이 뜨는데 우리는 통째로 버렸다.
+      // parseGroupCodes 를 안 거치고 gc 310 만 긁어 바로 바이트로 바꾸므로
+      // 30만 개짜리 배열이 생기던 그 사고와는 무관하다.
+      if (type === 'OLE2FRAME' || type === 'OLEFRAME') {
+        try {
+          const img = parseOleFrame(dxfText, eStart, eEnd, gc, entityLayer)
+          if (img) oleImages.push(img)
+          else noteSkip('OLE 이미지 해석 실패')
+        } catch (err) {
+          console.warn('[fast-worker] OLE2FRAME 해석 실패', err)
+          noteSkip('OLE 이미지 해석 실패')
+        }
+        sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
+      }
+
       // ── Skip non-geometry entities that never produce polylines ──
-      // OLE2FRAME/OLEFRAME can be 10-20MB+ of hex binary data; parsing them
-      // via parseGroupCodes causes 300K+ array entries and potential OOM in web workers.
-      //
       // LEADER/MULTILEADER 는 여기 있으면 안 된다. 지시선은 **기하 도형이고**
       // entityToPolyline 이 이미 처리할 줄 안다 (case 'LEADER' / 'MULTILEADER').
       // OLE2FRAME OOM 을 막는 커밋에서 "비기하 엔티티" 로 같이 묶여 들어가는
@@ -2210,8 +2243,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
       // 안다. OLE2FRAME OOM 을 막는 커밋에 휩쓸려 들어와서, AutoCAD 에서는
       // 보이던 이미지가 불러오면 흔적도 없이 사라졌다 (LEADER 와 같은 사고).
       // IMAGE 엔티티 자체는 수백 바이트다 — OOM 과 무관하다.
-      if (type === 'OLE2FRAME' || type === 'OLEFRAME' ||
-          type === 'WIPEOUT' || type === 'VIEWPORT' || type === 'ATTDEF' ||
+      if (type === 'WIPEOUT' || type === 'VIEWPORT' || type === 'ATTDEF' ||
           type === 'TOLERANCE' ||
           type === 'ACAD_PROXY_ENTITY' || type === 'BODY' || type === 'REGION' ||
           type === '3DSOLID' || type === 'SURFACE' || type === 'HELIX' ||
@@ -2413,7 +2445,54 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
     if (Object.keys(info).length > 0) layersOut[name] = info
   }
 
-  return { polylines: output, insUnits, texts, hatches, linetypes: [...linetypeMap.values()], ltscale, layers: layersOut, skipped: skipTally }
+  return { polylines: output, insUnits, texts, hatches, linetypes: [...linetypeMap.values()], ltscale, layers: layersOut, skipped: skipTally, oleImages }
+}
+
+/**
+ * OLE2FRAME 엔티티 하나 → 래스터 이미지.
+ *
+ * gc 310 은 127바이트씩 끊어 hex 로 적은 바이너리 덩어리다. 그걸 다시 이어
+ * 붙이면 OLE2 복합문서가 나오고, 그 안에 원본 이미지 파일이 통째로 들어 있다.
+ *
+ * 배치 좌표는 gc 10(좌상)/11(우하) 이 **정상일 때만** 쓴다. 성수 파일에서
+ * 실제 값이 10=(1,1), 11=(0,0) 인 1x1 뒤집힌 상자였다 — 그대로 믿으면 도면
+ * 원점에 점 하나가 찍힌다. 그럴 땐 덩어리 앞머리에 들어 있는 네 꼭지점을 쓴다.
+ */
+function parseOleFrame(
+  dxfText: string, eStart: number, eEnd: number,
+  gc: (c: number) => string, layer: string,
+): OleImageData | null {
+  const CHUNK = `\n${gc(310)}\n`
+  const chunks: string[] = []
+  let p = eStart
+  for (;;) {
+    const k = dxfText.indexOf(CHUNK, p)
+    if (k < 0 || k >= eEnd) break
+    const vs = k + CHUNK.length
+    let ve = dxfText.indexOf('\n', vs)
+    if (ve < 0 || ve > eEnd) ve = eEnd
+    chunks.push(dxfText.substring(vs, ve).trim())   // 줄 끝 공백이 섞이면 hex 파싱이 거기서 끊긴다
+    p = ve
+  }
+  if (chunks.length === 0) return null
+
+  const blob = hexChunksToBytes(chunks)
+  const bmp = readOleBitmap(blob)
+  if (!bmp) return null
+
+  const num = (code: number): number => {
+    const pat = `\n${gc(code)}\n`
+    const i = idxIn(dxfText, pat, eStart, eEnd)
+    return i >= 0 ? floatAt(dxfText, i + pat.length, eEnd) : NaN
+  }
+  const rect = rectFromCorners({ x: num(10), y: num(20) }, { x: num(11), y: num(21) })
+    ?? readOleFrameRect(blob)
+  if (!rect) return null
+
+  return {
+    layer, width: bmp.width, height: bmp.height, rgba: bmp.rgba, validRows: bmp.validRows,
+    minX: rect.minX, minY: rect.minY, maxX: rect.maxX, maxY: rect.maxY,
+  }
 }
 
 // ===== Worker message handler =====
@@ -2421,7 +2500,8 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
 self.onmessage = (e: MessageEvent<ParseRequest>) => {
   if (e.data.type !== 'parse') return
 
-  const post = (msg: WorkerOut) => (self as unknown as Worker).postMessage(msg)
+  const post = (msg: WorkerOut, transfer?: Transferable[]) =>
+    (self as unknown as Worker).postMessage(msg, transfer ?? [])
   const progress = (phase: string, percent: number) => post({ type: 'progress', phase, percent })
 
   // 파싱보다 **먼저** 보낸다. 이 한 줄이 도달했다는 사실만으로 모듈 로딩은
@@ -2440,7 +2520,8 @@ self.onmessage = (e: MessageEvent<ParseRequest>) => {
       ltscale: result.ltscale,
       layers: result.layers,
       skipped: result.skipped,
-    })
+      oleImages: result.oleImages,
+    }, result.oleImages.map((i) => i.rgba.buffer))
   } catch (err) {
     post({ type: 'error', message: err instanceof Error ? err.message : String(err) })
   }

@@ -1,7 +1,7 @@
 import DxfParser from 'dxf-parser'
 // dxf npm package no longer used — replaced by custom dxf-fast-worker
 import { convertDwgToDxf, CDN_WASM_BASE } from 'dwgdxf'
-import { createShapeId, type Editor } from 'tldraw'
+import { AssetRecordType, createShapeId, type Editor } from 'tldraw'
 import { getScaleConfig } from './scaleConfig'
 import { reloadForStaleChunk } from './lazyWithReload'
 import { getDefaultWallThicknessMm } from './settings'
@@ -1910,7 +1910,7 @@ export function mergeDxfSegments(segs: RawSeg[]): RawSeg[] {
  * - UI 스레드 블로킹 없음 (Worker)
  * - 진행률 콜백 지원
  */
-import type { PolylineData, TextData, HatchData, LinetypeDef, LayerInfo, WorkerOut, SkipReport, ParseSpace } from './dxf-fast-worker'
+import type { PolylineData, TextData, HatchData, LinetypeDef, LayerInfo, WorkerOut, SkipReport, ParseSpace, OleImageData } from './dxf-fast-worker'
 import {
   projectThroughViewport, viewportPaperRect, viewportModelRect, rectsOverlap, vertexBounds,
   probeEmptyViewport,
@@ -1921,7 +1921,7 @@ function runFastWorker(
   selectedLayers: string[],
   onProgress?: (msg: string) => void,
   space?: ParseSpace,
-): Promise<{ polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo>; skipped: SkipReport }> {
+): Promise<{ polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo>; skipped: SkipReport; oleImages: OleImageData[] }> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(
       new URL('./dxf-fast-worker.ts', import.meta.url),
@@ -1955,6 +1955,7 @@ function runFastWorker(
           linetypes: msg.linetypes || [], ltscale: msg.ltscale ?? 1,
           layers: msg.layers || {},
           skipped: msg.skipped || {},
+          oleImages: msg.oleImages || [],
         })
       } else if (msg.type === 'error') {
         clearTimeout(timeout)
@@ -2777,6 +2778,108 @@ export class ViewportClipMissedError extends Error {
   }
 }
 
+/**
+ * OLE 비트맵 → PNG data URL.
+ *
+ * data URL 로 굽는 이유: blob URL 은 탭을 새로고침하면 죽는다. 도면을 저장했다
+ * 다시 열면 이미지 shape 만 깨진 채 남는다 (pdfImport 도 같은 이유로 data URL).
+ */
+function oleBitmapToDataUrl(im: OleImageData): string | null {
+  const canvas = document.createElement('canvas')
+  canvas.width = im.width
+  canvas.height = im.height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  // ArrayBufferLike 캐스팅: 워커에서 transfer 로 온 버퍼라 lib.dom 의
+  // ImageData 가 요구하는 ArrayBuffer 로 좁혀줘야 한다 (복사는 안 한다).
+  const bytes = new Uint8ClampedArray(
+    im.rgba.buffer as ArrayBuffer, im.rgba.byteOffset, im.rgba.byteLength)
+  ctx.putImageData(new ImageData(bytes, im.width, im.height), 0, 0)
+  return canvas.toDataURL('image/png')
+}
+
+/** OLE 이미지가 차지하는 화면좌표(px) 범위. Y 뒤집기까지 반영한다. */
+function oleImagePxBounds(
+  images: OleImageData[], pxPerUnit: number,
+): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const im of images) {
+    minX = Math.min(minX, im.minX * pxPerUnit)
+    maxX = Math.max(maxX, im.maxX * pxPerUnit)
+    minY = Math.min(minY, -im.maxY * pxPerUnit)   // DXF Y+ → 화면 Y-
+    maxY = Math.max(maxY, -im.minY * pxPerUnit)
+  }
+  return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null
+}
+
+/**
+ * OLE2FRAME 에서 꺼낸 비트맵을 tldraw 이미지 asset + shape 으로 올린다.
+ *
+ * 좌표 변환은 선·글자와 **똑같이** 걸어야 한다 (scale → Y 뒤집기 → offset).
+ * 안 그러면 도면은 맞는데 사진만 엉뚱한 데 가서 자동 맞춤이 통째로 줌아웃한다.
+ *
+ * 반드시 맨 뒤로 보낸다 — 배치도 비트맵은 도면 전체를 덮는 크기라 위에 있으면
+ * 선과 글자를 전부 가린다.
+ */
+function createOleImageShapes(
+  editor: Editor,
+  images: OleImageData[],
+  pxPerUnit: number,
+  offsetX: number,
+  offsetY: number,
+  fingerprint: string,
+  fileName: string,
+): number {
+  let made = 0
+  for (let i = 0; i < images.length; i++) {
+    const im = images[i]
+    let dataUrl: string | null = null
+    try {
+      dataUrl = oleBitmapToDataUrl(im)
+    } catch (err) {
+      console.error(`[CAD V2] OLE 이미지 ${i + 1} 변환 실패:`, err)
+    }
+    if (!dataUrl) continue
+
+    const assetId = AssetRecordType.createId()
+    const shapeId = createShapeId()
+    editor.createAssets([{
+      id: assetId,
+      typeName: 'asset',
+      type: 'image',
+      props: {
+        name: `${fileName} (OLE ${i + 1})`, src: dataUrl,
+        w: im.width, h: im.height, mimeType: 'image/png', isAnimated: false,
+      },
+      meta: { dxfFingerprint: fingerprint },
+    }])
+    editor.createShape({
+      id: shapeId,
+      type: 'image',
+      x: im.minX * pxPerUnit - offsetX,
+      y: -im.maxY * pxPerUnit - offsetY,
+      props: {
+        assetId,
+        w: Math.max((im.maxX - im.minX) * pxPerUnit, 1),
+        h: Math.max((im.maxY - im.minY) * pxPerUnit, 1),
+      },
+      meta: { dxfFingerprint: fingerprint, dxfLayer: im.layer },
+    })
+    editor.sendToBack([shapeId])
+    made++
+
+    console.log(`[CAD V2] OLE 이미지 ${i + 1}: ${im.width}x${im.height}px, ` +
+      `모델 (${im.minX.toFixed(0)},${im.minY.toFixed(0)})~(${im.maxX.toFixed(0)},${im.maxY.toFixed(0)}), ` +
+      `레이어 "${im.layer}"`)
+    if (im.validRows < im.height) {
+      // 변환기(dwgdxf)가 고정 버퍼에서 바이너리를 잘라 아래쪽 줄만 복원된다.
+      console.warn(`[CAD V2] OLE 이미지 ${i + 1}: ${im.validRows}/${im.height}줄만 복원 — ` +
+        `변환기가 임베디드 바이너리를 잘랐다.`)
+    }
+  }
+  return made
+}
+
 export async function commitCadImportV2(
   editor: Editor,
   dxfText: string,
@@ -2802,6 +2905,7 @@ export async function commitCadImportV2(
   let workerLtscale: number
   let workerLayers: Record<string, LayerInfo>
   let workerSkipped: SkipReport
+  let oleImages: OleImageData[]
   try {
     const result = await runFastWorker(dxfText, layerArr, onProgress, space)
     polylines = result.polylines
@@ -2812,6 +2916,7 @@ export async function commitCadImportV2(
     workerLtscale = result.ltscale ?? 1
     workerLayers = result.layers || {}
     workerSkipped = result.skipped || {}
+    oleImages = result.oleImages || []
   } catch (workerErr) {
     console.error(`[CAD V2] Worker 실패:`, workerErr)
     onProgress?.('파싱 실패')
@@ -2949,8 +3054,9 @@ export async function commitCadImportV2(
   // 세그먼트가 0개여도 글자나 해치가 있으면 계속 간다.
   // 범례/주기 시트처럼 선이 하나도 없는 DXF 가 실제로 있고,
   // 예전엔 여기서 그냥 돌아가 캔버스가 비어 있었다.
-  if (rawSegsAll.length === 0 && workerTexts.length === 0 && workerHatches.length === 0) {
-    console.warn('[CAD V2] 세그먼트/텍스트/해치 모두 0개 → 종료')
+  if (rawSegsAll.length === 0 && workerTexts.length === 0 && workerHatches.length === 0
+      && oleImages.length === 0) {
+    console.warn('[CAD V2] 세그먼트/텍스트/해치/이미지 모두 0개 → 종료')
     return 0
   }
 
@@ -3025,8 +3131,9 @@ export async function commitCadImportV2(
     minX = b.minX; maxX = b.maxX; minY = b.minY; maxY = b.maxY
   } else {
     const b = computeTextHatchBBox(workerTexts, workerHatches, scale)
+      ?? oleImagePxBounds(oleImages, scale)
     if (!b) {
-      console.warn('[CAD V2] 세그먼트도 쓸 만한 텍스트/해치 좌표도 없음 → 종료')
+      console.warn('[CAD V2] 세그먼트도 쓸 만한 텍스트/해치/이미지 좌표도 없음 → 종료')
       return 0
     }
     minX = b.minX; maxX = b.maxX; minY = b.minY; maxY = b.maxY
@@ -3058,6 +3165,14 @@ export async function commitCadImportV2(
   // 10. Fingerprint
   const entityCount = polylines.length
   const fingerprint = dxfFingerprint(fileName, fileSize, entityCount)
+
+  // 10-0. OLE2FRAME 래스터 이미지. AutoCAD 에서 DWG 하나만 열어도 같이 뜨는
+  // 그 배치도/항공사진이다 — 선보다 먼저 만들어 맨 뒤에 깔아둔다.
+  if (oleImages.length > 0) {
+    const madeImages = createOleImageShapes(
+      editor, oleImages, scale * autoScale, offsetX, offsetY, fingerprint, fileName)
+    console.log(`[CAD V2] OLE 이미지 ${madeImages}/${oleImages.length}개 배치`)
+  }
 
   // 10-1. 텍스트 + 해치 좌표 변환 (viewport 또는 세그먼트 bbox 기반 필터)
   const textScale = scale * autoScale
