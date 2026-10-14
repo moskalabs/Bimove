@@ -2099,7 +2099,6 @@ function computeTextHatchBBox(
   }
 
   for (const h of workerHatches) {
-    if (h.layer?.toUpperCase() === 'DEFPOINTS') continue
     if (!isFinite(h.cx) || !isFinite(h.cy)) continue
     if (Math.abs(h.cx) >= COORD_LIMIT || Math.abs(h.cy) >= COORD_LIMIT) continue
     add(h.cx * scale, -h.cy * scale)
@@ -2138,13 +2137,12 @@ function computeBBox(segs: RawSeg[], pLoPct: number, pHiPct: number) {
   return { minX, maxX, minY, maxY, n: cnt }
 }
 
-/** 폴리라인 → RawSeg 변환 (Y-flip, 스케일, DEFPOINTS 제외, ACI 색상, 선종류) */
+/** 폴리라인 → RawSeg 변환 (Y-flip, 스케일, ACI 색상, 선종류) */
 function polylinesToSegments(polylines: PolylineData[], scale: number): RawSeg[] {
   const segs: RawSeg[] = []
   for (const pl of polylines) {
     const verts = pl.vertices
     if (!verts || verts.length < 2) continue
-    if (pl.layer?.toUpperCase() === 'DEFPOINTS') continue
     const color = pl.colorNumber >= 0 ? aciToHex(pl.colorNumber) : undefined
     for (let i = 0; i < verts.length - 1; i++) {
       const x1 = verts[i][0] * scale
@@ -2470,12 +2468,15 @@ export function removeOutlierSegments(
 
 /** Worker 텍스트 → px 좌표 변환 (Y-flip + scale)
  *
- *  DEFPOINTS 는 지오메트리만 걸러낸다 (치수 정의점 — 어차피 안 보이는 POINT).
- *  텍스트는 남긴다. AutoCAD 의 DEFPOINTS 는 "출력 안 함" 이지 "숨김" 이 아니라
- *  화면에는 그대로 보이고, 실무에서 도면 제목을 여기에 올려놓는 경우가 흔하다.
- *  (예: '평 면 (1/60)' h=2970, 'COVER' h=1980 — 도면에서 가장 큰 글자들)
- *  예전엔 여기서 통째로 버려서 제목만 쏙 사라졌고 로그도 안 남았다.
- *  (지금은 없어진 레거시 V1 임포트도 처음부터 이 규칙이었다.) */
+ *  DEFPOINTS 는 아무것도 걸러내지 않는다 — 글자도, 도형도, 해치도.
+ *  AutoCAD 의 DEFPOINTS 는 "출력 안 함" 이지 "숨김" 이 아니라 화면에는 그대로
+ *  보인다. Bimove 는 플로터가 아니라 뷰어니까 AutoCAD 화면을 기준으로 맞춘다.
+ *
+ *  예전엔 "비인쇄 레이어니까" 라는 이유만으로 지오메트리를 뺐는데, 실무 도면은
+ *  도면틀과 제목을 통째로 여기에 올려놓는다. 24.11_성수_포레스트 파일은 모델공간
+ *  DEFPOINTS 에 도면틀 네모 107개와 제목 MANUAL/COVER/FORM 이 들어 있었다.
+ *  도형만 빼면 틀이 사라져 제목이 허공에 뜨고, 더 나쁘게는 bbox 가 쪼그라들어
+ *  그 제목들까지 "도면 범위 밖 텍스트" 로 같이 잘려 나갔다. */
 /**
  * @param minHeight 텍스트 최소 높이(px). 캔버스 span 에 비례한 값을 넘긴다 —
  *   computeMinTextHeight() 참고.
@@ -2554,7 +2555,6 @@ function packHatchPattern(hh: PxHatch) {
 /** Worker 해치 → px 좌표 변환 (Y-flip + scale, SVG path 변환) */
 function transformWorkerHatches(workerHatches: HatchData[], textScale: number): PxHatch[] {
   return workerHatches
-    .filter(h => h.layer?.toUpperCase() !== 'DEFPOINTS')
     .filter(h => Math.abs(h.cx) < COORD_LIMIT && Math.abs(h.cy) < COORD_LIMIT && isFinite(h.cx) && isFinite(h.cy))
     .map(h => {
       const transformedPath = h.pathData.replace(
@@ -3097,13 +3097,6 @@ export async function commitCadImportV2(
 
   // ── 100+ segs: DxfGroup 모드 ──
   if (finalSegs.length >= 100) {
-    // DEFPOINTS 레이어 필터링 (AutoCAD 비출력 시스템 레이어)
-    const preFilterCount = finalSegs.length
-    finalSegs = finalSegs.filter(s => (s.layer || '0').toUpperCase() !== 'DEFPOINTS')
-    if (finalSegs.length < preFilterCount) {
-      console.log(`[CAD V2] DEFPOINTS 필터: ${preFilterCount} → ${finalSegs.length} (${preFilterCount - finalSegs.length}개 제거)`)
-    }
-
     // Linetype 패턴 → dasharray 변환 맵 구축
     const linetypeDashMap = new Map<string, string>()
     for (const lt of workerLinetypes) {

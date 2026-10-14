@@ -8,7 +8,7 @@
  *
  * 예전 transformWorkerTexts 는 DEFPOINTS 텍스트를 통째로 걸러냈고 로그도
  * 남기지 않았다 → 도면에서 제목만 쏙 사라지고 흔적이 없었다.
- * 지오메트리(치수 정의점)는 계속 걸러내는 게 맞다.
+ * 지오메트리도 마찬가지다 — 도면틀이 전부 DEFPOINTS 인 파일이 흔하다.
  */
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest'
 import { commitCadImportV2, unpackTextsJson } from '../../lib/dxf'
@@ -118,10 +118,10 @@ describe('DEFPOINTS 텍스트', () => {
     expect(got[0].h).toBe(200)
   })
 
-  it('DEFPOINTS 지오메트리는 계속 걸러낸다 (치수 정의점)', async () => {
+  it('DEFPOINTS 지오메트리도 그린다 (AutoCAD 화면 기준)', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
     const created: Shape[] = []
-    // 'A' 120개 + DEFPOINTS 세로선 40개
+    // 'A' 120개 + DEFPOINTS 세로선 40개 — AutoCAD 는 둘 다 화면에 그린다
     let dxf = makeDxf([])
     const extra = Array.from({ length: 40 }, (_, i) =>
       `0\nLINE\n8\nDEFPOINTS\n10\n${i * 10}\n20\n0\n30\n0\n11\n${i * 10}\n21\n1000\n31\n0\n`,
@@ -134,6 +134,29 @@ describe('DEFPOINTS 텍스트', () => {
 
     const layersUsed = new Set(created.map(s => s.meta.dxfLayer))
     expect(layersUsed.has('A')).toBe(true)
-    expect(layersUsed.has('DEFPOINTS')).toBe(false)
+    expect(layersUsed.has('DEFPOINTS')).toBe(true)
+  })
+
+  // 성수 파일에서 실제로 터진 경로: DEFPOINTS 도형을 빼면 bbox 가 본체만큼
+  // 쪼그라들고, 그 밖으로 밀려난 DEFPOINTS 제목이 "도면 범위 밖 텍스트" 로
+  // 같이 잘려 나갔다. 틀이 bbox 를 잡아줘야 제목이 산다.
+  it('DEFPOINTS 도면틀이 bbox 를 넓혀 멀리 있는 제목을 살린다', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const created: Shape[] = []
+    let dxf = makeDxf([{ layer: 'DEFPOINTS', text: 'MANUAL', h: 300, x: -2500, y: 600 }])
+    // 본체('A' 는 x 0~1000)보다 훨씬 왼쪽까지 뻗은 DEFPOINTS 도면틀
+    const frame = '0\nLINE\n8\nDEFPOINTS\n10\n-3000\n20\n0\n30\n0\n11\n1000\n21\n0\n31\n0\n'
+    dxf = dxf.replace('0\nENDSEC\n0\nEOF\n', frame + '0\nENDSEC\n0\nEOF\n')
+
+    await commitCadImportV2(
+      fakeEditor(created), dxf, new Set(['A', 'DEFPOINTS']), 'test.dxf', 1234, false, undefined, null,
+    )
+
+    const got: string[] = []
+    for (const sh of created) {
+      if (!sh.props?.textsJson) continue
+      for (const t of unpackTextsJson(sh.props.textsJson) as Array<{ t: string }>) got.push(t.t)
+    }
+    expect(got).toContain('MANUAL')
   })
 })

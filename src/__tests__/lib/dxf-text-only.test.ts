@@ -153,13 +153,13 @@ describe('commitCadImportV2 — 선이 없는 도면', () => {
     expect(textsIn(editor._created())).toEqual(['표제란'])
   })
 
-  it('DEFPOINTS 해치만 있으면 올리지 않는다', async () => {
+  it('DEFPOINTS 해치만 있어도 올린다 (AutoCAD 화면 기준)', async () => {
     workerResult.hatches = [hatch(0, 0, 'DEFPOINTS'), hatch(100, 0, 'defpoints')]
     const editor = createMockEditor()
     const count = await commitCadImportV2(editor as never, 'dummy', new Set(['DEFPOINTS']), 'd.dxf', 100, false)
 
-    expect(count).toBe(0)
-    expect(hatchCount(editor._created())).toBe(0)
+    expect(count).toBeGreaterThan(0)
+    expect(hatchCount(editor._created())).toBe(2)
   })
 
   it('전부 비어 있으면 0 을 돌려준다 (기존 동작)', async () => {
