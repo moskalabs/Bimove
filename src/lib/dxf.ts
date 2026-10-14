@@ -2062,8 +2062,8 @@ function nthElement(arr: Float64Array, k: number): number {
  * 비어 있었다.
  *
  * 좌표 변환은 transformWorkerTexts/transformWorkerHatches 와 같아야 한다
- * (x * scale, y 는 Y-flip 해서 -y * scale). 같은 COORD_LIMIT 필터와
- * DEFPOINTS 제외도 그대로 따른다 — 여기서 걸러질 엔티티가 bbox 를 늘려놓으면
+ * (x * scale, y 는 Y-flip 해서 -y * scale). 같은 COORD_LIMIT 필터를 그대로
+ * 따른다 — 여기서 걸러질 엔티티가 bbox 를 늘려놓으면
  * 쓸데없이 넓은 캔버스가 나온다.
  *
  * 글자는 앵커 점만 쓰면 박스가 글리프를 못 덮으므로 높이/폭만큼 넓힌다.
