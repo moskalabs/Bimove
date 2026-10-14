@@ -1,6 +1,6 @@
 import DxfParser from 'dxf-parser'
 // dxf npm package no longer used — replaced by custom dxf-fast-worker
-import { convertDwgToDxf, CDN_WASM_BASE } from 'dwgdxf'
+import { convertDwgToDxf } from 'dwgdxf'
 import { AssetRecordType, createShapeId, type Editor } from 'tldraw'
 import { getScaleConfig } from './scaleConfig'
 import { reloadForStaleChunk } from './lazyWithReload'
@@ -986,10 +986,17 @@ function collectTextsWithBlocks(
 
 // getImportedFingerprints 제거됨 — importDxf 레거시와 함께 제거
 
-/** DWG 바이너리를 DXF 바이트로 변환 (dwgdxf WASM) */
+/**
+ * DWG 바이너리를 DXF 바이트로 변환 (dwgdxf WASM).
+ *
+ * CDN(jsDelivr) 대신 public/dwgdxf/ 에 깔린 걸 쓴다. 거기 있는 wasm 은
+ * OLE 데이터 상한(10MB)을 풀어놓은 것이라, 큰 배치도 스캔이 잘리지 않는다.
+ * 만드는 쪽은 scripts/patch-dwgdxf-wasm.mjs (postinstall/prebuild).
+ */
 export async function dwgToDxfBytes(buffer: ArrayBuffer): Promise<Uint8Array> {
   const dwgBytes = new Uint8Array(buffer)
-  return await convertDwgToDxf(dwgBytes, { wasmBase: CDN_WASM_BASE })
+  const wasmBase = new URL('dwgdxf', document.baseURI).href
+  return await convertDwgToDxf(dwgBytes, { wasmBase })
 }
 
 /** raw DXF 바이트를 인코딩 감지 후 텍스트로 디코딩 */

@@ -4,7 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "patch:wasm": "node scripts/patch-dwgdxf-wasm.mjs",
+    "postinstall": "node scripts/patch-dwgdxf-wasm.mjs",
+    "predev": "node scripts/patch-dwgdxf-wasm.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/patch-dwgdxf-wasm.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
