@@ -18,7 +18,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   hexChunksToBytes, rectFromCorners, readOleFrameRect,
-  findCompoundDoc, openCompound, decodeBmp, readOleBitmap,
+  findCompoundDoc, openCompound, decodeBmp, decodeDib, findDibHeader,
+  sniffEncodedImage, readOleBitmap, readOleImage,
 } from '../../lib/dxfOle'
 // Worker 모듈을 static import — jsdom 에선 self === window 라 onmessage 가 붙는다
 import '../../lib/dxf-fast-worker'
@@ -343,9 +344,16 @@ describe('readOleBitmap', () => {
 const g = (c: number) => String(c).padStart(3)
 
 type OleOut = {
-  layer: string; width: number; height: number; validRows: number
+  layer: string; width: number; height: number
   minX: number; minY: number; maxX: number; maxY: number
-  rgba: Uint8Array
+  kind: 'rgba' | 'encoded'
+  /** kind === 'rgba' 일 때만 */
+  validRows?: number
+  rgba?: Uint8Array
+  /** kind === 'encoded' 일 때만 */
+  mime?: string
+  bytes?: Uint8Array
+  truncated?: boolean
 }
 
 function parseViaWorker(dxfText: string, selectedLayers: string[]): Promise<OleOut[]> {
@@ -413,13 +421,14 @@ describe('워커: OLE2FRAME', () => {
     expect(im.layer).toBe('IMG')
     expect(im.width).toBe(3)
     expect(im.height).toBe(2)
+    expect(im.kind).toBe('rgba')
     expect(im.validRows).toBe(2)
     // gc 10/11 의 1×1 쓰레기가 아니라 덩어리 앞머리의 꼭지점을 썼어야 한다
     expect(im.minX).toBe(100)
     expect(im.maxX).toBe(300)
     expect(im.minY).toBe(50)
     expect(im.maxY).toBe(200)
-    expect([...im.rgba.subarray(0, 4)]).toEqual([3, 2, 1, 255])
+    expect([...im.rgba!.subarray(0, 4)]).toEqual([3, 2, 1, 255])
   })
 
   it('덩어리가 이미지가 아니면 조용히 건너뛴다 (임포트 전체를 날리지 않는다)', async () => {
@@ -427,5 +436,244 @@ describe('워커: OLE2FRAME', () => {
     junk.fill(0x41)
     const images = await parseViaWorker(makeOleDxf(junk), ['IMG'])
     expect(images.length).toBe(0)
+  })
+})
+
+// ───────── 파일 헤더 없는 DIB · 브라우저가 푸는 포맷 ─────────
+
+/** makeBmp 와 같은 그림을, 'BM' 파일 헤더 없이 BITMAPINFOHEADER 부터. */
+function makeDibOnly(): Uint8Array {
+  return makeBmp().subarray(14)
+}
+
+/** 2x2 8bpp 팔레트 DIB (상향식). 팔레트 오프셋 계산을 잡으려고 둔다. */
+function makePaletteDib(): Uint8Array {
+  const colors = [[0, 0, 0], [255, 0, 0], [0, 255, 0], [0, 0, 255]]   // RGB
+  const stride = 4            // 폭 2 → 2바이트지만 4의 배수로 올림
+  const dib = new Uint8Array(40 + colors.length * 4 + stride * 2)
+  const dv = new DataView(dib.buffer)
+  dv.setUint32(0, 40, true)
+  dv.setInt32(4, 2, true)      // width
+  dv.setInt32(8, 2, true)      // height > 0 → 상향식
+  dv.setUint16(12, 1, true)    // planes
+  dv.setUint16(14, 8, true)    // bpp
+  dv.setUint32(16, 0, true)    // BI_RGB
+  dv.setUint32(32, colors.length, true)   // biClrUsed
+  colors.forEach(([r, g_, b], i) => {
+    const o = 40 + i * 4
+    dib[o] = b; dib[o + 1] = g_; dib[o + 2] = r; dib[o + 3] = 0   // BGRA
+  })
+  const pix = 40 + colors.length * 4
+  dib[pix] = 1; dib[pix + 1] = 2                 // 파일 0번 줄 = 아래 줄: 빨강, 초록
+  dib[pix + stride] = 3; dib[pix + stride + 1] = 0  // 파일 1번 줄 = 위 줄: 파랑, 검정
+  return dib
+}
+
+function makePng(width: number, height: number): Uint8Array {
+  const out = new Uint8Array(8 + 25)
+  out.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
+  const dv = new DataView(out.buffer)
+  dv.setUint32(8, 13, false)                       // IHDR 길이
+  out.set([0x49, 0x48, 0x44, 0x52], 12)            // 'IHDR'
+  dv.setUint32(16, width, false)
+  dv.setUint32(20, height, false)
+  out[24] = 8; out[25] = 2                         // 8bit, truecolor
+  return out
+}
+
+function makeJpeg(width: number, height: number): Uint8Array {
+  const out = new Uint8Array(2 + 18 + 19 + 2)
+  const dv = new DataView(out.buffer)
+  let p = 0
+  out[p++] = 0xff; out[p++] = 0xd8                 // SOI
+  out[p++] = 0xff; out[p++] = 0xe0                 // APP0
+  dv.setUint16(p, 16, false); p += 16              // 길이 16 (자신 포함)
+  out[p++] = 0xff; out[p++] = 0xc0                 // SOF0
+  dv.setUint16(p, 17, false); p += 2               // 길이 17
+  out[p++] = 8                                      // precision
+  dv.setUint16(p, height, false); p += 2
+  dv.setUint16(p, width, false); p += 2
+  out[p++] = 3                                      // 컴포넌트 3개
+  p += 9
+  out[p++] = 0xff; out[p++] = 0xd9                 // EOI
+  return out.subarray(0, p)
+}
+
+function makeGif(width: number, height: number): Uint8Array {
+  const out = new Uint8Array(13)
+  out.set([0x47, 0x49, 0x46, 0x38, 0x39, 0x61], 0)   // 'GIF89a'
+  const dv = new DataView(out.buffer)
+  dv.setUint16(6, width, true)
+  dv.setUint16(8, height, true)
+  return out
+}
+
+/** 앞에 쓰레기 머리말을 붙인다 (OlePres000 의 가변 메타파일 헤더 흉내). */
+function withPreamble(body: Uint8Array, len: number): Uint8Array {
+  const out = new Uint8Array(len + body.byteLength)
+  for (let i = 0; i < len; i++) out[i] = (i * 13 + 7) & 0xff
+  out.set(body, len)
+  return out
+}
+
+describe('decodeDib (파일 헤더 없는 DIB)', () => {
+  it('BITMAPINFOHEADER 부터 시작하는 DIB 를 읽는다', () => {
+    const bm = decodeDib(makeDibOnly())
+    expect(bm).not.toBeNull()
+    expect(bm!.width).toBe(3)
+    expect(bm!.height).toBe(2)
+    expect(bm!.validRows).toBe(2)
+    // 상향식이므로 top-down 0번 줄은 파일의 둘째 줄 (BGR → RGB 뒤집기까지 확인)
+    expect([...bm!.rgba.subarray(0, 12)])
+      .toEqual([3, 2, 1, 255, 6, 5, 4, 255, 9, 8, 7, 255])
+  })
+
+  it('8bpp 팔레트의 픽셀 오프셋을 팔레트 크기만큼 밀어서 읽는다', () => {
+    const bm = decodeDib(makePaletteDib())
+    expect(bm).not.toBeNull()
+    expect(bm!.width).toBe(2)
+    // 위 줄 = 파일 둘째 줄 = 파랑, 검정
+    expect([...bm!.rgba.subarray(0, 8)]).toEqual([0, 0, 255, 255, 0, 0, 0, 255])
+    // 아래 줄 = 파일 첫 줄 = 빨강, 초록
+    expect([...bm!.rgba.subarray(8, 16)]).toEqual([255, 0, 0, 255, 0, 255, 0, 255])
+  })
+
+  it('DIB 가 아니면 null', () => {
+    expect(decodeDib(new Uint8Array(100))).toBeNull()
+  })
+})
+
+describe('findDibHeader', () => {
+  it('가변 머리말 뒤의 BITMAPINFOHEADER 를 찾는다', () => {
+    expect(findDibHeader(withPreamble(makeDibOnly(), 24))).toBe(24)
+  })
+
+  it('머리말이 없으면 0', () => {
+    expect(findDibHeader(makeDibOnly())).toBe(0)
+  })
+
+  it('DIB 가 없으면 -1 (쓰레기를 이미지로 착각하지 않는다)', () => {
+    const junk = new Uint8Array(512)
+    for (let i = 0; i < junk.length; i++) junk[i] = (i * 31 + 5) & 0xff
+    expect(findDibHeader(junk)).toBe(-1)
+  })
+})
+
+describe('sniffEncodedImage', () => {
+  it('PNG 의 IHDR 에서 치수를 읽는다', () => {
+    expect(sniffEncodedImage(makePng(640, 480)))
+      .toEqual({ mime: 'image/png', width: 640, height: 480, offset: 0 })
+  })
+
+  it('JPEG 는 APP0 를 건너뛰고 SOF0 에서 치수를 읽는다', () => {
+    expect(sniffEncodedImage(makeJpeg(1792, 2326)))
+      .toEqual({ mime: 'image/jpeg', width: 1792, height: 2326, offset: 0 })
+  })
+
+  it('GIF 는 논리 화면 크기를 읽는다 (리틀엔디언)', () => {
+    expect(sniffEncodedImage(makeGif(320, 200)))
+      .toEqual({ mime: 'image/gif', width: 320, height: 200, offset: 0 })
+  })
+
+  it('가변 머리말 뒤에 묻힌 매직도 찾아 오프셋을 알려준다', () => {
+    const enc = sniffEncodedImage(withPreamble(makeJpeg(80, 60), 37))
+    expect(enc?.mime).toBe('image/jpeg')
+    expect(enc?.offset).toBe(37)
+    expect(enc?.width).toBe(80)
+  })
+
+  it('이미지가 없으면 null', () => {
+    const junk = new Uint8Array(512)
+    for (let i = 0; i < junk.length; i++) junk[i] = (i * 17 + 3) & 0xff
+    expect(sniffEncodedImage(junk)).toBeNull()
+  })
+
+  it('프레임 헤더 없이 스캔이 시작되는 JPEG 는 거부한다', () => {
+    // FFD8 FF DA (SOI 직후 SOS) — 치수를 알 길이 없으니 넘기면 안 된다
+    expect(sniffEncodedImage(new Uint8Array([
+      0xff, 0xd8, 0xff, 0xda, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ]))).toBeNull()
+  })
+})
+
+describe('readOleImage', () => {
+  it('OlePres000 의 raw DIB(파일 헤더 없음)를 꺼낸다', () => {
+    const blob = makeOleBlob(QUAD, makeCompound('\x02OlePres000', withPreamble(makeDibOnly(), 40)))
+    const img = readOleImage(blob)
+    expect(img?.kind).toBe('rgba')
+    expect(img?.width).toBe(3)
+  })
+
+  it('CONTENTS 의 JPEG 는 풀지 않고 바이트째로 넘긴다', () => {
+    const jpg = makeJpeg(1024, 768)
+    const blob = makeOleBlob(QUAD, makeCompound('CONTENTS', jpg))
+    const img = readOleImage(blob)
+    expect(img?.kind).toBe('encoded')
+    if (img?.kind !== 'encoded') throw new Error('encoded 가 아니다')
+    expect(img.mime).toBe('image/jpeg')
+    expect(img.width).toBe(1024)
+    expect(img.height).toBe(768)
+    expect(img.truncated).toBe(false)
+    expect([...img.bytes.subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff])
+  })
+
+  it('Ole10Native(Package) 의 가변 라벨·경로 뒤에 있는 PNG 도 찾는다', () => {
+    // 실제 Package 는 u32 크기 + 라벨\0 + 경로\0 + ... 뒤에 파일이 온다.
+    // 길이가 들쭉날쭉해서 고정 오프셋으로는 못 잡는다.
+    const png = makePng(500, 400)
+    const label = new TextEncoder().encode('plan.png\0C:\\work\\plan.png\0')
+    const native = new Uint8Array(4 + label.byteLength + png.byteLength)
+    new DataView(native.buffer).setUint32(0, native.byteLength, true)
+    native.set(label, 4)
+    native.set(png, 4 + label.byteLength)
+
+    const img = readOleImage(makeOleBlob(QUAD, makeCompound('\x01Ole10Native', native)))
+    expect(img?.kind).toBe('encoded')
+    if (img?.kind !== 'encoded') throw new Error('encoded 가 아니다')
+    expect(img.mime).toBe('image/png')
+    expect(img.width).toBe(500)
+    expect(img.height).toBe(400)
+  })
+
+  it('잘린 encoded 이미지는 truncated 로 표시하고 받은 데까지만 넘긴다', () => {
+    const jpg = makeJpeg(200, 100)
+    const payload = new Uint8Array(900)      // 섹터 두 개짜리로 키운다
+    payload.set(jpg, 0)
+    const doc = makeCompound('CONTENTS', payload)
+    const full = makeOleBlob(QUAD, doc)
+    // 데이터 둘째 섹터가 반만 들어온 상태
+    const cut = full.subarray(0, 128 + 3 * 512 + 200)
+
+    const img = readOleImage(cut)
+    expect(img?.kind).toBe('encoded')
+    if (img?.kind !== 'encoded') throw new Error('encoded 가 아니다')
+    expect(img.truncated).toBe(true)
+    expect(img.bytes.byteLength).toBeLessThan(payload.byteLength)
+    expect(img.bytes.byteLength).toBeGreaterThan(0)
+  })
+
+  it('readOleBitmap 은 encoded 를 rgba 로 둔갑시키지 않는다 (null)', () => {
+    const blob = makeOleBlob(QUAD, makeCompound('CONTENTS', makePng(10, 10)))
+    expect(readOleBitmap(blob)).toBeNull()
+    expect(readOleImage(blob)?.kind).toBe('encoded')
+  })
+})
+
+describe('워커: OLE2FRAME 의 JPEG/PNG', () => {
+  it('JPEG 는 rgba 로 풀지 않고 mime 과 바이트로 넘어온다', async () => {
+    const jpg = makeJpeg(1792, 2326)
+    const blob = makeOleBlob(QUAD, makeCompound('CONTENTS', jpg))
+    const images = await parseViaWorker(makeOleDxf(blob), ['IMG'])
+    expect(images.length).toBe(1)
+    const im = images[0]
+    expect(im.kind).toBe('encoded')
+    expect(im.mime).toBe('image/jpeg')
+    expect(im.width).toBe(1792)
+    expect(im.height).toBe(2326)
+    expect(im.rgba).toBeUndefined()
+    expect([...im.bytes!.subarray(0, 2)]).toEqual([0xff, 0xd8])
+    // 좌표는 BMP 경로와 똑같이 덩어리 앞머리의 꼭지점을 쓴다
+    expect(im.minX).toBe(100)
+    expect(im.maxY).toBe(200)
   })
 })

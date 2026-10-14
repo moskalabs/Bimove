@@ -10,7 +10,7 @@
  * - Zero npm dependencies (dxf-shared is internal)
  */
 
-import { hexChunksToBytes, readOleBitmap, readOleFrameRect, rectFromCorners } from './dxfOle'
+import { hexChunksToBytes, readOleImage, readOleFrameRect, rectFromCorners } from './dxfOle'
 import { aciToHex, trueColorToHex, detectPadding, makeGcFormatter, decodeDxfSpecialChars, cleanMtextFormatting, defLineSpacing, sampleArcDeg, type HatchPatternLine, type ParseSpace } from './dxf-shared'
 
 export type { HatchPatternLine, ParseSpace }
@@ -95,18 +95,30 @@ export type SkipReport = Record<string, number>
  * OLE2FRAME 안에서 꺼낸 래스터 이미지. 좌표는 DXF 모델 좌표 그대로다
  * (Y-flip 전) — 메인 스레드가 다른 도형과 같은 변환을 걸어 배치한다.
  *
- * rgba 는 transferable 로 넘긴다. 1792x2326 짜리가 16MB 라 복사하면
- * 워커와 메인에 같은 게 두 벌 생긴다.
+ * `rgba`(BMP/DIB) 든 `bytes`(JPEG/PNG/GIF) 든 transferable 로 넘긴다.
+ * 1792x2326 픽셀이 16MB 라 복사하면 워커와 메인에 같은 게 두 벌 생긴다.
  */
 export type OleImageData = {
   layer: string
   width: number
   height: number
-  rgba: Uint8Array
-  /** 데이터가 잘려 못 채운 줄이 있으면 실제로 채운 줄 수 */
-  validRows: number
   minX: number; minY: number; maxX: number; maxY: number
-}
+} & (
+  | {
+    kind: 'rgba'
+    rgba: Uint8Array
+    /** 데이터가 잘려 못 채운 줄이 있으면 실제로 채운 줄 수 */
+    validRows: number
+  }
+  | {
+    kind: 'encoded'
+    /** image/jpeg · image/png · image/gif */
+    mime: string
+    bytes: Uint8Array
+    /** 변환기가 자른 데이터면 true — 브라우저 디코딩이 실패할 수도 있다 */
+    truncated: boolean
+  }
+)
 
 export type WorkerOut =
   /** 모듈이 실제로 평가되어 핸들러가 돌기 시작했다는 신호. 메인 스레드가
@@ -2477,8 +2489,8 @@ function parseOleFrame(
   if (chunks.length === 0) return null
 
   const blob = hexChunksToBytes(chunks)
-  const bmp = readOleBitmap(blob)
-  if (!bmp) return null
+  const img = readOleImage(blob)
+  if (!img) return null
 
   const num = (code: number): number => {
     const pat = `\n${gc(code)}\n`
@@ -2489,10 +2501,12 @@ function parseOleFrame(
     ?? readOleFrameRect(blob)
   if (!rect) return null
 
-  return {
-    layer, width: bmp.width, height: bmp.height, rgba: bmp.rgba, validRows: bmp.validRows,
-    minX: rect.minX, minY: rect.minY, maxX: rect.maxX, maxY: rect.maxY,
-  }
+  const where = { minX: rect.minX, minY: rect.minY, maxX: rect.maxX, maxY: rect.maxY }
+  return img.kind === 'rgba'
+    ? { layer, width: img.width, height: img.height, ...where,
+      kind: 'rgba', rgba: img.rgba, validRows: img.validRows }
+    : { layer, width: img.width, height: img.height, ...where,
+      kind: 'encoded', mime: img.mime, bytes: img.bytes, truncated: img.truncated }
 }
 
 // ===== Worker message handler =====
@@ -2521,7 +2535,8 @@ self.onmessage = (e: MessageEvent<ParseRequest>) => {
       layers: result.layers,
       skipped: result.skipped,
       oleImages: result.oleImages,
-    }, result.oleImages.map((i) => i.rgba.buffer))
+    }, result.oleImages.map((i) =>
+      (i.kind === 'rgba' ? i.rgba.buffer : i.bytes.buffer) as ArrayBuffer))
   } catch (err) {
     post({ type: 'error', message: err instanceof Error ? err.message : String(err) })
   }

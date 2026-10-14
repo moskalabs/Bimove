@@ -2786,12 +2786,31 @@ export class ViewportClipMissedError extends Error {
 }
 
 /**
- * OLE 비트맵 → PNG data URL.
+ * OLE 이미지 → data URL.
  *
  * data URL 로 굽는 이유: blob URL 은 탭을 새로고침하면 죽는다. 도면을 저장했다
  * 다시 열면 이미지 shape 만 깨진 채 남는다 (pdfImport 도 같은 이유로 data URL).
+ *
+ * JPEG/PNG/GIF 는 바이트를 그대로 base64 로 감싼다 — 캔버스를 거쳐 PNG 로
+ * 다시 구우면 화질만 깎이고 메모리도 두 배로 쓴다.
  */
-function oleBitmapToDataUrl(im: OleImageData): string | null {
+function oleImageToDataUrl(im: OleImageData): string | null {
+  if (im.kind === 'encoded') return bytesToDataUrl(im.bytes, im.mime)
+  return oleBitmapToDataUrl(im)
+}
+
+/** 바이트 → base64 data URL. 수십 MB 라도 스택을 넘기지 않게 잘라 붙인다. */
+function bytesToDataUrl(bytes: Uint8Array, mime: string): string {
+  const CHUNK = 0x8000
+  let s = ''
+  for (let i = 0; i < bytes.byteLength; i += CHUNK) {
+    s += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+  }
+  return `data:${mime};base64,${btoa(s)}`
+}
+
+/** BMP/DIB 에서 푼 픽셀 → PNG data URL. */
+function oleBitmapToDataUrl(im: Extract<OleImageData, { kind: 'rgba' }>): string | null {
   const canvas = document.createElement('canvas')
   canvas.width = im.width
   canvas.height = im.height
@@ -2842,7 +2861,7 @@ function createOleImageShapes(
     const im = images[i]
     let dataUrl: string | null = null
     try {
-      dataUrl = oleBitmapToDataUrl(im)
+      dataUrl = oleImageToDataUrl(im)
     } catch (err) {
       console.error(`[CAD V2] OLE 이미지 ${i + 1} 변환 실패:`, err)
     }
@@ -2876,12 +2895,16 @@ function createOleImageShapes(
     made++
 
     console.log(`[CAD V2] OLE 이미지 ${i + 1}: ${im.width}x${im.height}px, ` +
+      `${im.kind === 'encoded' ? im.mime : 'BMP/DIB'}, ` +
       `모델 (${im.minX.toFixed(0)},${im.minY.toFixed(0)})~(${im.maxX.toFixed(0)},${im.maxY.toFixed(0)}), ` +
       `레이어 "${im.layer}"`)
-    if (im.validRows < im.height) {
-      // 변환기(dwgdxf)가 고정 버퍼에서 바이너리를 잘라 아래쪽 줄만 복원된다.
+    // 변환기(dwgdxf)가 임베디드 바이너리를 자르면 아래쪽 줄이 비어서 들어온다.
+    if (im.kind === 'rgba' && im.validRows < im.height) {
       console.warn(`[CAD V2] OLE 이미지 ${i + 1}: ${im.validRows}/${im.height}줄만 복원 — ` +
         `변환기가 임베디드 바이너리를 잘랐다.`)
+    } else if (im.kind === 'encoded' && im.truncated) {
+      console.warn(`[CAD V2] OLE 이미지 ${i + 1}: ${im.mime} 데이터가 잘렸다 — ` +
+        `브라우저가 아래쪽을 못 그릴 수 있다.`)
     }
   }
   return made
