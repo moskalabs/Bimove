@@ -88,28 +88,30 @@ function PolylineIcon() {
   )
 }
 
-/** 치수: 보조선 두 개 사이의 양방향 치수선. */
+/**
+ * 치수: 보조선 두 개와 그 사이를 잇는 치수선.
+ *
+ * 화살촉은 넣지 않는다 — 시안이 그렇고, 공간나누기(점선 + 양끝 화살표)와
+ * 한눈에 갈라지기도 한다.
+ */
 function DimensionIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 6.5v11" />
-      <path d="M20 6.5v11" />
-      <path d="M4 12h16" />
-      <path d="M7.5 9.5 4.5 12l3 2.5" />
-      <path d="M16.5 9.5 19.5 12l-3 2.5" />
+      <path d="M4.5 7.5v9" />
+      <path d="M19.5 7.5v9" />
+      <path d="M4.5 12h15" />
     </svg>
   )
 }
 
-/** 지시선: 가리키는 화살표와 글자. */
+/** 지시선: 가리키는 화살표와 그 끝의 글자. */
 function LeaderIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3.5 20.5 12 12" />
-      <path d="M12 12h5" />
-      <path d="M3.5 20.5v-4" />
-      <path d="M3.5 20.5h4" />
-      <text x="18" y="9" textAnchor="middle" fontSize="9" fill="currentColor" stroke="none" fontWeight="600">A</text>
+      <path d="M4 20 14.5 9.5" />
+      <path d="M4 20v-4.5" />
+      <path d="M4 20h4.5" />
+      <text x="18.5" y="9" textAnchor="middle" fontSize="10" fill="currentColor" stroke="none" fontWeight="600">A</text>
     </svg>
   )
 }
