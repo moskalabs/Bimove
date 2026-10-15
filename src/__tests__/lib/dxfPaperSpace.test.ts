@@ -209,3 +209,100 @@ describe('소속 미표시 종이 엔티티 (gc 410 없음)', () => {
     expect(ys(polys)).toEqual([0])
   })
 })
+
+// ───────── code 67 이 빠진 치수 ─────────
+//
+// dwgdxf(acadrust 0.4.0)의 `write_dimension_base` 는 공통 엔티티 writer 를
+// 거치지 않고 직접 쓰는데, 거기에 종이공간 플래그(code 67)를 넣는 줄이 없다.
+// 다른 엔티티는 `write_common_entity_data` 가 제대로 쓴다.
+//
+// 그래서 **종이공간 치수만** 67 없이 나오고, 우리는 그걸 모델 엔티티로 보고
+// 모형 탭에 쏟아부었다. 26.08.07_리닝 파일에서 E-1 / F_dim / E-DIM 레이어의
+// 치수선 조각이 모형 왼쪽 위에 흩어져 나온 게 이것이다 (AutoCAD 모형 탭에는
+// 없는 것들이다).
+//
+// 다행히 소유자 핸들(code 330)은 제대로 적혀 있어서, BLOCK_RECORD 테이블에서
+// 이름을 역으로 찾으면 67 없이도 소속을 안다.
+
+/** BLOCK_RECORD 테이블 — 핸들 ↔ 블록 이름. */
+const BLOCK_RECORDS =
+  `${g(0)}\nSECTION\n${g(2)}\nTABLES\n` +
+  `${g(0)}\nTABLE\n${g(2)}\nBLOCK_RECORD\n` +
+  `${g(0)}\nBLOCK_RECORD\n${g(5)}\n1F\n${g(2)}\n*Model_Space\n` +
+  `${g(0)}\nBLOCK_RECORD\n${g(5)}\n2A\n${g(2)}\n*Paper_Space\n` +
+  `${g(0)}\nBLOCK_RECORD\n${g(5)}\n2B\n${g(2)}\n*Paper_Space0\n` +
+  `${g(0)}\nENDTAB\n${g(0)}\nENDSEC\n`
+
+/**
+ * 치수 한 개. **code 67 도 410 도 없고** 소유자 핸들만 있다 — 변환기가
+ * 내놓는 모양 그대로다. 실제 선은 익명 블록(`*D<n>`) 안에 있다.
+ */
+function dimension(n: number, y: number, ownerHandle: string): string {
+  return `${g(0)}\nDIMENSION\n${g(5)}\n${100 + n}\n${g(330)}\n${ownerHandle}\n` +
+    `${g(100)}\nAcDbEntity\n${g(8)}\nE-DIM\n${g(100)}\nAcDbDimension\n` +
+    `${g(2)}\n*D${n}\n${g(10)}\n0\n${g(20)}\n${y}\n${g(30)}\n0\n`
+}
+
+/** 치수의 익명 블록 — 치수선 한 줄이 들어 있다. */
+function dimBlock(n: number, y: number): string {
+  return `${g(0)}\nBLOCK\n${g(2)}\n*D${n}\n${g(10)}\n0\n${g(20)}\n0\n${g(30)}\n0\n` +
+    `${g(0)}\nLINE\n${g(8)}\nE-DIM\n` +
+    `${g(10)}\n0\n${g(20)}\n${y}\n${g(30)}\n0\n${g(11)}\n100\n${g(21)}\n${y}\n${g(31)}\n0\n` +
+    `${g(0)}\nENDBLK\n`
+}
+
+/**
+ * 모델 치수 1개 + 종이 치수 2개(탭마다 하나)짜리 DXF.
+ *
+ *   y=0   모델공간 치수   (owner = *Model_Space)
+ *   y=50  "배치1" 치수    (owner = *Paper_Space)
+ *   y=60  "배치2" 치수    (owner = *Paper_Space0)
+ */
+function makeDimDxf(): string {
+  const header = `${g(0)}\nSECTION\n${g(2)}\nHEADER\n${g(9)}\n$INSUNITS\n${g(70)}\n4\n${g(0)}\nENDSEC\n`
+  const blocks =
+    `${g(0)}\nSECTION\n${g(2)}\nBLOCKS\n` +
+    dimBlock(1, 0) + dimBlock(2, 50) + dimBlock(3, 60) +
+    `${g(0)}\nENDSEC\n`
+  const entities =
+    `${g(0)}\nSECTION\n${g(2)}\nENTITIES\n` +
+    dimension(1, 0, '1F') +
+    dimension(2, 50, '2A') +
+    dimension(3, 60, '2B') +
+    `${g(0)}\nENDSEC\n`
+  return header + BLOCK_RECORDS + blocks + entities + `${g(0)}\nEOF\n`
+}
+
+const DIM_LAYERS = ['E-DIM']
+
+describe('소유자 핸들로 가리는 종이공간 치수', () => {
+  it('모델 모드는 종이 치수를 버린다 (67 이 없어도)', async () => {
+    // 이게 깨지면 모형 탭에 치수선 조각이 다시 쏟아진다.
+    const polys = await callWorkerSync(makeDimDxf(), DIM_LAYERS, { kind: 'model', excludePaper: true })
+    expect(ys(polys)).toEqual([0])
+  })
+
+  it('종이 모드는 그 탭 소유의 치수만 가져온다', async () => {
+    const p1 = await callWorkerSync(makeDimDxf(), DIM_LAYERS,
+      { kind: 'paper', layoutName: '배치1', blockName: '*Paper_Space' })
+    expect(ys(p1)).toEqual([50])
+
+    const p2 = await callWorkerSync(makeDimDxf(), DIM_LAYERS,
+      { kind: 'paper', layoutName: '배치2', blockName: '*Paper_Space0' })
+    expect(ys(p2)).toEqual([60])
+  })
+
+  it('탭을 나누지 않으면 전과 같이 다 들어온다', async () => {
+    // 레이아웃이 하나뿐인 파일에서 종이 치수를 버리면 치수가 통째로 사라진다.
+    const polys = await callWorkerSync(makeDimDxf(), DIM_LAYERS)
+    expect(ys(polys)).toEqual([0, 50, 60])
+  })
+
+  it('BLOCK_RECORD 가 없으면 예전 판정(code 67)으로 돌아간다', async () => {
+    // 수동 작성 DXF 처럼 테이블이 없는 파일도 있다. 소유자를 못 찾으면
+    // 아무것도 걸러내지 않는다 — 추측으로 지우는 쪽이 더 나쁘다.
+    const noTables = makeDimDxf().replace(BLOCK_RECORDS, '')
+    const polys = await callWorkerSync(noTables, DIM_LAYERS, { kind: 'model', excludePaper: true })
+    expect(ys(polys)).toEqual([0, 50, 60])
+  })
+})

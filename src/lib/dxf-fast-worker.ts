@@ -516,6 +516,52 @@ interface LayerDef {
 }
 
 /** Parse LAYER table → Map<layerName, LayerDef> */
+/**
+ * BLOCK_RECORD 핸들 → 블록 이름.
+ *
+ * 엔티티가 어느 공간에 속하는지는 보통 code 67 로 안다. 그런데 **치수는
+ * 그게 빠진 채로 나온다** — dwgdxf 가 쓰는 acadrust 0.4.0 의
+ * `write_dimension_base` 는 공통 엔티티 writer 를 안 거치고 직접 쓰는데,
+ * 거기에 67 을 넣는 줄이 없다 (다른 엔티티는 `write_common_entity_data` 가
+ * 제대로 쓴다).
+ *
+ * 그래서 종이공간 치수가 모델공간 엔티티로 보이고, 모형 탭에 치수선 조각이
+ * 쏟아진다. 다행히 소유자 핸들(code 330)은 제대로 적혀 있으므로, 블록 레코드
+ * 이름을 역으로 찾으면 67 없이도 소속을 알 수 있다.
+ */
+function parseBlockRecordNames(dxf: string, gc: (c: number) => string): Map<string, string> {
+  const result = new Map<string, string>()
+  const tables = extractSection(dxf, 'TABLES', gc)
+  if (!tables) return result
+
+  const sep = `\n${gc(0)}\n`
+  const gc2 = `\n${gc(2)}\n`
+  const gc5 = `\n${gc(5)}\n`
+  const marker = `${sep.slice(0, -1)}\nBLOCK_RECORD\n`
+
+  let pos = 0
+  for (;;) {
+    pos = tables.indexOf(marker, pos)
+    if (pos < 0) break
+    const rStart = pos + marker.length
+    const next = gcIdxFrom(tables, sep, rStart - 1, tables.length)
+    const rEnd = next >= 0 ? next : tables.length
+    const chunk = tables.substring(pos, rEnd)
+
+    const handle = gcValIn(chunk, gc5)
+    const name = gcValIn(chunk, gc2)
+    // 핸들은 16진수 문자열이다. 대소문자가 섮여 나오는 파일이 있어 위로 맞춘다.
+    if (handle && name) result.set(handle.toUpperCase(), name)
+    pos = rStart
+  }
+  return result
+}
+
+/** 종이공간 블록 레코드인지 (`*Paper_Space`, `*Paper_Space0`, …). */
+function isPaperBlockName(name: string): boolean {
+  return /^\*Paper_Space/i.test(name)
+}
+
 function parseLayerDefs(dxf: string, gc: (c: number) => string): Map<string, LayerDef> {
   const result = new Map<string, LayerDef>()
   const tables = extractSection(dxf, 'TABLES', gc)
@@ -1815,6 +1861,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   // 1-1. LTYPE table → linetype 패턴 정의
   const linetypeMap = parseLinetypes(dxfText, gc)
   const layerDefs = parseLayerDefs(dxfText, gc)
+  const blockRecords = parseBlockRecordNames(dxfText, gc)
   const layerLtMap = layerDefsToLinetypeMap(layerDefs)
   const textStyleMap = parseTextStyles(dxfText, gc)
   const imageDefs = parseImageDefs(dxfText, gc)
@@ -1873,6 +1920,7 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   const GC73 = `\n${gc(73)}\n`
   const GC230 = `\n${gc(230)}\n`
   const GC67 = `\n${gc(67)}\n`   // 1 = 종이공간 엔티티
+  const GC330 = `\n${gc(330)}\n`  // owner block record handle
   const GC410 = `\n${gc(410)}\n` // 그 엔티티가 속한 레이아웃 이름 (R2000+)
 
   progress('도면 요소 변환', 30)
@@ -1976,7 +2024,14 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
       // 안 봐서 도면틀·표제란이 모형 페이지에 겹쳐 쏟아졌고, 정작 그 탭은
       // 비어 있었다.
       const c67 = idxIn(dxfText, GC67, eStart, eEnd)
-      const entIsPaper = c67 >= 0 && valAt(dxfText, c67 + GC67.length, eEnd) === '1'
+      // 소유자 블록 레코드. code 67 이 빠진 엔티티(치수!)를 여기서 건진다 —
+      // parseBlockRecordNames 주석에 사정이 적혀 있다.
+      const c330 = idxIn(dxfText, GC330, eStart, eEnd)
+      const ownerName = c330 >= 0
+        ? blockRecords.get(valAt(dxfText, c330 + GC330.length, eEnd).toUpperCase())
+        : undefined
+      const ownerIsPaper = ownerName !== undefined && isPaperBlockName(ownerName)
+      const entIsPaper = (c67 >= 0 && valAt(dxfText, c67 + GC67.length, eEnd) === '1') || ownerIsPaper
       if (wantPaper) {
         if (!entIsPaper) {
           noteSkip('모델공간 엔티티 (종이 탭 아님)')
@@ -1988,8 +2043,15 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
             noteSkip('다른 레이아웃의 종이공간 엔티티')
             sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
           }
+        } else if (ownerName !== undefined && space.blockName) {
+          // 410 이 없어도 소유자 블록 레코드로 가릴 수 있다. 치수가 딱 이 경우라,
+          // 이게 없으면 "주인 탭" 하나에 몰려 엉뚱한 배치에 들어간다.
+          if (ownerName !== space.blockName) {
+            noteSkip('다른 레이아웃의 종이공간 엔티티 (소유자 기준)')
+            sepPos = nextSi >= 0 && nextSi < entEnd ? nextSi : entEnd; continue
+          }
         } else if (space.ownsUnlabeledPaper === false) {
-          // code 410 을 아예 안 쓰는 변환물이 있다. 이름으로 가릴 수 없으니
+          // code 410 도 소유자도 없는 변환물이 있다. 이름으로 가릴 수 없으니
           // **주인 탭 하나**만 가져간다 (unlabeledPaperOwner 가 고른다). 전엔
           // 전부 넣어서 같은 시트가 탭마다 중복으로 들어왔다.
           noteSkip('소속 미표시 종이 엔티티 (다른 탭이 주인)')
