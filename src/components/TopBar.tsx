@@ -1,62 +1,115 @@
 import React, { useState, useEffect } from 'react'
 import {
   MousePointer2, Undo2, Redo2, ChevronDown,
-  Minus, Spline, Square, Circle,
+  Square, Circle,
   Copy, Move, RotateCw,
-  Ruler, Type,
+  Type,
 } from 'lucide-react'
 import { PageRecordType, createShapeId } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
 import { startZoneDraw } from '../lib/drawingState'
 import { nextZoneColor } from '../shapes/ZoneShape'
 
-/* ── 커스텀 SVG 아이콘 (건축 특화, 모노톤) ── */
+/* ── 커스텀 SVG 아이콘 (건축 특화, 모노톤) ──
+ *
+ * 시안(2026-10-15)에 맞춰 다시 그렸다. 모두 24 격자, stroke 1.75, 선 끝은
+ * 둥글게 — lucide 와 섞여 있어도 굵기와 끝모양이 어긋나지 않게 맞춘 값이다.
+ */
+
+/** 벽체: 두께가 있는 벽 조각을 비스듬히 본 납작한 직육면체. */
 function WallIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="6" width="18" height="12" rx="1" />
-      <line x1="3" y1="12" x2="21" y2="12" />
-      <line x1="9" y1="6" x2="9" y2="12" />
-      <line x1="15" y1="12" x2="15" y2="18" />
+      <path d="M3 9.5 8.5 6.5 21 9.5 15.5 12.5z" />
+      <path d="M3 9.5v5l12.5 3v-5" />
+      <path d="M21 9.5v5l-5.5 3" />
     </svg>
   )
 }
 
+/** 개구부: 문틀 + 열림 궤적 (평면도의 문 심볼). */
 function OpeningIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 12h4" />
-      <path d="M17 12h4" />
-      <rect x="7" y="7" width="10" height="10" rx="1" strokeDasharray="3 2" />
-      <path d="M10 7v10" />
+      <path d="M6 4v16" />
+      <path d="M6 20h4" />
+      <path d="M18 20V9" />
+      <path d="M6 4a14 14 0 0 1 12 12" />
     </svg>
   )
 }
 
-function SpaceDivideIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <line x1="12" y1="3" x2="12" y2="21" />
-    </svg>
-  )
-}
-
+/** 공간지정: 마름모 안의 마름모 — 영역을 집어낸다는 뜻. */
 function ZoneIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="18" height="18" rx="2" strokeDasharray="4 2" />
-      <text x="12" y="14" textAnchor="middle" fontSize="7" fill="currentColor" stroke="none" fontWeight="600">A</text>
+      <path d="M12 2.5 21.5 12 12 21.5 2.5 12z" />
+      <path d="M12 8.5 15.5 12 12 15.5 8.5 12z" />
     </svg>
   )
 }
 
+/**
+ * 공간나누기: 가로 점선을 양쪽 화살표가 벌린다.
+ *
+ * 치수 아이콘과 비슷해 보이지만 저쪽은 실선 + 보조선이고 이쪽은 점선이다 —
+ * "여기를 가른다" 와 "여기를 잰다" 의 차이.
+ */
+function SpaceDivideIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 12h18" strokeDasharray="3 2.5" />
+      <path d="M7 8 3 12l4 4" />
+      <path d="M17 8l4 4-4 4" />
+    </svg>
+  )
+}
+
+/** 선: 끝점이 보이는 한 토막. */
+function LineIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5.5 18.5 18.5 5.5" />
+      <circle cx="5.5" cy="18.5" r="2.4" fill="currentColor" stroke="#fff" strokeWidth="1.2" />
+      <circle cx="18.5" cy="5.5" r="2.4" fill="currentColor" stroke="#fff" strokeWidth="1.2" />
+    </svg>
+  )
+}
+
+/** 폴리라인: 꺾이며 이어지는 선과 그 꼭짓점. */
+function PolylineIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 17.5 9.5 11 14.5 14 20 6.5" />
+      <circle cx="4" cy="17.5" r="2.4" fill="currentColor" stroke="#fff" strokeWidth="1.2" />
+      <circle cx="14.5" cy="14" r="2.4" fill="currentColor" stroke="#fff" strokeWidth="1.2" />
+      <circle cx="20" cy="6.5" r="2.4" fill="currentColor" stroke="#fff" strokeWidth="1.2" />
+    </svg>
+  )
+}
+
+/** 치수: 보조선 두 개 사이의 양방향 치수선. */
+function DimensionIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 6.5v11" />
+      <path d="M20 6.5v11" />
+      <path d="M4 12h16" />
+      <path d="M7.5 9.5 4.5 12l3 2.5" />
+      <path d="M16.5 9.5 19.5 12l-3 2.5" />
+    </svg>
+  )
+}
+
+/** 지시선: 가리키는 화살표와 글자. */
 function LeaderIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M6 18L12 10h6" />
-      <circle cx="6" cy="18" r="1.5" fill="currentColor" />
-      <line x1="18" y1="8" x2="18" y2="12" />
+      <path d="M3.5 20.5 12 12" />
+      <path d="M12 12h5" />
+      <path d="M3.5 20.5v-4" />
+      <path d="M3.5 20.5h4" />
+      <text x="18" y="9" textAnchor="middle" fontSize="9" fill="currentColor" stroke="none" fontWeight="600">A</text>
     </svg>
   )
 }
@@ -76,16 +129,18 @@ const GROUP_BASIC: ToolDef[] = [
   { id: 'select', label: '선택', render: lucideBtn(MousePointer2) },
 ]
 
+// 시안 순서: 벽체 → 개구부 → 공간지정 → 공간나누기.
+// 벽을 세우고, 문을 내고, 영역을 잡고, 나누는 작업 순서 그대로다.
 const GROUP_SPACE: ToolDef[] = [
-  { id: 'space-divide', label: '공간나누기', render: SpaceDivideIcon },
   { id: 'wall', label: '벽체', render: WallIcon },
   { id: 'opening', label: '개구부', render: OpeningIcon },
   { id: 'zone', label: '공간지정', render: ZoneIcon },
+  { id: 'space-divide', label: '공간나누기', render: SpaceDivideIcon },
 ]
 
 const GROUP_DRAW: ToolDef[] = [
-  { id: 'line', label: '선', render: lucideBtn(Minus) },
-  { id: 'polyline', label: '폴리라인', render: lucideBtn(Spline) },
+  { id: 'line', label: '선', render: LineIcon },
+  { id: 'polyline', label: '폴리라인', render: PolylineIcon },
   { id: 'rect', label: '사각형', render: lucideBtn(Square) },
   { id: 'circle', label: '원형', render: lucideBtn(Circle) },
 ]
@@ -97,7 +152,7 @@ const GROUP_EDIT: ToolDef[] = [
 ]
 
 const GROUP_ANNOTATE: ToolDef[] = [
-  { id: 'dimension', label: '치수', render: lucideBtn(Ruler) },
+  { id: 'dimension', label: '치수', render: DimensionIcon },
   { id: 'text', label: '문자', render: lucideBtn(Type) },
   { id: 'leader', label: '지시선', render: LeaderIcon },
 ]
