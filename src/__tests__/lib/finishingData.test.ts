@@ -605,17 +605,21 @@ describe('마루', () => {
     ])
   })
 
-  it('BOX당 장수를 지어내지 않는다 — 면적은 표 값 그대로다', () => {
-    // 3.17 ÷ (0.165 × 1.2) = 16.01장. 역산해서 16을 박아넣으면 3.168 이 되어
-    // 표와 어긋난다. 표에 장수가 없으므로 비워두고 면적을 그대로 쓴다.
+  it('BOX당 장수가 채워져 있고 면적이 거기서 나온다', () => {
     const w = wood()
-    expect(w.variants.every(v => v.piecesPerBox === undefined)).toBe(true)
-    expect(w.variants.map(v => unitAreaM2(w, v))).toEqual([3.23, 3.17, 1.82, 2.16])
+    expect(w.variants.map(v => v.piecesPerBox)).toEqual([43, 16, 8, 12])
+    expect(w.variants.map(v => unitAreaM2(w, v))).toEqual([3.2336, 3.168, 1.824, 2.16])
   })
 
-  it('사용자가 장수를 넣으면 그때부터 규격에서 계산한다', () => {
+  it('계산값을 둘째 자리로 반올림하면 표 값과 맞는다', () => {
+    // 표의 3.23 / 3.17 / 1.82 / 2.16 은 반올림된 표기다. 계산은 더 정밀하게
+    // 하고 화면에서만 끊는다 — 반올림한 값으로 나누면 수량이 미세하게 틀어진다.
     const w = wood()
-    const withPieces = { ...w.variants[3], piecesPerBox: 12 }   // 원목 150 × 1200
-    expect(unitAreaM2(w, withPieces)).toBe(2.16)
+    expect(w.variants.map(v => Math.round(unitAreaM2(w, v) * 100) / 100))
+      .toEqual([3.23, 3.17, 1.82, 2.16])
+  })
+
+  it('길쭉한 자재라 치수 이름이 폭·길이다', () => {
+    expect(wood().dimLabels).toEqual({ width: '폭', length: '길이' })
   })
 })

@@ -127,6 +127,11 @@ export type FinishingItem = {
   piecesPerBox?: number
   /** 두께 mm (변형에 없을 때의 기본값) */
   thicknessMm?: number
+  /**
+   * 치수 칸 이름. 타일은 가로·세로지만 마루는 폭·길이다 — 길쭉한 자재를
+   * "가로 95 / 세로 800" 이라고 적으면 읽는 사람이 한 번 멈칫한다.
+   */
+  dimLabels?: { width: string; length: string }
   /** 롤 폭 (mm) / 길이 (m) — 변형에 없을 때의 기본값 */
   rollWidthMm?: number
   rollLengthM?: number
@@ -250,16 +255,18 @@ const DEFAULT_CATEGORIES: FinishingCategory[] = [
       {
         // 마루는 BOX 당 장수가 제품마다 제각각이라(강마루 94 × 800 이 43장쯤)
         // 표에도 장수가 없다. 장수를 임의로 지어내지 않고 면적을 직접 쓴다.
+        // 마루는 길쭉해서 "가로/세로" 가 아니라 "폭/길이" 로 읽는다.
         id: 'f-wood', label: '마루', calcType: 'sheet',
         floorOnly: true,
-        itemWidthMm: 94, itemLengthMm: 800, thicknessMm: 7.5,
+        dimLabels: { width: '폭', length: '길이' },
+        itemWidthMm: 94, itemLengthMm: 800, thicknessMm: 7.5, piecesPerBox: 43,
         boxAreaM2: 3.23, lossRate: 0.10, unit: 'box',
         specLabel: '강마루 94 × 800 × 7.5T 기준 3.23 m²/box',
         variants: [
-          createVariant('강마루', { itemWidthMm: 94, itemLengthMm: 800, thicknessMm: 7.5, boxAreaM2: 3.23, specLabel: '강마루 94 × 800 × 7.5T 기준 3.23 m²/box' }),
-          createVariant('광폭 강마루', { itemWidthMm: 165, itemLengthMm: 1200, thicknessMm: 7.5, boxAreaM2: 3.17, specLabel: '광폭 강마루 165 × 1200 × 7.5T 기준 3.17 m²/box' }),
-          createVariant('강화마루', { itemWidthMm: 190, itemLengthMm: 1200, thicknessMm: 8, boxAreaM2: 1.82, specLabel: '강화마루 190 × 1200 × 8T 기준 1.82 m²/box' }),
-          createVariant('원목마루', { itemWidthMm: 150, itemLengthMm: 1200, thicknessMm: 12, boxAreaM2: 2.16, specLabel: '원목마루 150 × 1200 × 12T 기준 2.16 m²/box' }),
+          createVariant('강마루', { itemWidthMm: 94, itemLengthMm: 800, thicknessMm: 7.5, piecesPerBox: 43, specLabel: '강마루 94 × 800 × 7.5T 기준 3.23 m²/box' }),
+          createVariant('광폭 강마루', { itemWidthMm: 165, itemLengthMm: 1200, thicknessMm: 7.5, piecesPerBox: 16, specLabel: '광폭 강마루 165 × 1200 × 7.5T 기준 3.17 m²/box' }),
+          createVariant('강화마루', { itemWidthMm: 190, itemLengthMm: 1200, thicknessMm: 8, piecesPerBox: 8, specLabel: '강화마루 190 × 1200 × 8T 기준 1.82 m²/box' }),
+          createVariant('원목마루', { itemWidthMm: 150, itemLengthMm: 1200, thicknessMm: 12, piecesPerBox: 12, specLabel: '원목마루 150 × 1200 × 12T 기준 2.16 m²/box' }),
         ],
       },
       // ── 추가 선택 항목 ──
@@ -511,7 +518,7 @@ export function getFinishingAreaForPO(
 
 const STORAGE_KEY = 'bimova_finishing_tables_v1'
 /** 이 숫자를 올리면 저장된 데이터에 새 defaults가 병합됨 */
-const SCHEMA_VERSION = 8
+const SCHEMA_VERSION = 9
 
 /** 저장된 데이터에 새 defaults를 병합 (사용자 입력값은 유지) */
 function mergeDefaults(saved: FinishingTablesData): FinishingTablesData {
@@ -535,6 +542,7 @@ function mergeDefaults(saved: FinishingTablesData): FinishingTablesData {
         savedItem.boxAreaM2 = defItem.boxAreaM2
         savedItem.piecesPerBox = defItem.piecesPerBox
         savedItem.thicknessMm = defItem.thicknessMm
+        savedItem.dimLabels = defItem.dimLabels
         savedItem.rollAreaM2 = defItem.rollAreaM2
         savedItem.rollWidthMm = defItem.rollWidthMm
         savedItem.rollLengthM = defItem.rollLengthM

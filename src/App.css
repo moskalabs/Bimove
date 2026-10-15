@@ -3273,8 +3273,9 @@ html[data-dark="true"] .cad-viewer-sidebar { background: #1e1e1e; }
 .ft-spec-reset:hover { text-decoration: underline; }
 
 .ft-spec-grid {
+  /* 칸 수가 자재마다 다르다 (도장 1 · 도배 3 · 타일 4 · 마루 5) */
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
   gap: 8px;
 }
 .ft-spec-grid-common {

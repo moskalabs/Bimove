@@ -403,6 +403,13 @@ function SpecEditModal({ item, onSave, onClose }: {
   // 자재(석고보드)는 장수 대신 두께가 종류를 가른다 — 9.5T 와 12.5T 는 면적이
   // 같아도 다른 물건이다.
   const isBoxUnit = item.unit === 'box'
+  // 두께는 값이 정의된 자재에만 보여준다. 석고보드·마루는 두께가 종류를
+  // 가르지만 타일 시안에는 그 칸이 없다 — 값 유무가 곧 그 구분이다.
+  const hasThickness = current.thicknessMm !== undefined || item.thicknessMm !== undefined
+  const dimW = item.dimLabels?.width ?? '가로'
+  const dimL = item.dimLabels?.length ?? '세로'
+  /** 면적 칸은 소수 둘째 자리까지만 — 3.2336 보다 3.23 이 읽힌다. */
+  const show2 = (n: number) => n ? Math.round(n * 100) / 100 : ''
   const isRoll = item.calcType === 'roll'
   const isPaint = item.calcType === 'paint'
 
@@ -530,32 +537,33 @@ function SpecEditModal({ item, onSave, onClose }: {
               <>
                 <div className="ft-spec-grid">
                   <label className="ft-spec-cell">
-                    <span>가로(mm)</span>
+                    <span>{dimW}(mm)</span>
                     {numInput(current.itemWidthMm, n => setSize({ itemWidthMm: n }))}
                   </label>
                   <label className="ft-spec-cell">
-                    <span>세로(mm)</span>
+                    <span>{dimL}(mm)</span>
                     {numInput(current.itemLengthMm, n => setSize({ itemLengthMm: n }))}
                   </label>
-                  {isBoxUnit ? (
-                    <label className="ft-spec-cell">
-                      <span>BOX당 수량(장)</span>
-                      {numInput(current.piecesPerBox, n => patchCurrent({ piecesPerBox: n }))}
-                    </label>
-                  ) : (
+                  {hasThickness && (
                     <label className="ft-spec-cell">
                       <span>두께(mm)</span>
                       {numInput(current.thicknessMm, n => patchCurrent({ thicknessMm: n }), '0.1')}
                     </label>
                   )}
+                  {isBoxUnit && (
+                    <label className="ft-spec-cell">
+                      <span>BOX당 수량(장)</span>
+                      {numInput(current.piecesPerBox, n => patchCurrent({ piecesPerBox: n }))}
+                    </label>
+                  )}
                   <label className="ft-spec-cell">
                     <span>{isBoxUnit ? 'BOX당' : `1${item.unit}당`} 면적(m²)</span>
-                    <input type="number" readOnly value={derivedBoxArea || current.boxAreaM2 || ''} />
+                    <input type="number" readOnly value={show2(derivedBoxArea || current.boxAreaM2 || 0)} />
                   </label>
                 </div>
                 <div className="ft-spec-hint">
                   {isBoxUnit
-                    ? '* 규격을 수정하면 BOX당 수량과 면적이 자동으로 계산됩니다. (BOX당 수량 수정가능)'
+                    ? '* 규격과 BOX당 수량을 수정하면 BOX당 면적이 자동으로 계산됩니다.'
                     : `* 규격을 수정하면 1${item.unit}당 면적이 자동으로 계산됩니다.`}
                 </div>
               </>
@@ -574,7 +582,7 @@ function SpecEditModal({ item, onSave, onClose }: {
                   </label>
                   <label className="ft-spec-cell">
                     <span>1롤 면적(m²)</span>
-                    <input type="number" readOnly value={derivedRollArea || current.rollAreaM2 || ''} />
+                    <input type="number" readOnly value={show2(derivedRollArea || current.rollAreaM2 || 0)} />
                   </label>
                 </div>
                 <div className="ft-spec-hint">* 규격을 수정하면 1롤 면적이 자동으로 계산됩니다.</div>
