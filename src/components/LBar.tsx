@@ -6,7 +6,7 @@ import { LayersPanel } from './panels/LayersPanel'
 import { BOQPanel } from './panels/BOQPanel'
 import { MaterialsPanel } from './panels/MaterialsPanel'
 import { LayoutPanel } from './panels/LayoutPanel'
-import { ImportPanel } from './panels/ImportPanel'
+import { useImportActions, type ImportKind } from './useImportActions'
 import { useEditor } from '../context/EditorContext'
 import { useProjectId, useProjectName } from '../context/ProjectContext'
 import { exportDxf } from '../lib/dxf'
@@ -15,7 +15,11 @@ import { printReport } from '../lib/reportExport'
 
 /* ── 햄버거 메뉴 드롭다운 ── */
 // export 는 테스트용이다 — LBar 를 통째로 띄우면 editor 목이 필요하다.
-export function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onClose: () => void; onImport: () => void }) {
+export function HamburgerMenu({ open, onClose, onImport }: {
+  open: boolean
+  onClose: () => void
+  onImport: (kind: ImportKind) => void
+}) {
   const editor = useEditor()
   const projectId = useProjectId()
   // 이름은 ProjectNameContext 가 들고 있다. 여기서 localStorage 목록을 직접
@@ -23,14 +27,17 @@ export function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onCl
   // 막 가져온 직후엔 저장 디바운스(800ms) 전이라, 둘 다 "새 프로젝트" 로
   // 보인다. RBar 의 "파일명" 칸은 진짜 이름을 보여주는데 이 메뉴만 어긋났다.
   const { name: projectName } = useProjectName()
-  const [exportSub, setExportSub] = useState(false)
+  // 서브창은 한 번에 하나만 — 가져오기와 내보내기가 겹쳐 뜨면 어느 쪽 항목인지
+  // 알 수 없다.
+  const [openSub, setOpenSub] = useState<'import' | 'export' | null>(null)
+  const closeAll = () => { onClose(); setOpenSub(null) }
 
   if (!open) return null
 
   return (
     <div
       style={{ position: 'fixed', inset: 0, zIndex: 1100 }}
-      onClick={() => { onClose(); setExportSub(false) }}
+      onClick={closeAll}
     >
       <div className="lbar-menu-dropdown" onClick={(e) => e.stopPropagation()}>
         <div className="lbar-menu-section">
@@ -39,24 +46,39 @@ export function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onCl
         </div>
         <div className="lbar-menu-divider" />
         <div className="lbar-menu-section">
-          <div className="lbar-menu-item lbar-menu-has-sub" onClick={() => { onImport(); onClose(); setExportSub(false) }}>
+          <div className="lbar-menu-item lbar-menu-has-sub" style={{ position: 'relative' }}
+            onClick={() => setOpenSub(openSub === 'import' ? null : 'import')}
+          >
             가져오기
             <span className="lbar-menu-arrow">›</span>
+            {openSub === 'import' && (
+              <div className="lbar-menu-sub" onClick={(e) => e.stopPropagation()}>
+                <div className="lbar-menu-item" onClick={() => { onImport('cad'); closeAll() }}>
+                  📐 DXF / DWG 도면
+                </div>
+                <div className="lbar-menu-item" onClick={() => { onImport('pdf'); closeAll() }}>
+                  📄 PDF 도면
+                </div>
+                <div className="lbar-menu-item" onClick={() => { onImport('image'); closeAll() }}>
+                  🖼 이미지 배경
+                </div>
+              </div>
+            )}
           </div>
           <div className="lbar-menu-item lbar-menu-has-sub" style={{ position: 'relative' }}
-            onClick={() => setExportSub(!exportSub)}
+            onClick={() => setOpenSub(openSub === 'export' ? null : 'export')}
           >
             내보내기
             <span className="lbar-menu-arrow">›</span>
-            {exportSub && (
+            {openSub === 'export' && (
               <div className="lbar-menu-sub" onClick={(e) => e.stopPropagation()}>
-                <div className="lbar-menu-item" onClick={() => { if (editor) exportDxf(editor); onClose(); setExportSub(false) }}>
+                <div className="lbar-menu-item" onClick={() => { if (editor) exportDxf(editor); closeAll() }}>
                   📐 DXF 내보내기
                 </div>
-                <div className="lbar-menu-item" onClick={() => { if (editor) exportPng(editor); onClose(); setExportSub(false) }}>
+                <div className="lbar-menu-item" onClick={() => { if (editor) exportPng(editor); closeAll() }}>
                   🖼 PNG 내보내기
                 </div>
-                <div className="lbar-menu-item" onClick={() => { if (editor) printReport(editor, { projectId: projectId || undefined }); onClose(); setExportSub(false) }}>
+                <div className="lbar-menu-item" onClick={() => { if (editor) printReport(editor, { projectId: projectId || undefined }); closeAll() }}>
                   📋 리포트 내보내기
                 </div>
               </div>
@@ -66,7 +88,7 @@ export function HamburgerMenu({ open, onClose, onImport }: { open: boolean; onCl
         <div className="lbar-menu-divider" />
         <div className="lbar-menu-section">
           <div className="lbar-menu-item">공유</div>
-          <div className="lbar-menu-item" onClick={() => { window.print(); onClose() }}>인쇄</div>
+          <div className="lbar-menu-item" onClick={() => { window.print(); closeAll() }}>인쇄</div>
         </div>
         <div className="lbar-menu-divider" />
         <div className="lbar-menu-section">
@@ -100,18 +122,16 @@ function View3DIcon() {
   )
 }
 
-type PanelId = 'layers' | 'materials' | 'table' | 'layout' | 'import' | null
+type PanelId = 'layers' | 'materials' | 'table' | 'layout' | null
 
 export function LBar({ onBack, onShow3D }: { onBack?: () => void; onShow3D?: () => void }) {
   const [activePanel, setActivePanel] = useState<PanelId>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  // 가져오기는 패널이 아니라 동작이다 (useImportActions 주석 참고).
+  const importActions = useImportActions()
 
   const togglePanel = (id: Exclude<PanelId, null>) =>
     setActivePanel(prev => prev === id ? null : id)
-
-  const openImportPanel = () => {
-    setActivePanel('import')
-  }
 
   return (
     <>
@@ -193,14 +213,16 @@ export function LBar({ onBack, onShow3D }: { onBack?: () => void; onShow3D?: () 
       </aside>
 
       {/* 햄버거 메뉴 드롭다운 */}
-      <HamburgerMenu open={menuOpen} onClose={() => setMenuOpen(false)} onImport={openImportPanel} />
+      <HamburgerMenu open={menuOpen} onClose={() => setMenuOpen(false)} onImport={importActions.run} />
 
       {/* 패널 */}
       {activePanel === 'layers' && <LayersPanel />}
       {activePanel === 'table' && <BOQPanel />}
       {activePanel === 'materials' && <MaterialsPanel />}
       {activePanel === 'layout' && <LayoutPanel />}
-      {activePanel === 'import' && <ImportPanel />}
+
+      {/* 가져오기 미리보기 모달 · 진행 오버레이 — 메뉴를 닫아도 떠 있어야 한다 */}
+      {importActions.overlays}
     </>
   )
 }

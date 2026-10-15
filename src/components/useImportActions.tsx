@@ -1,17 +1,18 @@
-import { useState, Suspense } from 'react'
+import { useState, Suspense, type ReactNode } from 'react'
 import { PageRecordType } from 'tldraw'
-import { useEditor } from '../../context/EditorContext'
-import { useProjectName } from '../../context/ProjectContext'
-import { useToast } from '../../context/ToastContext'
-import { uploadImage } from '../../lib/project'
-import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2, getLastImportReport, ViewportClipMissedError } from '../../lib/dxf'
-import type { ViewportClip } from '../../lib/dxf-shared'
-import { buildLayoutTargets, unlabeledPaperOwner, sheetRect, type ParseSpace } from '../../lib/dxf-shared'
-import type { LayoutImportInfo } from '../CadPreview'
-import { lazyWithReload } from '../../lib/lazyWithReload'
-import { importPdf } from '../../lib/pdfImport'
+import { useEditor } from '../context/EditorContext'
+import { useProjectName } from '../context/ProjectContext'
+import { useToast } from '../context/ToastContext'
+import { uploadImage } from '../lib/project'
+import { pickCadFile, dwgToDxfBytes, decodeDxfBytes, commitCadImportV2, getLastImportReport, ViewportClipMissedError } from '../lib/dxf'
+import type { ViewportClip } from '../lib/dxf-shared'
+import { buildLayoutTargets, unlabeledPaperOwner, sheetRect, type ParseSpace } from '../lib/dxf-shared'
+import type { LayoutImportInfo } from './CadPreview'
+import { lazyWithReload } from '../lib/lazyWithReload'
+import { importPdf } from '../lib/pdfImport'
+import { ImportLoadingOverlay } from './ImportLoadingOverlay'
 
-const CadPreview = lazyWithReload(() => import('../CadPreview'))
+const CadPreview = lazyWithReload(() => import('./CadPreview'))
 
 /**
  * 임포트에서 못 가져온 것들을 한 줄로 요약한다.
@@ -41,7 +42,28 @@ interface PreviewData {
   isDwg: boolean
 }
 
-export function ImportPanel() {
+/** 가져오기 종류 — 햄버거 메뉴의 서브창 항목과 1:1 이다. */
+export type ImportKind = 'cad' | 'pdf' | 'image'
+
+export interface ImportActions {
+  /** 고른 종류의 파일 선택 다이얼로그를 띄우고 임포트까지 진행한다. */
+  run: (kind: ImportKind) => void
+  /** CAD 미리보기 모달과 진행 오버레이. 메뉴를 닫아도 떠 있어야 하므로 밖에서 렌더한다. */
+  overlays: ReactNode
+}
+
+/**
+ * 가져오기 동작 묶음.
+ *
+ * 예전엔 이게 왼쪽 고정 패널(ImportPanel)이었다. 그런데 그 패널을 여는 길은
+ * 햄버거 메뉴뿐이고 **닫는 길은 없었다** — L바 아이콘에 가져오기 토글이 없어서,
+ * 끄려면 다른 패널을 열었다가 그걸 다시 닫아야 했다. 파일 한 번 고르자고
+ * 화면 한쪽을 계속 차지할 이유도 없다.
+ *
+ * 그래서 패널을 없애고 동작만 남겼다. 햄버거 > 가져오기에 서브창이 뜨고,
+ * 항목을 고르면 바로 파일 선택 다이얼로그가 열린다 (내보내기와 같은 모양).
+ */
+export function useImportActions(): ImportActions {
   const editor = useEditor()
   const { toast } = useToast()
   const { setName: setProjectName } = useProjectName()
@@ -294,96 +316,32 @@ export function ImportPanel() {
     }
   }
 
-  return (
-    <div className="lbar-panel">
-      <div className="lbar-panel-header">가져오기</div>
-      <div className="lbar-panel-body import-panel-body" style={{ display: 'flex', flexDirection: 'column' }}>
+  return {
+    run: (kind: ImportKind) => {
+      if (!editor) return
+      if (kind === 'cad') void handleCadImport()
+      else if (kind === 'pdf') void importPdf(editor, notify)
+      else uploadImage(editor)
+    },
+    overlays: (
+      <>
+        {/* WebGL CAD 프리뷰 모달 */}
+        {previewData && (
+          <Suspense fallback={<ImportLoadingOverlay message="CAD 미리보기 로딩 중..." />}>
+            <CadPreview
+              dxfText={previewData.dxfText}
+              fileName={previewData.fileName}
+              fileSize={previewData.fileSize}
+              isDwg={previewData.isDwg}
+              onImport={handlePreviewImport}
+              onClose={() => setPreviewData(null)}
+            />
+          </Suspense>
+        )}
 
-        {/* DXF / DWG */}
-        <div>
-          <div className="import-section-title">CAD 도면</div>
-          <button
-            className="action-btn"
-            style={{ width: '100%', marginBottom: 10 }}
-            onClick={handleCadImport}
-          >
-            📐 DXF / DWG 불러오기
-          </button>
-          <div className="import-info-box">
-            <strong style={{ color: '#3b82f6' }}>DXF</strong> 및 <strong style={{ color: '#3b82f6' }}>DWG</strong> 파일 지원<br />
-            (DWG는 브라우저에서 자동 변환)<br />
-            <span style={{ color: '#aaa', fontSize: 10 }}>AutoCAD R13~R2018 지원</span>
-          </div>
-        </div>
-
-        <div style={{ borderTop: '1px solid #eee' }} />
-
-        {/* PDF */}
-        <div>
-          <div className="import-section-title">PDF 도면</div>
-          <button
-            className="action-btn"
-            style={{ width: '100%', marginBottom: 10 }}
-            onClick={() => editor && importPdf(editor, notify)}
-          >
-            📄 PDF 불러오기
-          </button>
-          <div className="import-info-box">
-            PDF 첫 페이지를 고해상도 이미지로 렌더해서 배경으로 배치.<br />
-            위에 벽을 따라 그리세요.<br />
-            <span style={{ color: '#aaa' }}>※ 다중 페이지는 첫 페이지만 (추후 옵션 추가)</span>
-          </div>
-        </div>
-
-        <div style={{ borderTop: '1px solid #eee' }} />
-
-        {/* 이미지 */}
-        <div>
-          <div className="import-section-title">이미지 배경</div>
-          <button
-            className="action-btn"
-            style={{ width: '100%', marginBottom: 10 }}
-            onClick={() => editor && uploadImage(editor)}
-          >
-            🖼 이미지 업로드
-          </button>
-          <div className="import-info-box">
-            PNG/JPG 도면 이미지를 배경으로 올린 뒤<br />
-            위에 벽을 따라 그리세요.<br />
-            <strong style={{ color: '#555' }}>AI 자동 인식</strong>은 이미지 선택 후<br />
-            우측 패널 → ✦ 벽 자동 인식.
-          </div>
-        </div>
-
-      </div>
-
-      {/* WebGL CAD 프리뷰 모달 */}
-      {previewData && (
-        <Suspense fallback={<ImportLoadingOverlay message="CAD 미리보기 로딩 중..." />}>
-          <CadPreview
-            dxfText={previewData.dxfText}
-            fileName={previewData.fileName}
-            fileSize={previewData.fileSize}
-            isDwg={previewData.isDwg}
-            onImport={handlePreviewImport}
-            onClose={() => setPreviewData(null)}
-          />
-        </Suspense>
-      )}
-
-      {/* 로딩 오버레이 */}
-      {loading && <ImportLoadingOverlay message={loading} />}
-    </div>
-  )
-}
-
-function ImportLoadingOverlay({ message }: { message: string }) {
-  return (
-    <div className="import-loading-overlay">
-      <div className="import-loading-card">
-        <div className="import-loading-spinner" />
-        <div className="import-loading-msg">{message}</div>
-      </div>
-    </div>
-  )
+        {/* 로딩 오버레이 */}
+        {loading && <ImportLoadingOverlay message={loading} />}
+      </>
+    ),
+  }
 }
