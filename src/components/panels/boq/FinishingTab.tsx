@@ -635,7 +635,6 @@ function MaterialDetail({
 }) {
   const [activeTab, setActiveTab] = useState(0)
   const [showSpecEdit, setShowSpecEdit] = useState(false)
-  const [tableView, setTableView] = useState<'floor' | 'wall'>('floor')
   const variant = item.variants[activeTab] ?? item.variants[0]
   if (!variant) return null
 
@@ -694,28 +693,12 @@ function MaterialDetail({
         <button className="ft-variant-add" onClick={addVariant}><Plus size={14} /></button>
       </div>
 
-      {/* 물량표 (평면 / 벽면 탭 전환) */}
-      {!item.floorOnly && (
-        <div className="ft-view-tabs">
-          <button
-            className={`ft-view-tab${tableView === 'floor' ? ' active' : ''}`}
-            onClick={() => setTableView('floor')}
-          >
-            평면
-          </button>
-          <button
-            className={`ft-view-tab${tableView === 'wall' ? ' active' : ''}`}
-            onClick={() => setTableView('wall')}
-          >
-            벽면
-          </button>
-        </div>
-      )}
+      {/* 물량표 — 평면과 벽면을 한 화면에 세로로 둔다.
+          탭으로 갈라두면 한쪽을 채우고 다른 쪽을 잊는다. 합계는 둘을 더한
+          값이라, 그 둘이 같이 보여야 숫자가 어디서 왔는지 읽힌다. */}
       <div className="ft-tables-scroll">
-        {(tableView === 'floor' || item.floorOnly) && (
-          <FloorTable item={item} variant={variant} onUpdate={updateZones} />
-        )}
-        {tableView === 'wall' && !item.floorOnly && (
+        <FloorTable item={item} variant={variant} onUpdate={updateZones} />
+        {!item.floorOnly && (
           <WallTable item={item} variant={variant} onUpdate={updateZones} />
         )}
         <TotalSection item={item} variant={variant} onSpecEdit={() => setShowSpecEdit(true)} />
