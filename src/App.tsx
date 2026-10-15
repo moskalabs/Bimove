@@ -428,7 +428,13 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
     // 캐시가 비어 있는 채로 남는다.
     saver.schedule()
 
-    // Supabase 동기화 (5초 디바운스, optimistic locking)
+    // Supabase 동기화 (optimistic locking)
+    //
+    // 5초였다. 큰 도면은 스냅샷이 수 MB 라, 그 주기로 쓰면 작은 인스턴스는
+    // CPU 를 다 태운다 — t4g.nano 가 94% 에 묶여 쿼리가 전부 504 로 떨어진 적이
+    // 있다. 압축해서 보내도(snapshotCodec) 직렬화·전송 비용은 남으므로 주기도
+    // 같이 늘린다. 로컬 저장은 1.5초 레코드 단위라 이 값과 무관하게 촘촘하다 —
+    // 서버가 늦어도 이 기기에서 작업을 잃지는 않는다.
     let lastServerUpdatedAt: string | undefined = serverUpdatedAtRef.current
     let syncFailed = false
     let syncPaused = false                      // 충돌 백업 실패 → 서버 쓰기 중단
@@ -437,7 +443,7 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
     supabaseTimer = window.setInterval(async () => {
       if (!serverDirty || syncPaused) return
       // 통짜 스냅샷은 이제 여기서만 만든다 — 로컬 저장(1.5초)은 레코드 단위라
-      // 필요 없다. 즉 수 MB 직렬화가 1.5초마다에서 5초마다로 줄었다.
+      // 필요 없다.
       const snap = buildFullSnapshot()
       if (!snap) return
       serverDirty = false
@@ -483,10 +489,10 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
           syncFailed = true
         }
       }
-    }, 5000)
+    }, SERVER_SYNC_MS)
 
     // 5분마다 자동 버전 저장 (변경 있을 때만)
-    const AUTO_VERSION_MS = 5 * 60 * 1000
+    const AUTO_VERSION_MS = 30 * 60 * 1000
     const autoVersionTimer = window.setInterval(() => {
       if (!dirtySinceAuto) return
       // 비동기라 try/catch 로는 못 잡는다 — catch 를 붙여야 한다.
@@ -721,6 +727,9 @@ function SessionExpiredBanner() {
     </div>
   )
 }
+
+/** 서버 스냅샷 저장 주기. 로컬 저장(1.5초)과 달리 통짜 직렬화라 무겁다. */
+const SERVER_SYNC_MS = 30 * 1000
 
 function AppContent() {
   const { user, loading, sessionExpired } = useAuth()

@@ -1,6 +1,7 @@
 // Supabase ↔ 발주서 동기화
 // localStorage를 1차 캐시로, Supabase를 영속 저장소로 사용
 import { supabase, supabaseConfigured } from './supabase'
+import { encodeSnapshot, readSnapshotColumn } from './snapshotCodec'
 import type {
   PurchaseOrder, BOQTable, BOQItem,
 } from './purchaseOrder'
@@ -333,7 +334,14 @@ export async function saveProjectSnapshot(
   lastKnownUpdatedAt?: string,
 ): Promise<{ conflict: boolean; serverUpdatedAt?: string }> {
   const now = new Date().toISOString()
-  const patch: Record<string, unknown> = { snapshot, updated_at: now }
+  // gzip 해서 text 컬럼에 넣는다. jsonb 로 보내면 서버가 수 MB 를 파싱하고
+  // TOAST 로 압축하느라 CPU 를 태운다 (snapshotCodec 주석 참고).
+  // 옛 jsonb 컬럼은 비운다 — 둘 다 들고 있으면 어느 쪽이 최신인지 모른다.
+  const patch: Record<string, unknown> = {
+    snapshot_gz: await encodeSnapshot(snapshot),
+    snapshot: null,
+    updated_at: now,
+  }
   if (thumbnail !== undefined) patch.thumbnail = thumbnail
 
   let q = supabase.from('projects').update(patch).eq('id', projectId)
@@ -360,12 +368,15 @@ export async function saveProjectSnapshot(
 export async function loadProjectSnapshot(projectId: string): Promise<{ snapshot: unknown; updatedAt?: string } | null> {
   const { data, error } = await supabase
     .from('projects')
-    .select('snapshot, updated_at')
+    .select('snapshot, snapshot_gz, updated_at')
     .eq('id', projectId)
     .maybeSingle()
   if (error) throw error
-  if (!data?.snapshot) return null
-  return { snapshot: data.snapshot, updatedAt: data.updated_at }
+  // 압축본이 있으면 그걸, 없으면 옛 jsonb 를 — 이미 저장된 프로젝트가 많아서
+  // 배포하자마자 옛 데이터를 못 읽으면 도면이 사라진 것처럼 보인다.
+  const snapshot = await readSnapshotColumn(data)
+  if (!snapshot) return null
+  return { snapshot, updatedAt: data?.updated_at }
 }
 
 export async function deleteProject(projectId: string) {
@@ -392,6 +403,15 @@ export async function renameProject(projectId: string, name: string) {
 // 단, 환경변수가 없으면 서버 기능 자체가 없는 것이므로 조용히 넘어간다.
 
 import type { Version } from './versions'
+
+/** 서버에 남겨두는 자동 생성 버전 개수. 목록이 30개만 보여주므로 그에 맞춘다. */
+const KEEP_AUTO_VERSIONS = 30
+
+/** 자동 저장이 다는 라벨 (App.tsx 의 자동 버전 타이머). */
+export const AUTO_SAVE_LABEL = '자동저장'
+
+/** 충돌 백업이 다는 라벨의 머리말 (conflictBackup.ts). */
+export const CONFLICT_BACKUP_PREFIX = '충돌 백업'
 
 /** 버전 목록 항목 — 스냅샷은 들어있지 않다. */
 export type RemoteVersionMeta = { id: string; timestamp: number; label?: string }
@@ -424,11 +444,11 @@ export async function fetchProjectVersionSnapshot(versionId: string): Promise<ob
   if (!supabaseConfigured) return null
   const { data, error } = await supabase
     .from('project_versions')
-    .select('snapshot')
+    .select('snapshot, snapshot_gz')
     .eq('id', versionId)
     .single()
   if (error) throw error
-  return (data?.snapshot as object) ?? null
+  return ((await readSnapshotColumn(data)) as object) ?? null
 }
 
 export async function saveProjectVersion(
@@ -442,10 +462,54 @@ export async function saveProjectVersion(
       id: version.id,
       project_id: projectId,
       label: version.label ?? null,
-      snapshot: version.snapshot,
+      snapshot_gz: await encodeSnapshot(version.snapshot),
       created_at: new Date(version.timestamp).toISOString(),
     })
   if (error) throw error
+
+  // 저장에 성공했을 때만 정리한다. 실패했는데 지우면 백업이 줄기만 한다.
+  await pruneOldVersions(projectId)
+}
+
+/**
+ * 서버에 쌓인 옛 버전을 지운다.
+ *
+ * 목록 조회는 처음부터 `limit 30` 이었는데 **지우는 코드가 없었다** — 자동
+ * 저장되는 수 MB 스냅샷이 서버에는 무한정 쌓였다. 실제로 project_versions 가
+ * 206MB 까지 자라 DB 의 대부분을 차지했다. 보이지도 않는 행이 디스크와 백업을
+ * 먹는다.
+ *
+ * **라벨이 비었는지로 가르면 안 된다.** 자동 저장은 '자동저장', 충돌 백업은
+ * '충돌 백업 — …' 이라는 라벨을 달고 들어온다. 비어 있는 건 오히려 드물다.
+ * 그래서 우리가 만든 라벨인지로 판정한다 — 사용자가 직접 붙인 이름은 어디에도
+ * 안 걸리므로 그대로 남는다.
+ */
+async function pruneOldVersions(projectId: string): Promise<void> {
+  const { data, error } = await supabase
+    .from('project_versions')
+    .select('id, label')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+
+  const autos = (data ?? []).filter(v => isAutoVersionLabel(v.label))
+  const stale = autos.slice(KEEP_AUTO_VERSIONS).map(v => v.id)
+  if (stale.length === 0) return
+
+  for (const ids of chunked(stale)) {
+    const { error: delErr } = await supabase
+      .from('project_versions')
+      .delete()
+      .in('id', ids)
+    if (delErr) throw delErr
+  }
+  console.log(`[versions] 자동 생성 버전 ${stale.length}개 정리`)
+}
+
+/** 우리가 붙인 라벨인가 — 사용자가 직접 지은 이름이면 false. */
+export function isAutoVersionLabel(label: string | null | undefined): boolean {
+  if (!label) return true                      // 라벨 없이 들어온 옛 행
+  return label === AUTO_SAVE_LABEL || label.startsWith(CONFLICT_BACKUP_PREFIX)
 }
 
 export async function deleteProjectVersion(versionId: string): Promise<void> {

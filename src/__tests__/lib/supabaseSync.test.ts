@@ -18,12 +18,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 /** PostgREST 가 timestamptz 를 돌려주는 형식 (JS 의 'Z' 가 아니다) */
 const toPgFormat = (iso: string) => iso.replace(/Z$/, '+00:00')
 
-type Row = { id: string; updated_at: string; snapshot: unknown; thumbnail: string | null }
+type Row = { id: string; updated_at: string; snapshot: unknown; snapshot_gz: string | null; thumbnail: string | null }
 
 const initialRow = (): Row => ({
   id: 'p1',
   updated_at: toPgFormat('2026-10-09T09:00:00.000Z'),
   snapshot: null,
+  snapshot_gz: null,
   thumbnail: 'data:image/svg+xml;base64,AAA',
 })
 
@@ -84,6 +85,11 @@ vi.mock('../../lib/supabase', () => {
 })
 
 const { saveProjectSnapshot } = await import('../../lib/supabaseSync')
+const { decodeSnapshot } = await import('../../lib/snapshotCodec')
+
+/** 서버에 저장된 스냅샷 — 이제 gzip 된 text 로 들어간다. */
+const savedSnapshot = async () =>
+  row.snapshot_gz === null ? null : await decodeSnapshot(row.snapshot_gz)
 
 beforeEach(() => {
   row = initialRow()
@@ -110,7 +116,7 @@ describe('saveProjectSnapshot', () => {
     const asZ = row.updated_at.replace(/\+00:00$/, 'Z')
     const result = await saveProjectSnapshot('p1', { a: 1 }, undefined, asZ)
     expect(result.conflict).toBe(false)
-    expect(row.snapshot).toEqual({ a: 1 })
+    expect(await savedSnapshot()).toEqual({ a: 1 })
   })
 
   it('저장 뒤 기준값은 서버가 돌려준 형식 그대로다', async () => {
@@ -130,13 +136,13 @@ describe('saveProjectSnapshot', () => {
     const result = await saveProjectSnapshot('p1', { a: 1 }, undefined, stale)
     expect(result.conflict).toBe(true)
     expect(result.serverUpdatedAt).toBe(row.updated_at)
-    expect(row.snapshot).toBeNull()   // 덮어쓰지 않았다
+    expect(await savedSnapshot()).toBeNull()   // 덮어쓰지 않았다
   })
 
   it('기준값을 안 주면 확인 없이 쓴다 (충돌 복구 후 재시도 경로)', async () => {
     const result = await saveProjectSnapshot('p1', { a: 9 })
     expect(result.conflict).toBe(false)
-    expect(row.snapshot).toEqual({ a: 9 })
+    expect(await savedSnapshot()).toEqual({ a: 9 })
     expect(lastUpdateFilters.map(([col]) => col)).toEqual(['id'])
   })
 
@@ -153,6 +159,14 @@ describe('saveProjectSnapshot', () => {
     expect(row.thumbnail).toBe('data:image/svg+xml;base64,BBB')
   })
 
+  it('jsonb 가 아니라 압축 text 컬럼에 쓴다', async () => {
+    // 수 MB JSON 을 jsonb 로 보내면 서버가 매번 파싱·TOAST 압축을 한다.
+    // 그게 CPU 94% 로 DB 를 멈춰세운 원인이었다 (snapshotCodec 주석 참고).
+    await saveProjectSnapshot('p1', { a: 1 }, undefined, row.updated_at)
+    expect(typeof row.snapshot_gz).toBe('string')
+    expect(row.snapshot).toBeNull()   // 옛 컬럼은 비워둔다 — 최신본이 둘이면 곤란하다
+  })
+
   it('프로젝트가 없으면 충돌이 아니라 에러다', async () => {
     // 0행이 돌아오는 이유는 둘이다 — 기준값 불일치(충돌)와 행 없음.
     // 후자를 충돌로 보고하면 호출부가 "백업 후 재시도" 를 영원히 돌린다.
@@ -164,6 +178,44 @@ describe('saveProjectSnapshot', () => {
     failNext = { message: 'permission denied' }
     await expect(saveProjectSnapshot('p1', { a: 1 }, undefined, row.updated_at))
       .rejects.toMatchObject({ message: 'permission denied' })
-    expect(row.snapshot).toBeNull()
+    expect(await savedSnapshot()).toBeNull()
+  })
+})
+
+// ───────── 자동 생성 버전 정리 ─────────
+//
+// project_versions 가 206MB 까지 자라 DB 의 대부분을 차지했다. 목록은 처음부터
+// 30개만 보여줬는데 **지우는 코드가 없었다.**
+//
+// 처음엔 "라벨이 비었으면 자동 생성" 으로 짰는데 그게 틀렸다 — 자동 저장은
+// '자동저장', 충돌 백업은 '충돌 백업 — …' 라벨을 달고 들어온다. 비어 있는 건
+// 오히려 드물어서, 그 조건으로는 **하나도 못 지운다** (실제 170개 전부 라벨이
+// 있었다). 그래서 "우리가 만든 라벨인지" 로 가른다.
+
+const { isAutoVersionLabel } = await import('../../lib/supabaseSync')
+const { conflictBackupLabel } = await import('../../lib/conflictBackup')
+
+describe('isAutoVersionLabel', () => {
+  it('자동저장 라벨을 알아본다', () => {
+    // App.tsx 의 자동 버전 타이머가 이 문자열을 넘긴다
+    expect(isAutoVersionLabel('자동저장')).toBe(true)
+  })
+
+  it('충돌 백업 라벨을 알아본다 — 실제 생성 함수로 만든 값으로', () => {
+    // 문자열을 베껴 적지 않는다. conflictBackup 쪽 문구가 바뀌면 여기서 깨져야 한다.
+    expect(isAutoVersionLabel(conflictBackupLabel(new Date('2026-10-08T16:17:00')))).toBe(true)
+  })
+
+  it('라벨이 없는 옛 행도 자동으로 본다', () => {
+    expect(isAutoVersionLabel(null)).toBe(true)
+    expect(isAutoVersionLabel(undefined)).toBe(true)
+    expect(isAutoVersionLabel('')).toBe(true)
+  })
+
+  it('사용자가 직접 지은 이름은 건드리지 않는다', () => {
+    // 이게 깨지면 사용자가 일부러 남긴 버전이 조용히 지워진다.
+    expect(isAutoVersionLabel('최종 검토본')).toBe(false)
+    expect(isAutoVersionLabel('발주 전')).toBe(false)
+    expect(isAutoVersionLabel('자동저장본 따로 보관')).toBe(false)
   })
 })
