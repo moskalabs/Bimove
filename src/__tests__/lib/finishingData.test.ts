@@ -588,3 +588,34 @@ describe('석고보드', () => {
     expect(unitAreaM2(g, thick)).toBe(1.62)
   })
 })
+
+// ───────── 마루 ─────────
+
+describe('마루', () => {
+  const wood = () => resetFinishingData().categories
+    .flatMap(c => c.items).find(i => i.id === 'f-wood')!
+
+  it('표의 네 종류가 규격·두께와 함께 들어 있다', () => {
+    const w = wood()
+    expect(w.variants.map(v => [v.itemWidthMm, v.itemLengthMm, v.thicknessMm])).toEqual([
+      [94, 800, 7.5],      // 강마루
+      [165, 1200, 7.5],    // 광폭 강마루
+      [190, 1200, 8],      // 강화마루
+      [150, 1200, 12],     // 원목마루
+    ])
+  })
+
+  it('BOX당 장수를 지어내지 않는다 — 면적은 표 값 그대로다', () => {
+    // 3.17 ÷ (0.165 × 1.2) = 16.01장. 역산해서 16을 박아넣으면 3.168 이 되어
+    // 표와 어긋난다. 표에 장수가 없으므로 비워두고 면적을 그대로 쓴다.
+    const w = wood()
+    expect(w.variants.every(v => v.piecesPerBox === undefined)).toBe(true)
+    expect(w.variants.map(v => unitAreaM2(w, v))).toEqual([3.23, 3.17, 1.82, 2.16])
+  })
+
+  it('사용자가 장수를 넣으면 그때부터 규격에서 계산한다', () => {
+    const w = wood()
+    const withPieces = { ...w.variants[3], piecesPerBox: 12 }   // 원목 150 × 1200
+    expect(unitAreaM2(w, withPieces)).toBe(2.16)
+  })
+})
