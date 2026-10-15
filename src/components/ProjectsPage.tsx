@@ -324,14 +324,28 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) =
     }
   }
 
+  // 서버 호출이 실패하면 throw 한다 (supabaseSync 가 더 이상 삼키지 않는다).
+  // 잡지 않으면 목록만 조용히 그대로여서 사용자는 지워진 줄 안다.
   const handleDelete = async (id: string, name: string) => {
     if (!confirm(`"${name}" 프로젝트를 삭제할까요?`)) return
-    await deleteProjectDB(id)
+    try {
+      await deleteProjectDB(id)
+    } catch (err) {
+      console.warn('[projects] delete failed', err)
+      toast('프로젝트를 삭제하지 못했습니다.', 'error')
+      return
+    }
     await loadProjects()
   }
 
   const handleRename = async (id: string, name: string) => {
-    await renameProjectDB(id, name)
+    try {
+      await renameProjectDB(id, name)
+    } catch (err) {
+      console.warn('[projects] rename failed', err)
+      toast('이름을 바꾸지 못했습니다.', 'error')
+      return
+    }
     await loadProjects()
   }
 
