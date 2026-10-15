@@ -5,7 +5,7 @@ import {
   Copy, Move, RotateCw,
   Type,
 } from 'lucide-react'
-import { PageRecordType, createShapeId } from 'tldraw'
+import { PageRecordType, createShapeId, GeoShapeGeoStyle } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
 import { startZoneDraw } from '../lib/drawingState'
 import { nextZoneColor } from '../shapes/ZoneShape'
@@ -159,7 +159,7 @@ const GROUP_ANNOTATE: ToolDef[] = [
   { id: 'leader', label: '지시선', render: LeaderIcon },
 ]
 
-/* tldraw 도구 ID 매핑 (기존 커스텀 도구와 연결) */
+/* tldraw 도구 ID 매핑 (커스텀 도구 + tldraw 기본 도구) */
 const TOOL_MAP: Record<string, string> = {
   'select': 'select',
   'wall': 'wall',
@@ -169,6 +169,10 @@ const TOOL_MAP: Record<string, string> = {
   'comment': 'comment',
   'text': 'text',
   'dimension': 'dimension',
+  // 여기부터는 tldraw 기본 도구. 전엔 매핑이 없어서 **버튼을 눌러도 파란
+  // 활성 표시만 되고 아무 일도 안 했다.**
+  'line': 'line',
+  'leader': 'arrow',
 }
 
 function ToolButton({ tool, active, onClick }: { tool: ToolDef; active: boolean; onClick: () => void }) {
@@ -280,6 +284,14 @@ export function TopBar() {
       return
     }
 
+    // 사각형·원형은 tldraw 의 geo 도구 하나로 그린다 — 어떤 도형인지는
+    // "다음에 그릴 스타일" 로 정한다.
+    if ((id === 'rect' || id === 'circle') && editor) {
+      editor.setStyleForNextShapes(GeoShapeGeoStyle, id === 'rect' ? 'rectangle' : 'ellipse')
+      editor.setCurrentTool('geo')
+      return
+    }
+
     const mapped = TOOL_MAP[id]
     if (mapped && editor) {
       editor.setCurrentTool(mapped)
@@ -291,6 +303,11 @@ export function TopBar() {
     }
     if (id === 'move-tool' && editor) {
       editor.setCurrentTool('select')
+    }
+    // 회전은 도구가 아니라 즉시 동작이다 (복사와 같은 결). 선택한 것을 90° 돌린다.
+    if (id === 'rotate-tool' && editor) {
+      const ids = editor.getSelectedShapeIds()
+      if (ids.length) editor.rotateShapesBy(ids, Math.PI / 2)
     }
   }
 

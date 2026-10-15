@@ -1,14 +1,32 @@
 // 바닥 면적 폴리곤 측정 오버레이
 // 1. 펜 클릭으로 활성화 → 2. 도면 위에서 꼭짓점 클릭 → 3. 폴리곤 닫기 → 면적 자동 계산
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Vec } from 'tldraw'
+import { Vec, type Editor } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
 import { cancelAreaMeasure, completeAreaMeasure } from '../lib/drawingState'
 import { getScaleConfig } from '../lib/scaleConfig'
 import { shoelaceArea, pxAreaToM2, measurePolygon, type Pt } from '../lib/areaMeasure'
-import { snapToWallEndpoint } from '../lib/snap'
+import { resolveDrawPointAt, type SnapPoint } from '../lib/snap'
 
-const SNAP_DIST = 12 // px — 첫 점 근처에서 클릭하면 폴리곤 닫기
+const SNAP_DIST = 12
+
+/**
+ * 커서가 가 있을 점. 벽체·치수 도구와 **같은 스냅 체인**을 쓴다.
+ *
+ * 예전엔 끝점 스냅만 불러서 직교·교차점·수직·연장이 전부 안 먹었고, 스냅
+ * 모드 토글(끝점/중간점 끄기)도 무시했다.
+ */
+function resolvePoint(editor: Editor, e: React.MouseEvent, prev: Pt[]): SnapPoint {
+  const rawPt = editor.screenToPage({ x: e.clientX, y: e.clientY })
+  const start = prev.length > 0 ? prev[prev.length - 1] : null
+  return resolveDrawPointAt(editor, rawPt, start, e.shiftKey)
+}
+
+/** 주황 마커를 찍을 스냅인지 — 직교는 '점'이 아니라 각도라 찍지 않는다. */
+function isPointSnap(snapType: SnapPoint['snapType']): boolean {
+  return !!snapType && snapType !== 'angle'
+}
+ // px — 첫 점 근처에서 클릭하면 폴리곤 닫기
 
 export function AreaMeasureOverlay() {
   const editor = useEditor()
@@ -90,11 +108,8 @@ export function AreaMeasureOverlay() {
     e.stopPropagation()
     e.preventDefault()
 
-    const rawPt = editor.screenToPage({ x: e.clientX, y: e.clientY })
-
-    // 객체 스냅: 벽 끝점에 자동 흡착
-    const snapped = snapToWallEndpoint(editor, rawPt)
-    const pagePt: Pt = snapped ? { x: snapped.x, y: snapped.y } : { x: rawPt.x, y: rawPt.y }
+    const resolved = resolvePoint(editor, e, pagePoints)
+    const pagePt: Pt = { x: resolved.x, y: resolved.y }
 
     // 첫 점 근처 클릭 → 폴리곤 닫기
     if (pagePoints.length >= 3) {
@@ -121,26 +136,13 @@ export function AreaMeasureOverlay() {
   }, [pagePoints, finishMeasure])
 
   // 마우스 이동: 커서 위치 표시 + 스냅 감지
-  const snapLoggedRef = useRef(false)
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!editor || !active) return
-    const rawPt = editor.screenToPage({ x: e.clientX, y: e.clientY })
-
-    // 객체 스냅 감지
-    const snapped = snapToWallEndpoint(editor, rawPt)
-    if (snapped) {
-      if (!snapLoggedRef.current) {
-        snapLoggedRef.current = true
-        console.debug('[area-snap] hit:', snapped.snapType, 'at', snapped.x.toFixed(1), snapped.y.toFixed(1))
-      }
-      const snapPage: Pt = { x: snapped.x, y: snapped.y }
-      setSnapVp(editor.pageToViewport(snapPage))
-      setCursorVp(editor.pageToViewport(snapPage))
-    } else {
-      setSnapVp(null)
-      setCursorVp(editor.pageToViewport(rawPt))
-    }
-  }, [editor, active])
+    const resolved = resolvePoint(editor, e, pagePoints)
+    const vp = editor.pageToViewport({ x: resolved.x, y: resolved.y })
+    setCursorVp(vp)
+    setSnapVp(isPointSnap(resolved.snapType) ? vp : null)
+  }, [editor, active, pagePoints])
 
   // 휠: editor.dispatch()로 직접 전달 (DOM 포워딩은 isFocused 체크에 막힘)
   const handleWheel = useCallback((e: React.WheelEvent) => {

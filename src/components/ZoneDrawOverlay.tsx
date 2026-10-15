@@ -1,14 +1,31 @@
 // 공간지정(Zone) 폴리곤 드로잉 오버레이
 // AreaMeasureOverlay 기반 — 동일한 폴리곤 드로잉 UX
 import { useState, useEffect, useCallback } from 'react'
-import { Vec } from 'tldraw'
+import { Vec, type Editor } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
 import { cancelZoneDraw, completeZoneDraw } from '../lib/drawingState'
 import { getScaleConfig } from '../lib/scaleConfig'
 import { shoelaceArea, pxAreaToM2, measurePolygon, type Pt } from '../lib/areaMeasure'
-import { snapToWallEndpoint } from '../lib/snap'
+import { resolveDrawPointAt, type SnapPoint } from '../lib/snap'
 
 const SNAP_DIST = 12
+
+/**
+ * 커서가 가 있을 점. 벽체·치수 도구와 **같은 스냅 체인**을 쓴다.
+ *
+ * 예전엔 끝점 스냅만 불러서 직교·교차점·수직·연장이 전부 안 먹었고, 스냅
+ * 모드 토글(끝점/중간점 끄기)도 무시했다.
+ */
+function resolvePoint(editor: Editor, e: React.MouseEvent, prev: Pt[]): SnapPoint {
+  const rawPt = editor.screenToPage({ x: e.clientX, y: e.clientY })
+  const start = prev.length > 0 ? prev[prev.length - 1] : null
+  return resolveDrawPointAt(editor, rawPt, start, e.shiftKey)
+}
+
+/** 주황 마커를 찍을 스냅인지 — 직교는 '점'이 아니라 각도라 찍지 않는다. */
+function isPointSnap(snapType: SnapPoint['snapType']): boolean {
+  return !!snapType && snapType !== 'angle'
+}
 
 export function ZoneDrawOverlay() {
   const editor = useEditor()
@@ -83,9 +100,8 @@ export function ZoneDrawOverlay() {
     e.stopPropagation()
     e.preventDefault()
 
-    const rawPt = editor.screenToPage({ x: e.clientX, y: e.clientY })
-    const snapped = snapToWallEndpoint(editor, rawPt)
-    const pagePt: Pt = snapped ? { x: snapped.x, y: snapped.y } : { x: rawPt.x, y: rawPt.y }
+    const resolved = resolvePoint(editor, e, pagePoints)
+    const pagePt: Pt = { x: resolved.x, y: resolved.y }
 
     if (pagePoints.length >= 3) {
       const first = pagePoints[0]
@@ -108,17 +124,11 @@ export function ZoneDrawOverlay() {
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!editor || !active) return
-    const rawPt = editor.screenToPage({ x: e.clientX, y: e.clientY })
-    const snapped = snapToWallEndpoint(editor, rawPt)
-    if (snapped) {
-      const snapPage: Pt = { x: snapped.x, y: snapped.y }
-      setSnapVp(editor.pageToViewport(snapPage))
-      setCursorVp(editor.pageToViewport(snapPage))
-    } else {
-      setSnapVp(null)
-      setCursorVp(editor.pageToViewport(rawPt))
-    }
-  }, [editor, active])
+    const resolved = resolvePoint(editor, e, pagePoints)
+    const vp = editor.pageToViewport({ x: resolved.x, y: resolved.y })
+    setCursorVp(vp)
+    setSnapVp(isPointSnap(resolved.snapType) ? vp : null)
+  }, [editor, active, pagePoints])
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (!editor) return

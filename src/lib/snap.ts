@@ -379,17 +379,22 @@ export function snapAngle(dx: number, dy: number, stepDeg = 15): { x: number; y:
 }
 
 /**
- * Shared point resolution for draw tools (wall/dimension): snap priority is
- * endpoint > intersection > perpendicular > extension > orthogonal angle.
- * Returns resolved point with snap type info.
+ * 그리기 도구가 쓰는 스냅 체인 전체.
+ * 끝점 > 교차점 > 수직 > 연장 > 직교 각도 순으로 본다.
+ *
+ * **커서 위치를 인자로 받는다.** tldraw 도구는 editor.inputs 에서 읽으면
+ * 되지만, 공간지정·면적측정 오버레이는 `<Tldraw>` 의 형제로 붙어 자기 포인터
+ * 이벤트를 직접 받는다 — editor.inputs 가 따라오지 않는다. 그래서 그쪽은
+ * 끝점 스냅 하나만 쓰고 있었고 **직교·교차점·수직·연장이 전부 죽어 있었다.**
+ * shiftKey 도 같은 이유로 넘겨받는다.
  */
-export function resolveDrawPoint(
+export function resolveDrawPointAt(
   editor: Editor,
+  point: { x: number; y: number },
   startPoint: { x: number; y: number } | null,
+  shiftKey: boolean,
   excludeId?: string,
 ): SnapPoint {
-  const point = editor.inputs.currentPagePoint
-
   // 1. 끝점/중간점/엣지 스냅 (최고 우선순위) — 모드 설정에 따라 필터
   const epSnap = snapToWallEndpoint(editor, point, excludeId)
   if (epSnap) {
@@ -415,10 +420,25 @@ export function resolveDrawPoint(
   if (extSnap) return extSnap
 
   // 5. 직교 각도 스냅 (폴백)
-  const orthoOn = getSnapEnabled() !== editor.inputs.shiftKey
+  const orthoOn = getSnapEnabled() !== shiftKey
   if (startPoint && orthoOn) {
     const v = snapAngle(point.x - startPoint.x, point.y - startPoint.y)
     return { x: startPoint.x + v.x, y: startPoint.y + v.y, snapType: 'angle' }
   }
   return { x: point.x, y: point.y }
+}
+
+/** tldraw 도구용 — 커서와 shift 를 editor.inputs 에서 읽는 래퍼. */
+export function resolveDrawPoint(
+  editor: Editor,
+  startPoint: { x: number; y: number } | null,
+  excludeId?: string,
+): SnapPoint {
+  return resolveDrawPointAt(
+    editor,
+    editor.inputs.currentPagePoint,
+    startPoint,
+    editor.inputs.shiftKey,
+    excludeId,
+  )
 }

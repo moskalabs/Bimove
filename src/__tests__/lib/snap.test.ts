@@ -653,3 +653,57 @@ describe('resolveDrawPoint edge mode', () => {
     expect(typeof snap.resolveDrawPoint).toBe('function')
   })
 })
+
+// ── resolveDrawPointAt: 오버레이가 쓰는 경로 ──
+//
+// 공간지정·면적측정 오버레이는 `<Tldraw>` 의 형제로 붙어 자기 포인터 이벤트를
+// 직접 받는다 — editor.inputs 가 따라오지 않는다. 그래서 끝점 스냅 하나만 부르고
+// 있었고 **직교가 통째로 죽어 있었다.** 커서를 인자로 받는 경로가 이 테스트다.
+
+import { resolveDrawPointAt } from '../../lib/snap'
+import { setSnapEnabled } from '../../lib/settings'
+
+describe('resolveDrawPointAt', () => {
+  it('직교가 켜져 있으면 시작점 기준 15° 배수로 각을 맞춘다', () => {
+    setSnapEnabled(true)
+    const editor = makeEditor([])
+    // (0,0) 에서 살짝 기운 점 → 수평으로 당겨진다
+    const p = resolveDrawPointAt(editor as never, { x: 100, y: 7 }, { x: 0, y: 0 }, false)
+    expect(p.snapType).toBe('angle')
+    expect(p.y).toBeCloseTo(0, 6)
+  })
+
+  it('shift 를 누르면 직교를 잠깐 끈다', () => {
+    setSnapEnabled(true)
+    const editor = makeEditor([])
+    const p = resolveDrawPointAt(editor as never, { x: 100, y: 7 }, { x: 0, y: 0 }, true)
+    expect(p.snapType).toBeUndefined()
+    expect(p.y).toBe(7)
+  })
+
+  it('시작점이 없으면(첫 점) 직교를 걸지 않는다', () => {
+    setSnapEnabled(true)
+    const editor = makeEditor([])
+    const p = resolveDrawPointAt(editor as never, { x: 100, y: 7 }, null, false)
+    expect(p.snapType).toBeUndefined()
+    expect(p).toMatchObject({ x: 100, y: 7 })
+  })
+
+  it('끝점 스냅이 직교보다 우선한다', () => {
+    setSnapEnabled(true)
+    const editor = makeEditor([
+      { id: 'w1', type: 'wall', x: 200, y: 50, props: { x2: 100, y2: 0 } },
+    ])
+    const p = resolveDrawPointAt(editor as never, { x: 203, y: 52 }, { x: 0, y: 0 }, false)
+    expect(p.snapType).toBe('endpoint')
+    expect(p).toMatchObject({ x: 200, y: 50 })
+  })
+
+  it('직교를 꺼두면 커서 자리를 그대로 쓴다', () => {
+    setSnapEnabled(false)
+    const editor = makeEditor([])
+    const p = resolveDrawPointAt(editor as never, { x: 100, y: 7 }, { x: 0, y: 0 }, false)
+    expect(p.snapType).toBeUndefined()
+    expect(p.y).toBe(7)
+  })
+})
