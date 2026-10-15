@@ -236,6 +236,7 @@ describe('defaults', () => {
     expect(paint.containerSizes).toEqual([1, 4, 18])
     // 종류마다 도포율이 다르다 (에폭시·외부수성 8, 에나멜·우레탄 12)
     expect(paint.variants.map(v => v.coverageM2PerL)).toEqual([10, 8, 10, 12, 8, 12, 10])
+    expect(paint.variants[0].label).toBe('내부 수성페인트')
   })
 })
 
@@ -557,5 +558,33 @@ describe('unitAreaM2 우선순위', () => {
     const rollItem = { ...tileItem, calcType: 'roll' as const, unit: '롤' }
     const silk = { id: 'v', label: '실크', zones: [], rollWidthMm: 1060, rollLengthM: 15.6, rollAreaM2: 1 }
     expect(unitAreaM2(rollItem, silk)).toBe(16.536)
+  })
+})
+
+// ───────── 낱장으로 사는 자재 (석고보드) ─────────
+
+describe('석고보드', () => {
+  const gypsum = () => resetFinishingData().categories
+    .flatMap(c => c.items).find(i => i.id === 'f-gypsum')!
+
+  it('다섯 종류가 들어 있다', () => {
+    expect(gypsum().variants.map(v => v.label)).toEqual(
+      ['일반 석고보드', '방수 석고보드', '방화 석고보드', '차음 석고보드', '유공 석고보드'])
+  })
+
+  it('두께로 종류가 갈린다 — 면적이 같아도 다른 물건이다', () => {
+    expect(gypsum().variants.map(v => v.thicknessMm)).toEqual([9.5, 9.5, 12.5, 12.5, 12.5])
+  })
+
+  it('장수가 1이라 1장당 면적은 가로 × 세로다', () => {
+    const g = gypsum()
+    expect(g.variants.every(v => v.piecesPerBox === 1)).toBe(true)
+    expect(g.variants.map(v => unitAreaM2(g, v))).toEqual([1.62, 1.62, 1.62, 1.62, 1.62])
+  })
+
+  it('두께를 바꿔도 면적은 그대로다 (계산에 안 쓴다)', () => {
+    const g = gypsum()
+    const thick = { ...g.variants[0], thicknessMm: 25 }
+    expect(unitAreaM2(g, thick)).toBe(1.62)
   })
 })

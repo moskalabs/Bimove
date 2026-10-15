@@ -43,6 +43,11 @@ export type MaterialSpec = {
   itemLengthMm?: number
   /** BOX 당 장수. 제조사마다 다르므로 사용자가 고칠 수 있다. */
   piecesPerBox?: number
+  /**
+   * 두께 (mm). 계산에는 안 쓰고 규격 표시용이다 — 방화석고 12.5T 와
+   * 일반석고 9.5T 는 면적이 같아도 다른 자재다.
+   */
+  thicknessMm?: number
   /** 롤 폭 (mm) */
   rollWidthMm?: number
   /** 롤 길이 (m) */
@@ -120,6 +125,8 @@ export type FinishingItem = {
   boxAreaM2?: number
   /** BOX 당 장수 (변형에 없을 때의 기본값) */
   piecesPerBox?: number
+  /** 두께 mm (변형에 없을 때의 기본값) */
+  thicknessMm?: number
   /** 롤 폭 (mm) / 길이 (m) — 변형에 없을 때의 기본값 */
   rollWidthMm?: number
   rollLengthM?: number
@@ -188,23 +195,23 @@ const DEFAULT_CATEGORIES: FinishingCategory[] = [
       // 사고를 구조적으로 막는다.
       {
         id: 'f-gypsum', label: '석고보드', calcType: 'sheet',
-        itemWidthMm: 900, itemLengthMm: 1800, piecesPerBox: 1,
+        itemWidthMm: 900, itemLengthMm: 1800, piecesPerBox: 1, thicknessMm: 9.5,
         boxAreaM2: 1.62, lossRate: 0.05, unit: '장',
-        specLabel: '일반석고 900 × 1800 × 9.5T (1.62 m²/장)',
+        specLabel: '일반 석고보드 900 × 1800 × 9.5T (1.62 m²/장)',
         variants: [
-          createVariant('일반석고', { itemWidthMm: 900, itemLengthMm: 1800, piecesPerBox: 1, specLabel: '일반석고 900 × 1800 × 9.5T (1.62 m²/장)' }),
-          createVariant('방수석고', { itemWidthMm: 900, itemLengthMm: 1800, piecesPerBox: 1, specLabel: '방수석고 900 × 1800 × 9.5T (1.62 m²/장)' }),
-          createVariant('방화석고', { itemWidthMm: 900, itemLengthMm: 1800, piecesPerBox: 1, specLabel: '방화석고 900 × 1800 × 12.5T (1.62 m²/장)' }),
-          createVariant('차음석고', { itemWidthMm: 900, itemLengthMm: 1800, piecesPerBox: 1, specLabel: '차음석고 900 × 1800 × 12.5T (1.62 m²/장)' }),
-          createVariant('유공석고', { itemWidthMm: 900, itemLengthMm: 1800, piecesPerBox: 1, specLabel: '유공석고 900 × 1800 × 12.5T (1.62 m²/장)' }),
+          createVariant('일반 석고보드', { itemWidthMm: 900, itemLengthMm: 1800, piecesPerBox: 1, thicknessMm: 9.5, specLabel: '일반 석고보드 900 × 1800 × 9.5T (1.62 m²/장)' }),
+          createVariant('방수 석고보드', { itemWidthMm: 900, itemLengthMm: 1800, piecesPerBox: 1, thicknessMm: 9.5, specLabel: '방수 석고보드 900 × 1800 × 9.5T (1.62 m²/장)' }),
+          createVariant('방화 석고보드', { itemWidthMm: 900, itemLengthMm: 1800, piecesPerBox: 1, thicknessMm: 12.5, specLabel: '방화 석고보드 900 × 1800 × 12.5T (1.62 m²/장)' }),
+          createVariant('차음 석고보드', { itemWidthMm: 900, itemLengthMm: 1800, piecesPerBox: 1, thicknessMm: 12.5, specLabel: '차음 석고보드 900 × 1800 × 12.5T (1.62 m²/장)' }),
+          createVariant('유공 석고보드', { itemWidthMm: 900, itemLengthMm: 1800, piecesPerBox: 1, thicknessMm: 12.5, specLabel: '유공 석고보드 900 × 1800 × 12.5T (1.62 m²/장)' }),
         ],
       },
       {
         id: 'f-paint', label: '도장', calcType: 'paint',
         coverageM2PerL: 10, containerSizes: [1, 4, 18], lossRate: 0.05, unit: 'L',
-        specLabel: '수성 페인트 기준 10 m²/L (면적 × 도포횟수 ÷ 도포율)',
+        specLabel: '내부 수성페인트 기준 10 m²/L (면적 × 도포횟수 ÷ 도포율)',
         variants: [
-          createVariant('수성페인트', { coverageM2PerL: 10, specLabel: '수성 페인트 기준 10 m²/L (면적 × 도포횟수 ÷ 도포율)' }),
+          createVariant('내부 수성페인트', { coverageM2PerL: 10, specLabel: '내부 수성페인트 기준 10 m²/L (면적 × 도포횟수 ÷ 도포율)' }),
           createVariant('외부 수성페인트', { coverageM2PerL: 8, specLabel: '외부 수성페인트 기준 8 m²/L (면적 × 도포횟수 ÷ 도포율)' }),
           createVariant('락카페인트', { coverageM2PerL: 10, specLabel: '락카페인트 기준 10 m²/L (면적 × 도포횟수 ÷ 도포율)' }),
           createVariant('에나멜페인트', { coverageM2PerL: 12, specLabel: '에나멜페인트 기준 12 m²/L (면적 × 도포횟수 ÷ 도포율)' }),
@@ -247,10 +254,10 @@ const DEFAULT_CATEGORIES: FinishingCategory[] = [
         floorOnly: true, boxAreaM2: 3.23, lossRate: 0.10, unit: 'box',
         specLabel: '강마루 94 × 800 × 7.5T 기준 3.23 m²/box',
         variants: [
-          createVariant('강마루', { boxAreaM2: 3.23, specLabel: '강마루 94 × 800 × 7.5T 기준 3.23 m²/box' }),
-          createVariant('광폭 강마루', { boxAreaM2: 3.17, specLabel: '광폭 강마루 165 × 1200 × 7.5T 기준 3.17 m²/box' }),
-          createVariant('강화마루', { boxAreaM2: 1.82, specLabel: '강화마루 190 × 1200 × 8T 기준 1.82 m²/box' }),
-          createVariant('원목마루', { boxAreaM2: 2.16, specLabel: '원목마루 150 × 1200 × 12T 기준 2.16 m²/box' }),
+          createVariant('강마루', { thicknessMm: 7.5, boxAreaM2: 3.23, specLabel: '강마루 94 × 800 × 7.5T 기준 3.23 m²/box' }),
+          createVariant('광폭 강마루', { thicknessMm: 7.5, boxAreaM2: 3.17, specLabel: '광폭 강마루 165 × 1200 × 7.5T 기준 3.17 m²/box' }),
+          createVariant('강화마루', { thicknessMm: 8, boxAreaM2: 1.82, specLabel: '강화마루 190 × 1200 × 8T 기준 1.82 m²/box' }),
+          createVariant('원목마루', { thicknessMm: 12, boxAreaM2: 2.16, specLabel: '원목마루 150 × 1200 × 12T 기준 2.16 m²/box' }),
         ],
       },
       // ── 추가 선택 항목 ──
@@ -359,6 +366,7 @@ export function specOf(item: FinishingItem, variant?: MaterialVariant): Material
     itemWidthMm: variant?.itemWidthMm ?? item.itemWidthMm,
     itemLengthMm: variant?.itemLengthMm ?? item.itemLengthMm,
     piecesPerBox: variant?.piecesPerBox ?? item.piecesPerBox,
+    thicknessMm: variant?.thicknessMm ?? item.thicknessMm,
     rollWidthMm: variant?.rollWidthMm ?? item.rollWidthMm,
     rollLengthM: variant?.rollLengthM ?? item.rollLengthM,
     lossRate: variant?.lossRate ?? item.lossRate,
@@ -501,7 +509,7 @@ export function getFinishingAreaForPO(
 
 const STORAGE_KEY = 'bimova_finishing_tables_v1'
 /** 이 숫자를 올리면 저장된 데이터에 새 defaults가 병합됨 */
-const SCHEMA_VERSION = 6
+const SCHEMA_VERSION = 7
 
 /** 저장된 데이터에 새 defaults를 병합 (사용자 입력값은 유지) */
 function mergeDefaults(saved: FinishingTablesData): FinishingTablesData {
@@ -524,6 +532,7 @@ function mergeDefaults(saved: FinishingTablesData): FinishingTablesData {
         savedItem.floorOnly = defItem.floorOnly
         savedItem.boxAreaM2 = defItem.boxAreaM2
         savedItem.piecesPerBox = defItem.piecesPerBox
+        savedItem.thicknessMm = defItem.thicknessMm
         savedItem.rollAreaM2 = defItem.rollAreaM2
         savedItem.rollWidthMm = defItem.rollWidthMm
         savedItem.rollLengthM = defItem.rollLengthM
