@@ -12,7 +12,8 @@ import {
   calcSheetQty, calcRollQty,
   paintVolumeL, sumPaintVolume, calcPaintContainers,
   type FinishingTablesData, type FinishingCategory, type FinishingItem,
-  type MaterialVariant, type ZoneRow,
+  type MaterialVariant, type ZoneRow, specOf,
+  boxAreaM2From, rollAreaM2From, defaultPiecesPerBox, resetFinishingData,
 } from '../../../lib/finishingData'
 
 // ── 카테고리 트리 ──
@@ -174,7 +175,7 @@ function FloorTable({ item, variant, onUpdate }: {
                 </td>
               )}
               {isPaint && (
-                <td className="ft-num">{paintVolumeL(z, item.coverageM2PerL ?? 8, 'floor') || '-'}</td>
+                <td className="ft-num">{paintVolumeL(z, specOf(item, variant).coverageM2PerL ?? 10, 'floor') || '-'}</td>
               )}
               <td className="ft-row-actions">
                 <button
@@ -254,7 +255,7 @@ function WallTable({ item, variant, onUpdate }: {
                 </td>
               )}
               {isPaint && (
-                <td className="ft-num">{paintVolumeL(z, item.coverageM2PerL ?? 8, 'wall') || '-'}</td>
+                <td className="ft-num">{paintVolumeL(z, specOf(item, variant).coverageM2PerL ?? 10, 'wall') || '-'}</td>
               )}
             </tr>
           ))}
@@ -276,7 +277,7 @@ function TotalSection({ item, variant, onSpecEdit }: {
     <div className="ft-spec-row">
       <div className="ft-spec-note">
         <span className="ft-spec-icon">ℹ</span>
-        <span>기본 규격 : {item.specLabel ?? ''}</span>
+        <span>기본 규격 : {specOf(item, variant).specLabel ?? ''}</span>
       </div>
       <button className="ft-spec-edit-btn" onClick={onSpecEdit}>자재 규격 수정 ⚙</button>
     </div>
@@ -284,7 +285,7 @@ function TotalSection({ item, variant, onSpecEdit }: {
 
   // ── 도장 ──
   if (isPaint) {
-    const totalVolume = sumPaintVolume(variant, item.coverageM2PerL ?? 8)
+    const totalVolume = sumPaintVolume(variant, specOf(item, variant).coverageM2PerL ?? 10)
     const totalArea = sumTotalArea(variant)
     const containers = calcPaintContainers(totalVolume, containerSize)
 
@@ -373,97 +374,212 @@ function TotalSection({ item, variant, onSpecEdit }: {
 
 // ── 자재 규격 수정 모달 ──
 
+/**
+ * 종류(변형)를 하나 골라 그 규격을 고친다.
+ *
+ * 면적 칸은 **읽기 전용 파생값**이다. 타일이면 가로 × 세로 ÷ 1,000,000 ×
+ * 장수, 벽지면 폭 ÷ 1,000 × 길이. 사람이 면적을 직접 적게 두면 규격과
+ * 어긋난 값이 남고, 그 어긋남은 발주 수량에서야 드러난다.
+ *
+ * 가로·세로를 바꾸면 등록된 규격의 BOX 당 장수를 끌어와 채운다. **등록되지
+ * 않은 규격이면 장수를 건드리지 않는다** — 포장 수량은 제조사가 정하는 값이라
+ * 비슷한 크기로 넘겨짚으면 수량이 조용히 틀어진다.
+ */
 function SpecEditModal({ item, onSave, onClose }: {
   item: FinishingItem
   onSave: (patch: Partial<FinishingItem>) => void
   onClose: () => void
 }) {
-  const [boxAreaM2, setBoxAreaM2] = useState(item.boxAreaM2 ?? 0)
-  const [rollAreaM2, setRollAreaM2] = useState(item.rollAreaM2 ?? 0)
-  const [coverageM2PerL, setCoverageM2PerL] = useState(item.coverageM2PerL ?? 8)
+  // 변형 여러 개를 연속으로 고치고 한 번에 적용할 수 있게 사본을 들고 있는다.
+  const [variants, setVariants] = useState<MaterialVariant[]>(() => structuredClone(item.variants))
+  const [sel, setSel] = useState(0)
   const [lossRate, setLossRate] = useState(Math.round(item.lossRate * 100))
   const [unit, setUnit] = useState(item.unit)
-  const [specLabel, setSpecLabel] = useState(item.specLabel ?? '')
-  const [itemWidthMm, setItemWidthMm] = useState(item.itemWidthMm ?? 0)
-  const [itemLengthMm, setItemLengthMm] = useState(item.itemLengthMm ?? 0)
+
+  const current = variants[sel] ?? variants[0]
+  const isSheet = item.calcType === 'sheet'
+  const isRoll = item.calcType === 'roll'
+  const isPaint = item.calcType === 'paint'
+
+  /** 선택된 변형만 갈아끼운다. */
+  const patchCurrent = (patch: Partial<MaterialVariant>) => {
+    setVariants(prev => prev.map((v, i) => i === sel ? { ...v, ...patch } : v))
+  }
+
+  /** 가로/세로가 바뀌면 등록된 장수를 따라 채운다 (없으면 그대로 둔다). */
+  const setSize = (next: { itemWidthMm?: number; itemLengthMm?: number }) => {
+    const w = next.itemWidthMm ?? current.itemWidthMm ?? 0
+    const h = next.itemLengthMm ?? current.itemLengthMm ?? 0
+    const known = defaultPiecesPerBox(w, h)
+    patchCurrent({ ...next, ...(known ? { piecesPerBox: known } : {}) })
+  }
+
+  /** 이 변형을 기본값으로 되돌린다. */
+  const resetToDefault = () => {
+    const defaults = resetFinishingData()
+    const defItem = defaults.categories.flatMap(c => c.items).find(i => i.id === item.id)
+    const defVariant = defItem?.variants.find(v => v.label === current.label)
+    if (!defVariant) return
+    patchCurrent({
+      itemWidthMm: defVariant.itemWidthMm,
+      itemLengthMm: defVariant.itemLengthMm,
+      piecesPerBox: defVariant.piecesPerBox,
+      rollWidthMm: defVariant.rollWidthMm,
+      rollLengthM: defVariant.rollLengthM,
+      boxAreaM2: defVariant.boxAreaM2,
+      rollAreaM2: defVariant.rollAreaM2,
+      coverageM2PerL: defVariant.coverageM2PerL,
+      specLabel: defVariant.specLabel,
+    })
+  }
+
+  // 화면에 보여줄 면적 — 저장값이 아니라 지금 입력된 규격에서 바로 계산한다.
+  const derivedBoxArea = boxAreaM2From(
+    current.itemWidthMm ?? 0, current.itemLengthMm ?? 0, current.piecesPerBox ?? 0)
+  const derivedRollArea = rollAreaM2From(current.rollWidthMm ?? 0, current.rollLengthM ?? 0)
 
   const handleSave = () => {
-    const patch: Partial<FinishingItem> = {
+    // 계산된 면적을 함께 굳혀둔다. unitAreaM2 는 규격에서 다시 계산하지만,
+    // 발주서 연동처럼 변형 없이 자재만 보는 자리도 있다.
+    const saved = variants.map(v => {
+      const box = boxAreaM2From(v.itemWidthMm ?? 0, v.itemLengthMm ?? 0, v.piecesPerBox ?? 0)
+      const roll = rollAreaM2From(v.rollWidthMm ?? 0, v.rollLengthM ?? 0)
+      return {
+        ...v,
+        ...(box > 0 ? { boxAreaM2: box } : {}),
+        ...(roll > 0 ? { rollAreaM2: roll } : {}),
+      }
+    })
+    const first = saved[0]
+    onSave({
+      variants: saved,
       lossRate: lossRate / 100,
       unit,
-      specLabel,
-    }
-    if (item.calcType === 'sheet') {
-      patch.boxAreaM2 = boxAreaM2
-      patch.itemWidthMm = itemWidthMm
-      patch.itemLengthMm = itemLengthMm
-    } else if (item.calcType === 'roll') {
-      patch.rollAreaM2 = rollAreaM2
-    } else if (item.calcType === 'paint') {
-      patch.coverageM2PerL = coverageM2PerL
-    }
-    onSave(patch)
+      // 첫 변형이 "기본 규격" 이다 — 자재 레벨 폴백을 거기에 맞춰둔다.
+      ...(first?.boxAreaM2 ? { boxAreaM2: first.boxAreaM2 } : {}),
+      ...(first?.rollAreaM2 ? { rollAreaM2: first.rollAreaM2 } : {}),
+      ...(first?.coverageM2PerL ? { coverageM2PerL: first.coverageM2PerL } : {}),
+    })
     onClose()
   }
 
+  const numInput = (value: number | undefined, onChange: (n: number) => void, step = '1') => (
+    <input
+      type="number" step={step} value={value || ''}
+      onChange={e => onChange(parseFloat(e.target.value) || 0)}
+    />
+  )
+
   return (
     <div className="ft-spec-overlay" onClick={onClose}>
-      <div className="ft-spec-modal" onClick={e => e.stopPropagation()}>
-        <div className="ft-spec-modal-title">자재 규격 수정 - {item.label}</div>
+      <div className="ft-spec-modal ft-spec-modal-wide" onClick={e => e.stopPropagation()}>
+        <div className="ft-spec-modal-head">
+          <div>
+            <div className="ft-spec-modal-title">자재 규격 수정</div>
+            <div className="ft-spec-modal-sub">사용할 자재와 규격을 선택하거나, 직접 수정할 수 있습니다.</div>
+          </div>
+          <button className="ft-spec-close" onClick={onClose} aria-label="닫기">×</button>
+        </div>
 
-        <div className="ft-spec-modal-body">
-          {/* sheet 타입: 박스/매 면적 */}
-          {item.calcType === 'sheet' && (
-            <>
-              <label className="ft-spec-field">
-                <span>자재 규격 (가로 mm)</span>
-                <input type="number" value={itemWidthMm || ''} onChange={e => setItemWidthMm(parseFloat(e.target.value) || 0)} />
+        <div className="ft-spec-modal-cols">
+          {/* 좌: 자재명 + 종류 목록 */}
+          <div className="ft-spec-col-left">
+            <div className="ft-spec-col-label">자재명</div>
+            <div className="ft-spec-material-name">{item.label}</div>
+            <ul className="ft-spec-variant-list">
+              {variants.map((v, i) => (
+                <li
+                  key={v.id}
+                  className={`ft-spec-variant-item${i === sel ? ' active' : ''}`}
+                  onClick={() => setSel(i)}
+                >
+                  {v.label}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* 우: 규격 입력 */}
+          <div className="ft-spec-col-right">
+            <div className="ft-spec-col-head">
+              <span className="ft-spec-col-label">규격 (단위 : mm)</span>
+              <button className="ft-spec-reset" onClick={resetToDefault}>↺ 기본값으로 재설정</button>
+            </div>
+
+            {isSheet && (
+              <>
+                <div className="ft-spec-grid">
+                  <label className="ft-spec-cell">
+                    <span>가로(mm)</span>
+                    {numInput(current.itemWidthMm, n => setSize({ itemWidthMm: n }))}
+                  </label>
+                  <label className="ft-spec-cell">
+                    <span>세로(mm)</span>
+                    {numInput(current.itemLengthMm, n => setSize({ itemLengthMm: n }))}
+                  </label>
+                  <label className="ft-spec-cell">
+                    <span>BOX당 수량(장)</span>
+                    {numInput(current.piecesPerBox, n => patchCurrent({ piecesPerBox: n }))}
+                  </label>
+                  <label className="ft-spec-cell">
+                    <span>BOX당 면적(m²)</span>
+                    <input type="number" readOnly value={derivedBoxArea || current.boxAreaM2 || ''} />
+                  </label>
+                </div>
+                <div className="ft-spec-hint">
+                  * 규격을 수정하면 BOX당 수량과 면적이 자동으로 계산됩니다. (BOX당 수량 수정가능)
+                </div>
+              </>
+            )}
+
+            {isRoll && (
+              <>
+                <div className="ft-spec-grid">
+                  <label className="ft-spec-cell">
+                    <span>폭(mm)</span>
+                    {numInput(current.rollWidthMm, n => patchCurrent({ rollWidthMm: n }))}
+                  </label>
+                  <label className="ft-spec-cell">
+                    <span>길이(m)</span>
+                    {numInput(current.rollLengthM, n => patchCurrent({ rollLengthM: n }), '0.01')}
+                  </label>
+                  <label className="ft-spec-cell">
+                    <span>1롤 면적(m²)</span>
+                    <input type="number" readOnly value={derivedRollArea || current.rollAreaM2 || ''} />
+                  </label>
+                </div>
+                <div className="ft-spec-hint">* 규격을 수정하면 1롤 면적이 자동으로 계산됩니다.</div>
+              </>
+            )}
+
+            {isPaint && (
+              <>
+                <div className="ft-spec-grid">
+                  <label className="ft-spec-cell">
+                    <span>도포율(m²/L)</span>
+                    {numInput(current.coverageM2PerL, n => patchCurrent({ coverageM2PerL: n }), '0.1')}
+                  </label>
+                </div>
+                <div className="ft-spec-hint">* 필요 용량 = 면적 × 도포횟수 ÷ 도포율</div>
+              </>
+            )}
+
+            <div className="ft-spec-grid ft-spec-grid-common">
+              <label className="ft-spec-cell">
+                <span>로스율(%)</span>
+                {numInput(lossRate, setLossRate)}
               </label>
-              <label className="ft-spec-field">
-                <span>자재 규격 (세로 mm)</span>
-                <input type="number" value={itemLengthMm || ''} onChange={e => setItemLengthMm(parseFloat(e.target.value) || 0)} />
+              <label className="ft-spec-cell">
+                <span>단위</span>
+                <input type="text" value={unit} onChange={e => setUnit(e.target.value)} />
               </label>
-              <label className="ft-spec-field">
-                <span>단위 면적 (m²/{unit})</span>
-                <input type="number" step="0.01" value={boxAreaM2 || ''} onChange={e => setBoxAreaM2(parseFloat(e.target.value) || 0)} />
-              </label>
-            </>
-          )}
-
-          {/* roll 타입: 롤당 면적 */}
-          {item.calcType === 'roll' && (
-            <label className="ft-spec-field">
-              <span>롤당 면적 (m²/롤)</span>
-              <input type="number" step="0.01" value={rollAreaM2 || ''} onChange={e => setRollAreaM2(parseFloat(e.target.value) || 0)} />
-            </label>
-          )}
-
-          {/* paint 타입: 도포율 */}
-          {item.calcType === 'paint' && (
-            <label className="ft-spec-field">
-              <span>도포율 (m²/L)</span>
-              <input type="number" step="0.1" value={coverageM2PerL || ''} onChange={e => setCoverageM2PerL(parseFloat(e.target.value) || 0)} />
-            </label>
-          )}
-
-          {/* 공통: 로스율, 단위, 규격 설명 */}
-          <label className="ft-spec-field">
-            <span>로스율 (%)</span>
-            <input type="number" step="1" value={lossRate} onChange={e => setLossRate(parseInt(e.target.value) || 0)} />
-          </label>
-          <label className="ft-spec-field">
-            <span>단위</span>
-            <input type="text" value={unit} onChange={e => setUnit(e.target.value)} />
-          </label>
-          <label className="ft-spec-field">
-            <span>규격 설명</span>
-            <input type="text" value={specLabel} onChange={e => setSpecLabel(e.target.value)} />
-          </label>
+            </div>
+          </div>
         </div>
 
         <div className="ft-spec-modal-actions">
           <button className="ft-spec-cancel" onClick={onClose}>취소</button>
-          <button className="ft-spec-save" onClick={handleSave}>저장</button>
+          <button className="ft-spec-save" onClick={handleSave}>적용</button>
         </div>
       </div>
     </div>

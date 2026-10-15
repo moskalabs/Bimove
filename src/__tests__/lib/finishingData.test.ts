@@ -6,7 +6,7 @@ import {
   paintVolumeL, sumPaintVolume, calcPaintContainers,
   loadFinishingData, saveFinishingData, resetFinishingData,
   type FinishingItem, type MaterialVariant, type ZoneRow, type FinishingTablesData,
-} from '../../lib/finishingData'
+ specOf, boxAreaM2From, rollAreaM2From, defaultPiecesPerBox} from '../../lib/finishingData'
 
 // ── mock scopedStorage ──
 const store = new Map<string, string>()
@@ -167,20 +167,28 @@ describe('calcPaintContainers', () => {
 // ── defaults 테스트 ──
 
 describe('defaults', () => {
-  it('resetFinishingData에 타일 A/B/C variants가 있다', () => {
+  it('타일 variants 가 표의 다섯 종류다', () => {
     const data = resetFinishingData()
     const tile = data.categories.flatMap(c => c.items).find(i => i.id === 'f-tile')!
     expect(tile).toBeDefined()
-    expect(tile.variants).toHaveLength(3)
-    expect(tile.variants.map(v => v.label)).toEqual(['타일 A', '타일 B', '타일 C'])
+    expect(tile.variants).toHaveLength(5)
+    expect(tile.variants.map(v => v.label)).toEqual(
+      ['포세린타일', '자기질타일', '도기질타일', '모자이크타일', '기타 타일'])
+    // 면적은 적어둔 값이 아니라 가로 × 세로 × 장수에서 나온다
+    expect(tile.variants.map(v => unitAreaM2(tile, v)))
+      .toEqual([1.44, 1.44, 1.44, 0.99, 1.44])
+    expect(tile.variants.map(v => v.piecesPerBox)).toEqual([4, 16, 8, 11, 2])
   })
 
-  it('도배 광폭/국산/수입 variants', () => {
+  it('도배 variants 가 표의 네 종류다', () => {
     const data = resetFinishingData()
     const wp = data.categories.flatMap(c => c.items).find(i => i.id === 'f-wallpaper')!
     expect(wp).toBeDefined()
-    expect(wp.variants).toHaveLength(3)
-    expect(wp.variants.map(v => v.label)).toEqual(['도배(광폭)', '국산', '수입'])
+    expect(wp.variants).toHaveLength(4)
+    expect(wp.variants.map(v => v.label)).toEqual(['실크벽지', '합지벽지(광폭)', '수입벽지', '기타 벽지'])
+    // 폭 × 길이 그대로다: 1.06×15.6, 0.93×17.75, 0.53×10.05, 1.0×2.4
+    expect(wp.variants.map(v => unitAreaM2(wp, v)))
+      .toEqual([16.536, 16.5075, 5.3265, 2.4])
   })
 
   it('마루는 floorOnly', () => {
@@ -221,11 +229,13 @@ describe('defaults', () => {
     expect(film.calcType).toBe('roll')
   })
 
-  it('도장 coverageM2PerL = 8', () => {
+  it('도장 기본 도포율은 수성 페인트 10 m²/L', () => {
     const data = resetFinishingData()
     const paint = data.categories.flatMap(c => c.items).find(i => i.id === 'f-paint')!
-    expect(paint.coverageM2PerL).toBe(8)
+    expect(paint.coverageM2PerL).toBe(10)
     expect(paint.containerSizes).toEqual([1, 4, 18])
+    // 종류마다 도포율이 다르다 (에폭시·외부수성 8, 에나멜·우레탄 12)
+    expect(paint.variants.map(v => v.coverageM2PerL)).toEqual([10, 8, 10, 12, 8, 12, 10])
   })
 })
 
@@ -276,10 +286,11 @@ describe('loadFinishingData / saveFinishingData', () => {
     // 메타 값이 새 defaults로 업데이트됨
     expect(tile.boxAreaM2).toBe(1.44)
     expect(tile.lossRate).toBe(0.10)
-    expect(tile.specLabel).toBe('박스당 면적 1.44 m²/box')
+    expect(tile.specLabel).toBe('포세린타일 600 × 600 기준 1.44 m²/box (4장/box)')
     // zone 데이터가 비어있었으므로 variants도 새 defaults로 교체
-    expect(tile.variants).toHaveLength(3)
-    expect(tile.variants.map(v => v.label)).toEqual(['타일 A', '타일 B', '타일 C'])
+    expect(tile.variants).toHaveLength(5)
+    expect(tile.variants.map(v => v.label)).toEqual(
+      ['포세린타일', '자기질타일', '도기질타일', '모자이크타일', '기타 타일'])
   })
 
   it('사용자 데이터 있으면 variants 유지', () => {
@@ -383,5 +394,168 @@ describe('DXF pathData 파싱 로직', () => {
     const segs = parseDxfPath('M1e2,2e1L3e2,4e1')
     expect(segs).toHaveLength(1)
     expect(segs[0]).toEqual({ x1: 100, y1: 20, x2: 300, y2: 40 })
+  })
+})
+
+// ───────── 변형별 규격 ─────────
+//
+// 예전엔 규격이 자재(FinishingItem) 하나에만 있어서, 같은 "타일" 안의 종류가
+// 전부 같은 박스 면적을 썼다. 포세린 600각은 4장/box(1.44 m²)인데 모자이크는
+// 11장/box(1.03 m²)다 — 같은 면적을 시공해도 발주 수량이 달라야 한다.
+
+describe('변형별 규격', () => {
+  const zonesOf = (floorM2: number) => [{
+    id: 'z1', label: '거실', floorAreaM2: floorM2, wallLengthM: 0, wallHeightM: 2.4,
+  }]
+
+  it('같은 면적이라도 변형의 박스 면적에 따라 수량이 갈린다', () => {
+    const data = resetFinishingData()
+    const tile = data.categories.flatMap(c => c.items).find(i => i.id === 'f-tile')!
+    const porcelain = { ...tile.variants[0], zones: zonesOf(100) }   // 1.44 m²/box
+    const mosaic = { ...tile.variants[3], zones: zonesOf(100) }      // 0.99 m²/box
+
+    // 100 m² × 로스 10% = 110 m²
+    expect(calcSheetQty(tile, porcelain)).toBe(Math.ceil(110 / 1.44))   // 77
+    expect(calcSheetQty(tile, mosaic)).toBe(Math.ceil(110 / 0.99))      // 112
+    expect(calcSheetQty(tile, mosaic)).toBeGreaterThan(calcSheetQty(tile, porcelain))
+  })
+
+  it('도배도 롤 면적이 변형마다 다르게 먹힌다', () => {
+    const data = resetFinishingData()
+    const wp = data.categories.flatMap(c => c.items).find(i => i.id === 'f-wallpaper')!
+    const silk = { ...wp.variants[0], zones: zonesOf(100) }      // 16.536 m²/롤
+    const imported = { ...wp.variants[2], zones: zonesOf(100) }  // 5.3265 m²/롤
+
+    expect(calcRollQty(wp, silk)).toBe(Math.ceil(110 / 16.536))        // 7
+    expect(calcRollQty(wp, imported)).toBe(Math.ceil(110 / 5.3265))    // 21
+  })
+
+  it('도장은 변형 도포율로 용량이 계산된다', () => {
+    const data = resetFinishingData()
+    const paint = data.categories.flatMap(c => c.items).find(i => i.id === 'f-paint')!
+    const zones = [{ id: 'z1', label: '', floorAreaM2: 0, wallLengthM: 10, wallHeightM: 2.4, coatCount: 2 }]
+    const enamel = { ...paint.variants[3], zones }    // 12 m²/L
+    const epoxy = { ...paint.variants[4], zones }     // 8 m²/L
+
+    // 벽면 24 m² × 2회 = 48 m²
+    expect(sumPaintVolume(enamel, specOf(paint, enamel).coverageM2PerL!)).toBeCloseTo(4, 2)
+    expect(sumPaintVolume(epoxy, specOf(paint, epoxy).coverageM2PerL!)).toBeCloseTo(6, 2)
+  })
+
+  it('변형에 규격이 없으면 자재 값으로 떨어진다 (옛 데이터 호환)', () => {
+    const data = resetFinishingData()
+    const tile = data.categories.flatMap(c => c.items).find(i => i.id === 'f-tile')!
+    // schemaVersion 5 이전에 저장된 변형에는 boxAreaM2 가 아예 없다
+    const legacy = { id: 'v-old', label: '타일 A', zones: zonesOf(100) }
+
+    expect(specOf(tile, legacy).piecesPerBox).toBe(tile.piecesPerBox)
+    expect(calcSheetQty(tile, legacy)).toBe(Math.ceil(110 / 1.44))
+  })
+
+  it('변형 로스율도 오버라이드된다', () => {
+    const data = resetFinishingData()
+    const tile = data.categories.flatMap(c => c.items).find(i => i.id === 'f-tile')!
+    const strict = { ...tile.variants[0], lossRate: 0, zones: zonesOf(100) }
+
+    expect(specOf(tile, strict).lossRate).toBe(0)
+    expect(calcSheetQty(tile, strict)).toBe(Math.ceil(100 / 1.44))   // 로스 없음
+  })
+
+  it('마루는 바닥 전용이라 벽면을 더하지 않는다', () => {
+    const data = resetFinishingData()
+    const wood = data.categories.flatMap(c => c.items).find(i => i.id === 'f-wood')!
+    const zones = [{ id: 'z1', label: '', floorAreaM2: 50, wallLengthM: 20, wallHeightM: 2.4 }]
+    const solid = { ...wood.variants[3], zones }   // 원목마루 2.16 m²/box
+
+    // 벽면 48 m² 는 무시하고 바닥 50 m² 만: 55 ÷ 2.16
+    expect(calcSheetQty(wood, solid)).toBe(Math.ceil(55 / 2.16))
+  })
+})
+
+// ───────── 규격 → 면적 자동 계산 ─────────
+//
+// 면적은 적어두는 값이 아니라 규격에서 나오는 값이다. 사람이 직접 적게 두면
+// 규격과 어긋난 면적이 남고, 그 어긋남은 발주 수량에서야 드러난다.
+
+describe('boxAreaM2From', () => {
+  it('가로 × 세로 ÷ 1,000,000 × 장수', () => {
+    expect(boxAreaM2From(300, 600, 8)).toBe(1.44)
+    expect(boxAreaM2From(600, 600, 4)).toBe(1.44)
+    expect(boxAreaM2From(300, 300, 16)).toBe(1.44)
+    expect(boxAreaM2From(600, 1200, 2)).toBe(1.44)
+    expect(boxAreaM2From(1200, 2400, 1)).toBe(2.88)
+  })
+
+  it('모자이크 300각 11장은 0.99 다 (1.03 이 아니다)', () => {
+    expect(boxAreaM2From(300, 300, 11)).toBe(0.99)
+  })
+
+  it('값이 비면 0 — 0으로 나누는 자리로 흘러가지 않게', () => {
+    expect(boxAreaM2From(0, 600, 8)).toBe(0)
+    expect(boxAreaM2From(600, 600, 0)).toBe(0)
+  })
+})
+
+describe('rollAreaM2From', () => {
+  it('폭(mm) ÷ 1,000 × 길이(m)', () => {
+    expect(rollAreaM2From(1060, 15.6)).toBe(16.536)
+    expect(rollAreaM2From(930, 17.75)).toBe(16.5075)
+    expect(rollAreaM2From(530, 10.05)).toBe(5.3265)
+  })
+
+  it('부동소수 찌꺼기를 달고 다니지 않는다', () => {
+    // 0.53 * 10.05 는 그냥 곱하면 5.326500000000001 이 된다
+    expect(rollAreaM2From(530, 10.05).toString()).toBe('5.3265')
+  })
+})
+
+describe('defaultPiecesPerBox', () => {
+  it('등록된 규격의 장수를 돌려준다', () => {
+    expect(defaultPiecesPerBox(300, 300)).toBe(16)
+    expect(defaultPiecesPerBox(300, 600)).toBe(8)
+    expect(defaultPiecesPerBox(600, 600)).toBe(4)
+    expect(defaultPiecesPerBox(600, 1200)).toBe(2)
+    expect(defaultPiecesPerBox(1200, 2400)).toBe(1)
+  })
+
+  it('가로·세로를 바꿔 넣어도 같은 타일이다', () => {
+    expect(defaultPiecesPerBox(600, 300)).toBe(8)
+    expect(defaultPiecesPerBox(1200, 600)).toBe(2)
+  })
+
+  it('등록 안 된 규격은 추정하지 않고 null — 사용자가 직접 넣어야 한다', () => {
+    // 포장 수량은 제조사가 정한다. 450각을 600각 옆이라고 4장으로 넘겨짚으면
+    // 발주 수량이 조용히 틀어진다.
+    expect(defaultPiecesPerBox(450, 450)).toBeNull()
+    expect(defaultPiecesPerBox(200, 1000)).toBeNull()
+    expect(defaultPiecesPerBox(0, 600)).toBeNull()
+  })
+})
+
+describe('unitAreaM2 우선순위', () => {
+  const tileItem = {
+    id: 'x', label: '타일', calcType: 'sheet' as const,
+    lossRate: 0.1, unit: 'box', variants: [],
+  }
+
+  it('규격이 있으면 저장된 면적을 무시하고 다시 계산한다', () => {
+    // 규격만 고치고 면적 갱신을 빠뜨린 데이터가 들어와도 수량이 맞아야 한다
+    const stale = {
+      id: 'v', label: '타일', zones: [],
+      itemWidthMm: 300, itemLengthMm: 600, piecesPerBox: 8,
+      boxAreaM2: 999,
+    }
+    expect(unitAreaM2(tileItem, stale)).toBe(1.44)
+  })
+
+  it('장수를 모르면 저장된 면적으로 떨어진다 (마루)', () => {
+    const wood = { id: 'v', label: '강마루', zones: [], boxAreaM2: 3.23 }
+    expect(unitAreaM2(tileItem, wood)).toBe(3.23)
+  })
+
+  it('롤 규격도 같은 방식이다', () => {
+    const rollItem = { ...tileItem, calcType: 'roll' as const, unit: '롤' }
+    const silk = { id: 'v', label: '실크', zones: [], rollWidthMm: 1060, rollLengthM: 15.6, rollAreaM2: 1 }
+    expect(unitAreaM2(rollItem, silk)).toBe(16.536)
   })
 })
