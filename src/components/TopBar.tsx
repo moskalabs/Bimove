@@ -3,7 +3,6 @@ import {
   MousePointer2, Undo2, Redo2, ChevronDown,
   Square, Circle,
   Copy, Move, RotateCw,
-  Type,
 } from 'lucide-react'
 import { PageRecordType, createShapeId, GeoShapeGeoStyle } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
@@ -79,7 +78,7 @@ function ZoneIcon() {
 function SpaceDivideIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 12h18" strokeDasharray="3 2.5" />
+      <path d="M3 12h18" strokeDasharray="3 2.5" strokeLinecap="butt" />
       <path d="M7 8 3 12l4 4" />
       <path d="M17 8l4 4-4 4" />
     </svg>
@@ -110,29 +109,54 @@ function PolylineIcon() {
 }
 
 /**
- * 치수: 보조선 두 개와 그 사이를 잇는 치수선.
+ * 치수: 보조선 두 개와 그 사이를 잇는 **점선** 치수선.
  *
- * 화살촉은 넣지 않는다 — 시안이 그렇고, 공간나누기(점선 + 양끝 화살표)와
- * 한눈에 갈라지기도 한다.
+ * 화살촉은 없다. 공간나누기도 점선이지만 그쪽은 양끝이 화살표라 갈라진다.
+ * 시안을 재니 대시 4 / 간격 3 이었다 (24 격자로 2.5 / 1.9).
+ *
+ * 점선만 선끝을 butt 로 둔다. 둥근 끝은 대시를 양쪽으로 굵기의 절반씩
+ * 늘려서, 1.9 간격이 거의 다 메워져 **실선처럼 보인다.**
  */
 function DimensionIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4.5 7.5v9" />
-      <path d="M19.5 7.5v9" />
-      <path d="M4.5 12h15" />
+      <path d="M3.5 7.5v9" />
+      <path d="M20.5 7.5v9" />
+      <path d="M3.5 12h17" strokeDasharray="2.5 1.9" strokeLinecap="butt" />
     </svg>
   )
 }
 
-/** 지시선: 가리키는 화살표와 그 끝의 글자. */
+/**
+ * 문자: 민자 T.
+ *
+ * lucide 의 Type 을 쓰고 있었는데 그건 가로획 양 끝에 세리프가, 세로획 밑에
+ * 발받침이 붙는다. 시안은 획 두 개뿐이다.
+ */
+function TextIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 4.5h16" />
+      <path d="M12 4.5v15" />
+    </svg>
+  )
+}
+
+/**
+ * 지시선: 가리키는 화살표 → 비스듬한 선 → 가로 꼬리 → 글자.
+ *
+ * 꼬리가 있어야 "여기를 가리켜 이름을 붙인다" 가 된다. 꼬리 없이 글자만
+ * 띄우면 지시선이 아니라 그냥 사선이다.
+ *
+ * 화살촉은 ㄱ 자 모서리가 아니라 **V 자 미늘**이다 — 진행 방향에서 ±25°,
+ * 길이 4.3.
+ */
 function LeaderIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 20 14.5 9.5" />
-      <path d="M4 20v-4.5" />
-      <path d="M4 20h4.5" />
-      <text x="18.5" y="9" textAnchor="middle" fontSize="10" fill="currentColor" stroke="none" fontWeight="600">A</text>
+      <path d="M3.2 19.3 10.5 12.6h4.8" />
+      <path d="M7.3 18 3.2 19.3 4.8 15.3" />
+      <text x="18.2" y="12" textAnchor="middle" fontSize="11" fill="currentColor" stroke="none" fontWeight="600">A</text>
     </svg>
   )
 }
@@ -176,7 +200,7 @@ const GROUP_EDIT: ToolDef[] = [
 
 const GROUP_ANNOTATE: ToolDef[] = [
   { id: 'dimension', label: '치수', render: DimensionIcon },
-  { id: 'text', label: '문자', render: lucideBtn(Type) },
+  { id: 'text', label: '문자', render: TextIcon },
   { id: 'leader', label: '지시선', render: LeaderIcon },
 ]
 
