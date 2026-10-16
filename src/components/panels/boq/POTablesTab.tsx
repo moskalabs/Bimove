@@ -11,7 +11,7 @@ import type { BOQTable, PurchaseOrder } from '../../../lib/purchaseOrder'
 import {
   loadPurchaseOrder, savePurchaseOrder,
   addTable, removeTable, updateTableItems,
-  poGrandTotal, fmtKRW, uid,
+  poGrandTotal, fmtKRW, uid, shouldTakeRemotePO,
 } from '../../../lib/purchaseOrder'
 import { fetchPurchaseOrder, syncPurchaseOrder } from '../../../lib/supabaseSync'
 import type { BOQTemplate } from '../../../lib/boqTemplates'
@@ -32,6 +32,14 @@ export function POTablesTab() {
   const [loaded, setLoaded] = useState(false)
   const syncTimerRef = useRef<number>(0)
   const syncFailCount = useRef(0)
+  /** 지금 화면의 발주서. 언마운트 flush 가 최신값을 봐야 해서 ref 로도 들고 있다. */
+  const poRef = useRef(po)
+  /** 디바운스 타이머가 아직 안 터졌는지 */
+  const pendingSyncRef = useRef(false)
+  /** 마운트 시점의 로컬 발주서. 불러오기 전에 사용자가 손댔는지 가리는 기준. */
+  const localAtMountRef = useRef(po)
+
+  useEffect(() => { poRef.current = po }, [po])
 
   // Supabase에서 발주서 로드 (1회)
   useEffect(() => {
@@ -40,7 +48,12 @@ export function POTablesTab() {
     ;(async () => {
       try {
         const remote = await fetchPurchaseOrder(projectId)
-        if (!cancelled && remote && remote.tables.length > 0) {
+        // 불러오는 동안 사용자가 이미 고쳤으면 서버로 덮지 않는다. 그 수정은
+        // 아직 updatedAt 에 반영되기 전이라 시각 비교로는 못 지킨다
+        // (updatedAt 은 loaded 이후의 자동 저장에서만 올라간다).
+        const editedWhileLoading = poRef.current !== localAtMountRef.current
+        if (!cancelled && remote && !editedWhileLoading &&
+            shouldTakeRemotePO(remote, poRef.current)) {
           setPo(remote)
         }
       } catch {
@@ -54,7 +67,9 @@ export function POTablesTab() {
   // 디바운스된 Supabase 동기화
   const syncToSupabase = useCallback((purchaseOrder: PurchaseOrder) => {
     clearTimeout(syncTimerRef.current)
+    pendingSyncRef.current = true
     syncTimerRef.current = window.setTimeout(async () => {
+      pendingSyncRef.current = false
       try {
         await syncPurchaseOrder(purchaseOrder)
         if (syncFailCount.current > 0) {
@@ -80,9 +95,23 @@ export function POTablesTab() {
     }
   }, [po, projectId, loaded, syncToSupabase])
 
-  // cleanup
+  // cleanup — **대기 중인 저장을 흘려보낸다.**
+  //
+  // 전엔 타이머만 지웠다. 고치고 2초 안에 패널을 닫으면 서버에 안 올라가고,
+  // 로컬에만 남는다. 이 기기에서는 멀쩡해 보이지만 다른 기기에서는 수정이
+  // 통째로 사라진 것처럼 보인다.
+  //
+  // cleanup 에서는 기다릴 수 없으니 던져만 둔다. 실패해도 로컬에는 남아 있고,
+  // 다음에 열 때 시각 비교에서 로컬이 이겨 다시 올라간다.
   useEffect(() => {
-    return () => clearTimeout(syncTimerRef.current)
+    return () => {
+      clearTimeout(syncTimerRef.current)
+      if (!pendingSyncRef.current) return
+      pendingSyncRef.current = false
+      void syncPurchaseOrder(poRef.current).catch(err => {
+        console.warn('[po-sync] 닫는 중 저장 실패', err)
+      })
+    }
   }, [])
 
   // 도면에서 벽/방/문/창문 데이터 추출 (shape 변경 시 자동 갱신)

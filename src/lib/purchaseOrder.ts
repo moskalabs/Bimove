@@ -191,6 +191,33 @@ export function fmtArea(m2: number): string {
   return m2.toFixed(2) + ' m²'
 }
 
+/**
+ * 서버 시계와 이 기기 시계의 차이를 봐주는 여유.
+ *
+ * 로컬은 Date.now(), 서버는 now() 로 찍는다. 디바운스(2초) 보다 넉넉히 잡아야
+ * **아직 올라가지 않은 로컬 수정**이 서버에 지지 않는다.
+ */
+export const PO_CLOCK_SKEW_MS = 2000
+
+/**
+ * 서버 발주서를 가져다 쓸지.
+ *
+ * 예전엔 `remote.tables.length > 0` 으로 갈랐다. 두 가지가 어긋난다 —
+ *
+ *   1. 서버에서 **다 지운** 상태(tables 0개)가 무시된다. 그러면 로컬에 남아
+ *      있던 삭제 전 데이터가 다음 동기화 때 서버로 다시 올라간다.
+ *   2. 시각을 안 보므로, 아직 못 올린 로컬 수정이 **낡은 서버 데이터에 덮인다.**
+ *
+ * 애매하면 로컬을 남긴다 — 덮어쓰기는 되돌릴 수 없고, 남겨두면 다음 동기화에서
+ * 어차피 서버로 올라간다.
+ */
+export function shouldTakeRemotePO(
+  remote: { updatedAt: number },
+  local: { updatedAt: number },
+): boolean {
+  return remote.updatedAt > local.updatedAt + PO_CLOCK_SKEW_MS
+}
+
 /** 이 프로젝트의 발주서를 이 기기에서 지운다 (프로젝트 삭제 때). */
 export function deletePurchaseOrder(projectId: string): void {
   scopedRemove(PO_KEY(projectId))

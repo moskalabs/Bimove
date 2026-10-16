@@ -462,8 +462,21 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
     let syncFailed = false
     let syncPaused = false                      // 충돌 백업 실패 → 서버 쓰기 중단
     let backedUpServerAt: string | undefined    // 같은 서버 버전을 반복 백업하지 않기
+    /**
+     * 지난 회차가 아직 안 끝났는지.
+     *
+     * setInterval 은 콜백이 async 여도 기다려주지 않는다. 큰 도면은 압축 +
+     * 업로드에 30초를 넘길 수 있고, 그 사이에 편집이 있으면 다음 틱이 **같은
+     * lastServerUpdatedAt 으로** 또 출발한다. 두 요청이 서로를 충돌로 보고
+     * 쓸데없는 백업을 뜨거나, 늦게 끝난 쪽이 먼저 끝난 쪽을 덮는다.
+     *
+     * 진행 중이면 그냥 건너뛴다 — serverDirty 는 그대로 남아 다음 회차에서
+     * 처리된다.
+     */
+    let syncInFlight = false
 
     supabaseTimer = window.setInterval(async () => {
+      if (syncInFlight) return
       if (!serverDirty || syncPaused) return
       // 통짜 스냅샷은 이제 여기서만 만든다 — 로컬 저장(1.5초)은 레코드 단위라
       // 필요 없다.
@@ -471,6 +484,7 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
       if (!snap) return
       serverDirty = false
       const thumb = pendingThumbnail
+      syncInFlight = true
       try {
         const result = await saveSnapshotToSupabase(projectId, snap, thumb, lastServerUpdatedAt)
         if (result.conflict) {
@@ -511,6 +525,8 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
           toast('서버 동기화에 실패했습니다. 로컬에 저장됩니다.', 'error')
           syncFailed = true
         }
+      } finally {
+        syncInFlight = false
       }
     }, SERVER_SYNC_MS)
 
