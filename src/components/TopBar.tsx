@@ -22,16 +22,16 @@ import { nextZoneColor } from '../shapes/ZoneShape'
  * 전엔 높이가 거의 없는 납작한 판이었다. 시안은 **두툼한 덩어리** 쪽이다 —
  * 벽은 세워 쓰는 물건이라 그게 맞다.
  *
- *   윗면  : 앞모서리(F1-F2)에서 뒤쪽(+4,-3.5)으로 밀어낸 평행사변형
- *   앞면  : 세로 10
- *   오른면: 뒤로 밀어낸 만큼의 좁은 면
+ * 시안을 픽셀로 재서 비례를 맞췄다 — 길이:높이 = 14:9, 뒤로 밀어내는 양은
+ * (+3.8, -3). 처음엔 13:10 으로 그렸는데 그러면 덩어리가 정육면체에 가까워
+ * "벽 한 토막" 보다 "상자" 로 읽힌다.
  */
 function WallIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3.5 6 7.5 2.5 20.5 8 16.5 11.5z" />
-      <path d="M3.5 6v10l13 5.5v-10" />
-      <path d="M20.5 8v10l-4 3.5" />
+      <path d="M3 5.5 6.8 2.5 20.8 8.5 17 11.5z" />
+      <path d="M3 5.5v9l14 6v-9" />
+      <path d="M20.8 8.5v9l-3.8 3" />
     </svg>
   )
 }
@@ -45,14 +45,17 @@ function WallIcon() {
  *   양 옆 토막 : 문틀이 뚫린 벽
  *   ㄷ 자      : 문틀
  *   평행사변형 : 앞으로 열린 문짝 (경첩은 왼쪽 틀)
+ *
+ * 문짝이 앞으로 나온 양은 (+4.7, +2.7). 더 가파르게 눕히면 문짝이 바닥에
+ * 누운 것처럼 보여 벽체의 눈높이와 어긋난다.
  */
 function OpeningIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2 18h4" />
-      <path d="M17 18h4" />
-      <path d="M6 18V3h11v15" />
-      <path d="M6 3l5.5 4v15l-5.5-4" />
+      <path d="M4 18.5h3" />
+      <path d="M17 18.5h3" />
+      <path d="M7 18.5V2h10v16.5" />
+      <path d="M7 2l4.7 2.7v16.5l-4.7-2.7" />
     </svg>
   )
 }
