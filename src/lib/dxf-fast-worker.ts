@@ -1682,11 +1682,15 @@ function entityToPolyline(
               }
               if (selectedLayers.size > 0 && !selectedLayers.has(eLayer)) continue
               const blockColor = eCodes.get(62)?.[0] ? parseInt(eCodes.get(62)![0]) : -1
-              const td = extractTextEntity(eType === 'ATTRIB' ? 'TEXT' : eType, eCodes, eLayer, blockColor, nextTransforms, styleMap)
+              // 변환은 **블록 기준점을 뺀 뒤에** 우리가 건다. 그래서 여기서는
+              // 변환 없이(`[]`) 좌표만 풀어 받는다.
+              const td = extractTextEntity(eType, eCodes, eLayer, blockColor, [], styleMap)
               if (td) {
-                const rawX = parseFloat(eCodes.get(10)?.[0] ?? '0') - block.baseX
-                const rawY = parseFloat(eCodes.get(20)?.[0] ?? '0') - block.baseY
-                const pt = [[rawX, rawY]]
+                // extractTextEntity 가 정렬 코드를 보고 10/20 과 11/21 중
+                // 맞는 쪽을 이미 골라놨다. **여기서 10/20 을 다시 읽으면 그
+                // 선택을 통째로 버린다** — 실제로 가운데 정렬된 도면틀 글씨가
+                // 칸 왼쪽으로 칸폭의 절반 가까이 밀려 나갔다.
+                const pt = [[td.x - block.baseX, td.y - block.baseY]]
                 for (const tr of nextTransforms) applyTransform(pt, tr)
                 td.x = pt[0][0]; td.y = pt[0][1]
                 // INSERT 스케일/회전을 텍스트 height/rotation에 반영
@@ -1768,7 +1772,7 @@ function extractTextEntity(
   transforms: Transform[],
   styleMap?: Map<string, string>,
 ): TextData | null {
-  if (type !== 'TEXT' && type !== 'MTEXT') return null
+  if (type !== 'TEXT' && type !== 'MTEXT' && type !== 'ATTRIB') return null
 
   let x = parseFloat(codes.get(10)?.[0] ?? '0')
   let y = parseFloat(codes.get(20)?.[0] ?? '0')
@@ -1779,11 +1783,12 @@ function extractTextEntity(
   let attachPt: number | undefined
   let mtextWidth: number | undefined
   let mtextFont: string | undefined
-  if (type === 'TEXT') {
+  if (type !== 'MTEXT') {
     text = decodeDxfSpecialChars((codes.get(1)?.[0] ?? '').trim())
-    // 정렬: gc 72(가로) + 73(세로).
+    // 정렬: gc 72(가로) + 세로. **세로는 TEXT 가 73, ATTRIB 은 74** —
+    // ATTRIB 의 73 은 필드 길이라 그대로 읽으면 엉뚱한 값이 들어온다.
     const hAlign = parseInt(codes.get(72)?.[0] ?? '0') || 0
-    const vAlign = parseInt(codes.get(73)?.[0] ?? '0') || 0
+    const vAlign = parseInt(codes.get(type === 'ATTRIB' ? 74 : 73)?.[0] ?? '0') || 0
     // **항상 채운다.** 비워두면 렌더러가 MTEXT 기본값인 TL 로 떨어져서
     // 정렬 코드가 없는 평범한 글씨가 한 줄 높이만큼 내려앉는다.
     attachPt = textAttachPoint(hAlign, vAlign)

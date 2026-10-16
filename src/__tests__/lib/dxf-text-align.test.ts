@@ -124,7 +124,7 @@ class InlineWorker {
   terminate() { /* noop */ }
 }
 
-type Shape = { type: string; props: { textsJson: string }; meta: { dxfLayer?: string } }
+type Shape = { type: string; x: number; y: number; props: { textsJson: string }; meta: { dxfLayer?: string } }
 
 type PackedText = { t: string; x: number; y: number; ap?: number }
 
@@ -199,5 +199,75 @@ describe('파서를 통과한 TEXT 정렬', () => {
     const fit = find(got, '맞춤')!
     expect(fit.x).toBeCloseTo(base.x, 3)
     expect(fit.ap).toBe(7)
+  })
+})
+
+// ── 블록 안 TEXT 의 정렬점 ──
+//
+// 여기가 실제로 터진 자리다. extractTextEntity 는 정렬 코드를 보고 10/20 과
+// 11/21 중 맞는 쪽을 골라 돌려주는데, **블록을 펼치는 호출부가 그 결과를 버리고
+// gc 10/20 을 다시 읽었다.** 그래서 가운데 정렬된 도면틀 글씨가 칸 왼쪽으로
+// 칸폭의 절반 가까이 밀려 나갔다 (실제 도면에서 -44%).
+//
+// 위의 최상위 TEXT 경로는 멀쩡했기 때문에 그쪽 테스트만으로는 안 잡혔다.
+
+/** 블록 'TB' 안의 가운데 정렬 글자 + 같은 자리에 둔 맨바닥 글자 */
+function makeBlockDxf(): string {
+  // 셋 다 선이 깔린 범위(x 0~3000, y 0~1190) 안에 둔다. 밖으로 나가면
+  // "도면 범위 밖 텍스트" 필터에 걸려 아예 안 나온다.
+  const INS = { x: 1000, y: 400 }
+  const ALIGN = { x: 500, y: 300 }        // 블록 안에서의 정렬점 (11/21) → (1500, 700)
+  const FIRST = { x: 1800, y: 700 }       // 10/20 — 여기로 가면 틀린 것 (→ (2800, 1100))
+
+  let s = gc(0, 'SECTION') + gc(2, 'HEADER') + gc(9, '$INSUNITS') + gc(70, 4) + gc(0, 'ENDSEC')
+
+  s += gc(0, 'SECTION') + gc(2, 'BLOCKS')
+  s += gc(0, 'BLOCK') + gc(8, 'A') + gc(2, 'TB') + gc(70, 0) +
+    gc(10, 0) + gc(20, 0) + gc(30, 0) + gc(3, 'TB')
+  s += gc(0, 'TEXT') + gc(8, 'A') +
+    gc(10, FIRST.x) + gc(20, FIRST.y) + gc(30, 0) + gc(40, 50) + gc(1, '블록글자') +
+    gc(11, ALIGN.x) + gc(21, ALIGN.y) + gc(31, 0) + gc(72, 1) + gc(73, 2)
+  s += gc(0, 'ENDBLK') + gc(8, 'A') + gc(0, 'ENDSEC')
+
+  s += gc(0, 'SECTION') + gc(2, 'ENTITIES')
+  for (let i = 0; i < 120; i++) {
+    s += gc(0, 'LINE') + gc(8, 'A') +
+      gc(10, 0) + gc(20, i * 10) + gc(30, 0) +
+      gc(11, 3000) + gc(21, i * 10) + gc(31, 0)
+  }
+  s += gc(0, 'INSERT') + gc(8, 'A') + gc(2, 'TB') +
+    gc(10, INS.x) + gc(20, INS.y) + gc(30, 0)
+  // 블록 글자가 가야 할 자리에 둔 기준 글자 (정렬 코드 없음)
+  s += gc(0, 'TEXT') + gc(8, 'A') +
+    gc(10, INS.x + ALIGN.x) + gc(20, INS.y + ALIGN.y) + gc(30, 0) + gc(40, 50) + gc(1, '기준글자')
+  return s + gc(0, 'ENDSEC') + gc(0, 'EOF')
+}
+
+describe('블록 안 TEXT 의 정렬점', () => {
+  it('블록을 펼칠 때도 11/21 을 쓴다 (10/20 으로 되돌아가지 않는다)', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const created: Shape[] = []
+    await commitCadImportV2(
+      createMockEditor({ created, instanceMeta: {}, viewport: { width: 1920, height: 1080 } }) as never,
+      makeBlockDxf(), new Set(['A']), 'test.dxf', 1234, false, undefined, null,
+    )
+    // 글자는 서로 다른 shape 에 담길 수 있다. 로컬 좌표끼리 비교하면 안 되고
+    // shape 원점을 더한 **페이지 좌표**로 맞춰야 한다.
+    const pageOf = (label: string) => {
+      for (const sh of created) {
+        if (!sh.props?.textsJson) continue
+        const t = (unpackTextsJson(sh.props.textsJson) as PackedText[]).find(p => p.t === label)
+        if (t) return { x: sh.x + t.x, y: sh.y + t.y, ap: t.ap }
+      }
+      return null
+    }
+    const a = pageOf('블록글자')
+    const b = pageOf('기준글자')
+    expect(a, '블록 글자를 못 찾았다').not.toBeNull()
+    expect(b, '기준 글자를 못 찾았다').not.toBeNull()
+    expect(a!.x).toBeCloseTo(b!.x, 1)
+    expect(a!.y).toBeCloseTo(b!.y, 1)
+    expect(a!.ap).toBe(5)   // Center + Middle → MC
   })
 })
