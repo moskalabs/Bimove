@@ -16,25 +16,43 @@ import { nextZoneColor } from '../shapes/ZoneShape'
  * 둥글게 — lucide 와 섞여 있어도 굵기와 끝모양이 어긋나지 않게 맞춘 값이다.
  */
 
-/** 벽체: 두께가 있는 벽 조각을 비스듬히 본 납작한 직육면체. */
+/**
+ * 벽체: 두께와 높이가 있는 벽 한 토막을 비스듬히 본 직육면체.
+ *
+ * 전엔 높이가 거의 없는 납작한 판이었다. 시안은 **두툼한 덩어리** 쪽이다 —
+ * 벽은 세워 쓰는 물건이라 그게 맞다.
+ *
+ *   윗면  : 앞모서리(F1-F2)에서 뒤쪽(+4,-3.5)으로 밀어낸 평행사변형
+ *   앞면  : 세로 10
+ *   오른면: 뒤로 밀어낸 만큼의 좁은 면
+ */
 function WallIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 9.5 8.5 6.5 21 9.5 15.5 12.5z" />
-      <path d="M3 9.5v5l12.5 3v-5" />
-      <path d="M21 9.5v5l-5.5 3" />
+      <path d="M3.5 6 7.5 2.5 20.5 8 16.5 11.5z" />
+      <path d="M3.5 6v10l13 5.5v-10" />
+      <path d="M20.5 8v10l-4 3.5" />
     </svg>
   )
 }
 
-/** 개구부: 문틀 + 열림 궤적 (평면도의 문 심볼). */
+/**
+ * 개구부: 벽에 난 문틀과 그 경첩에 매달려 열린 문짝.
+ *
+ * 전엔 평면도의 문 심볼(사분원 궤적)이었다. 시안은 **서서 본 모습**이다 —
+ * 벽체 아이콘과 같은 눈높이라야 둘이 한 묶음으로 읽힌다.
+ *
+ *   양 옆 토막 : 문틀이 뚫린 벽
+ *   ㄷ 자      : 문틀
+ *   평행사변형 : 앞으로 열린 문짝 (경첩은 왼쪽 틀)
+ */
 function OpeningIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M6 4v16" />
-      <path d="M6 20h4" />
-      <path d="M18 20V9" />
-      <path d="M6 4a14 14 0 0 1 12 12" />
+      <path d="M2 18h4" />
+      <path d="M17 18h4" />
+      <path d="M6 18V3h11v15" />
+      <path d="M6 3l5.5 4v15l-5.5-4" />
     </svg>
   )
 }
