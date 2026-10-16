@@ -743,6 +743,37 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
   )
 })
 
+/**
+ * 선택 테두리가 감쌀 범위 (shape 로컬 좌표).
+ *
+ * props.w/h 는 **선만 보고 잡은 크기**라 글자가 그 밖으로 삐져나간다 —
+ * 가운데·오른쪽 정렬된 글자는 기준점에서 왼쪽으로 뻗기 때문이다. 테두리가
+ * 글자를 자르고 지나가면 "이만큼 잡혔다" 가 거짓말이 된다.
+ *
+ * 글자 폭은 글꼴을 재지 않고 높이 × 글자수 × 0.6 으로 어림한다. 바깥 여백이
+ * 어차피 붙으므로 이 정도면 충분하고, 고를 때마다 메트릭을 재는 값은 아니다.
+ */
+export function outlineBounds(shape: DxfGroupShape): { x: number; y: number; w: number; h: number } {
+  let minX = 0, minY = 0
+  let maxX = shape.props.w, maxY = shape.props.h
+  if (shape.props.textsJson) {
+    for (const t of unpackTextsJson(shape.props.textsJson) as DxfTextEntry[]) {
+      const rows = t.t.split('\n')
+      const cols = Math.max(...rows.map(r => r.length))
+      const tw = t.mw ?? t.h * cols * 0.6
+      const th = t.h * (1 + (rows.length - 1) * 1.2)
+      // attachment point: 1=TL 2=TC 3=TR 4=ML 5=MC 6=MR 7=BL 8=BC 9=BR
+      const ap = t.ap || 1
+      const col = ap % 3                                   // 1=왼쪽 2=가운데 0=오른쪽
+      const x0 = col === 1 ? t.x : col === 2 ? t.x - tw / 2 : t.x - tw
+      const y0 = ap <= 3 ? t.y : ap <= 6 ? t.y - th / 2 : t.y - th
+      minX = Math.min(minX, x0); maxX = Math.max(maxX, x0 + tw)
+      minY = Math.min(minY, y0); maxY = Math.max(maxY, y0 + th)
+    }
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
+}
+
 /** pathData("M0,0L100,0 M0,50L100,50 ...")에서 개별 선분 추출 후 point 근접 여부 판단 */
 export function isPointNearPath(pathData: string, pt: VecLike, margin: number): boolean {
   // pathData는 "Mx1,y1Lx2,y2 Mx3,y3Lx4,y4 ..." 형태
@@ -869,31 +900,39 @@ export class DxfGroupShapeUtil extends ShapeUtil<DxfGroupShape> {
     return <DxfGroupComponent shape={shape} />
   }
 
-  /** 선택 표시도 실제 선 위에 올린다.
+  /** 선택 표시: 잡힌 선 위에 덧그리고, 그 바깥을 상자로 한 번 더 두른다.
    *
-   * 박스를 그리면 선 하나를 골랐을 때도 "도면 한 덩어리가 잡혔다" 로 보인다.
-   * 실제로 잡힌 게 무엇인지 보여주는 게 맞다. 텍스트만 있는 라벨은 그릴 선이
-   * 없으니 박스를 쓴다. */
+   * 선만 덧그리면 빽빽한 도면에서 뭐가 잡혔는지 안 보인다 — 원래 선과 같은
+   * 자리라 굵기 차이로만 구별해야 했다. 바깥 상자가 있어야 "여기까지가 한
+   * 덩어리" 가 한눈에 들어온다.
+   *
+   * 흰 테를 먼저 깔고 그 위에 색을 올린다(paint-order 대신 두 번 그리기).
+   * 어두운 선 위든 밝은 바탕 위든 가장자리가 끊기지 않는다. */
   indicator(shape: DxfGroupShape) {
-    if (!shape.props.pathData) {
-      return (
-        <rect
-          width={shape.props.w}
-          height={shape.props.h}
-          fill="none"
-          stroke="var(--color-selected)"
-          strokeWidth={1}
-        />
-      )
-    }
+    const b = outlineBounds(shape)
+    const pad = Math.max(6, Math.min(b.w, b.h) * 0.04)
+    const r = Math.min(10, Math.min(b.w, b.h) / 2 + pad)
     return (
-      <path
-        d={shape.props.pathData}
-        fill="none"
-        stroke="var(--color-selected)"
-        strokeWidth={1}
-        vectorEffect="non-scaling-stroke"
-      />
+      <g fill="none" vectorEffect="non-scaling-stroke">
+        {shape.props.pathData && (
+          <>
+            <path d={shape.props.pathData} stroke="#fff" strokeWidth={3.5} opacity={0.85} />
+            <path d={shape.props.pathData} stroke="var(--color-selected)" strokeWidth={1.75} />
+          </>
+        )}
+        <rect
+          x={b.x - pad} y={b.y - pad}
+          width={b.w + pad * 2} height={b.h + pad * 2}
+          rx={r} ry={r}
+          stroke="#fff" strokeWidth={4} opacity={0.85}
+        />
+        <rect
+          x={b.x - pad} y={b.y - pad}
+          width={b.w + pad * 2} height={b.h + pad * 2}
+          rx={r} ry={r}
+          stroke="var(--color-selected)" strokeWidth={2}
+        />
+      </g>
     )
   }
 
