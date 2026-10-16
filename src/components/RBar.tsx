@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { useEditor } from '../context/EditorContext'
 import { useReadonly } from '../context/ReadonlyContext'
+import { EditLock } from './EditLock'
 import { detectWalls } from '../lib/detectWalls'
 import {
   getScaleConfig,
@@ -77,10 +78,10 @@ export function RBar() {
       <TopActionBar />
 
       {/* ── 섹션 2: 프로젝트 정보 ── */}
-      <ProjectInfoSection />
+      <EditLock><ProjectInfoSection /></EditLock>
 
       {/* ── 섹션 3: 모델 페이지 (현재 페이지 속성) ── */}
-      <ModelPageSection scale={scale} />
+      <EditLock><ModelPageSection scale={scale} /></EditLock>
 
       {/* spacer */}
       <div style={{ flex: 1 }} />
@@ -89,7 +90,7 @@ export function RBar() {
       {showWallProps && <WallDefaultSection scale={scale} />}
       {showWallProps && <WallHeightSection />}
       {!readonly && selCount > 1 && <AlignPanel />}
-      {sel && <PropsPanel sel={sel} scale={scale} />}
+      {sel && <EditLock><PropsPanel sel={sel} scale={scale} /></EditLock>}
 
       {/* ── 섹션 4: 화면 보기 (하단 고정) ── */}
       <ViewSection toolId={currentToolId} scale={scale} />

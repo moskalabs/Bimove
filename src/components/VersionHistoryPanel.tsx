@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Editor, TLStoreSnapshot } from 'tldraw'
 import { listVersions, getVersion, deleteVersion, renameVersion } from '../lib/versions'
+import { useReadonly } from '../context/ReadonlyContext'
 import { listMergedVersions, type MergedVersion } from '../lib/versionSync'
 import {
   fetchProjectVersionMetas, fetchProjectVersionSnapshot,
@@ -34,6 +35,7 @@ const syncDeps = {
 }
 
 export function VersionHistoryPanel({ editor, projectId, onClose, onRestored }: Props) {
+  const readonly = useReadonly()
   const [versions, setVersions] = useState<MergedVersion[]>([])
   const [remoteError, setRemoteError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -236,8 +238,13 @@ export function VersionHistoryPanel({ editor, projectId, onClose, onRestored }: 
                     </div>
                   )}
                 </div>
-                <button onClick={() => void handleRestore(v)} disabled={busyId === v.id} style={btnStyle}>복원</button>
-                <button onClick={() => void handleDelete(v)} disabled={busyId === v.id} style={{ ...btnStyle, color: '#c33' }}>삭제</button>
+                {/* 복원·삭제는 프로젝트를 바꾼다. 읽기 전용에서는 목록만 본다. */}
+                {!readonly && (
+                  <>
+                    <button onClick={() => void handleRestore(v)} disabled={busyId === v.id} style={btnStyle}>복원</button>
+                    <button onClick={() => void handleDelete(v)} disabled={busyId === v.id} style={{ ...btnStyle, color: '#c33' }}>삭제</button>
+                  </>
+                )}
               </li>
               )
             })}

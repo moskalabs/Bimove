@@ -4058,3 +4058,27 @@ html[data-dark="true"] .dash-empty-sub { color: #555; }
   content: '👁';
   font-size: 13px;
 }
+
+/* ── 읽기 전용 입력 잠금 ──
+   fieldset 의 기본 여백·테두리를 지우고, 레이아웃에 끼어들지 않게 박스를
+   없앤다. fieldset 은 기본 min-width 가 있어서 그냥 두면 flex/grid 가 틀어진다. */
+.edit-lock {
+  display: contents;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+/* 잠긴 입력이 "회색으로 죽은" 게 아니라 "읽는 값" 으로 보이게 한다. */
+.edit-lock input:disabled,
+.edit-lock select:disabled,
+.edit-lock textarea:disabled {
+  opacity: 1;
+  color: inherit;
+  -webkit-text-fill-color: currentColor;
+  cursor: default;
+}
+.edit-lock button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}

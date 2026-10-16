@@ -6,6 +6,7 @@ import { LayersPanel } from './panels/LayersPanel'
 import { BOQPanel } from './panels/BOQPanel'
 import { MaterialsPanel } from './panels/MaterialsPanel'
 import { LayoutPanel } from './panels/LayoutPanel'
+import { EditLock } from './EditLock'
 import { useImportActions, type ImportKind } from './useImportActions'
 import { useEditor } from '../context/EditorContext'
 import { useReadonly } from '../context/ReadonlyContext'
@@ -222,10 +223,12 @@ export function LBar({ onBack, onShow3D }: { onBack?: () => void; onShow3D?: () 
       <HamburgerMenu open={menuOpen} onClose={() => setMenuOpen(false)} onImport={importActions.run} />
 
       {/* 패널 */}
-      {activePanel === 'layers' && <LayersPanel />}
-      {activePanel === 'table' && <BOQPanel />}
-      {activePanel === 'materials' && <MaterialsPanel />}
-      {activePanel === 'layout' && <LayoutPanel />}
+      {/* 읽기 전용에서는 패널 안의 입력을 잠근다. 접기/펼치기와 항목 고르기는
+          button 이 아니라 div 라서 그대로 돈다 — 보는 건 다 된다. */}
+      {activePanel === 'layers' && <EditLock><LayersPanel /></EditLock>}
+      {activePanel === 'table' && <EditLock><BOQPanel /></EditLock>}
+      {activePanel === 'materials' && <EditLock><MaterialsPanel /></EditLock>}
+      {activePanel === 'layout' && <EditLock><LayoutPanel /></EditLock>}
 
       {/* 가져오기 미리보기 모달 · 진행 오버레이 — 메뉴를 닫아도 떠 있어야 한다 */}
       {importActions.overlays}
