@@ -59,28 +59,42 @@ function OpeningIcon() {
   )
 }
 
-/** 공간지정: 마름모 안의 마름모 — 영역을 집어낸다는 뜻. */
+/**
+ * 공간지정: 마름모를 네 칸으로 가른 격자 — 바닥을 구역으로 나눈다는 뜻.
+ *
+ * 전엔 마름모 안에 작은 마름모였는데(◈) 그건 "가운데를 집는다" 로 읽힌다.
+ * 시안은 **네 칸짜리 격자**다.
+ *
+ * 안쪽 두 선은 대각선이 아니라 **네 변의 중점을 잇는 선**이다. 바깥 변과
+ * 나란해서 네 칸이 다시 마름모가 된다 — 대각선으로 그으면 삼각형 네 개다.
+ *
+ * 시안을 재니 가로:세로 = 36:28 이라 정사각 마름모가 아니다.
+ */
 function ZoneIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 2.5 21.5 12 12 21.5 2.5 12z" />
-      <path d="M12 8.5 15.5 12 12 15.5 8.5 12z" />
+      <path d="M12 4.6 21.5 12 12 19.4 2.5 12z" />
+      <path d="M7.25 8.3 16.75 15.7" />
+      <path d="M16.75 8.3 7.25 15.7" />
     </svg>
   )
 }
 
 /**
- * 공간나누기: 가로 점선을 양쪽 화살표가 벌린다.
+ * 공간나누기: 비스듬히 그은 점선과 그 양 끝의 눈금 — 여기를 따라 가른다.
  *
- * 치수 아이콘과 비슷해 보이지만 저쪽은 실선 + 보조선이고 이쪽은 점선이다 —
- * "여기를 가른다" 와 "여기를 잰다" 의 차이.
+ * 전엔 가로 점선에 양끝 화살표였는데 시안과 둘 다 다르다. 시안은 **45° 대각**
+ * 이고, 끝은 화살촉이 아니라 **선에 수직인 눈금**이다. 확대해 보면 눈금과
+ * 점선이 만나는 자리가 화살촉처럼 보이는데 실제로는 두 획뿐이다.
+ *
+ * 치수(가로 점선 + 세로 보조선)와는 기울기로 갈라진다.
  */
 function SpaceDivideIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 12h18" strokeDasharray="3 2.5" strokeLinecap="butt" />
-      <path d="M7 8 3 12l4 4" />
-      <path d="M17 8l4 4-4 4" />
+      <path d="M4.5 4.5 19.5 19.5" strokeDasharray="3 2.8" strokeLinecap="butt" />
+      <path d="M6.3 2.7 2.7 6.3" />
+      <path d="M21.3 17.7 17.7 21.3" />
     </svg>
   )
 }
