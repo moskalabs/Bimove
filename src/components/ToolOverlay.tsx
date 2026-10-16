@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { TLShapeId } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
 import {
-  snapToWallEndpoint, snapToIntersection, snapToExtension,
+  snapToWallEndpoint, snapToIntersection, snapToPerpendicular, snapToExtension,
   type SnapType,
 } from '../lib/snap'
 import { drawingState } from '../lib/drawingState'
@@ -60,6 +60,8 @@ export function ToolOverlay() {
 
       const drawingId = drawingState.drawingId
       let start: Pt | null = null
+      /** 그리는 중인 선의 시작점 (page 좌표) — 수직 스냅이 이걸 기준으로 수선을 내린다 */
+      let startPage: Pt | null = null
       let end: Pt | null = null
       let mid: Pt | null = null
       let angleDeg: number | null = null
@@ -68,7 +70,8 @@ export function ToolOverlay() {
       if (drawingId) {
         const shape = editor.getShape(drawingId as TLShapeId)
         if (shape) {
-          start = editor.pageToViewport({ x: shape.x, y: shape.y })
+          startPage = { x: shape.x, y: shape.y }
+          start = editor.pageToViewport(startPage)
           const p = shape.props as { x2: number; y2: number }
           const lenPx = Math.hypot(p.x2, p.y2)
           if (lenPx > 5) {
@@ -81,7 +84,9 @@ export function ToolOverlay() {
         }
       }
 
-      // 스냅 감지: endpoint/midpoint > intersection > extension
+      // 스냅 감지: endpoint/midpoint > intersection > perpendicular > extension
+      // (resolveDrawPointAt 의 우선순위와 같아야 한다 — 표시와 실제가 어긋나면
+      //  어느 쪽이 맞는지 알 수 없다)
       const pagePoint = editor.inputs.currentPagePoint
       const excludeId = drawingId ?? undefined
       let snap: Pt | null = null
@@ -97,10 +102,19 @@ export function ToolOverlay() {
           snap = editor.pageToViewport({ x: intHit.x, y: intHit.y })
           snapType = 'intersection'
         } else {
-          const extHit = snapToExtension(editor, pagePoint, excludeId)
-          if (extHit) {
-            snap = editor.pageToViewport({ x: extHit.x, y: extHit.y })
-            snapType = 'extension'
+          // 수직은 시작점이 있어야 수선을 내릴 수 있다 (그리는 중일 때만)
+          const perpHit = startPage
+            ? snapToPerpendicular(editor, startPage, pagePoint, excludeId)
+            : null
+          if (perpHit) {
+            snap = editor.pageToViewport({ x: perpHit.x, y: perpHit.y })
+            snapType = 'perpendicular'
+          } else {
+            const extHit = snapToExtension(editor, pagePoint, excludeId)
+            if (extHit) {
+              snap = editor.pageToViewport({ x: extHit.x, y: extHit.y })
+              snapType = 'extension'
+            }
           }
         }
       }

@@ -707,3 +707,130 @@ describe('resolveDrawPointAt', () => {
     expect(p.y).toBe(7)
   })
 })
+
+// ── 스냅 모드 6종이 토글대로 도는지 ──
+//
+// 한이 쓰는 패널에 끝점·중간점·교차점·수직·연장·직교 여섯 개가 있다. 켜면
+// 걸리고 끄면 안 걸려야 한다. 전엔 두 군데가 어긋나 있었다.
+
+import { setSnapEnabled as _setOrtho, setSnapMode as _setMode } from '../../lib/settings'
+
+/** 여섯 모드를 한 번에 세팅. 안 준 건 켠다. */
+function modes(off: string[] = []) {
+  for (const m of ['endpoint', 'midpoint', 'intersection', 'perpendicular', 'extension'] as const) {
+    _setMode(m, !off.includes(m))
+  }
+  _setOrtho(!off.includes('ortho'))
+}
+
+describe('스냅 모드 토글', () => {
+  beforeEach(() => { _resetSnapCache(); modes() })
+
+  /** (0,0)-(100,0) 한 줄. 끝점 (0,0)/(100,0), 중간점 (50,0). */
+  const oneWall = () => makeEditor([
+    { id: 'w1', type: 'wall', x: 0, y: 0, props: { x2: 100, y2: 0, thickness: 10 } },
+  ])
+
+  it('끝점만 끄면 중간점은 그대로 걸린다', () => {
+    // 여기가 실제 버그였다. 가장 가까운 점 하나만 보고 "그 종류가 꺼졌으면
+    // 버리는" 식이라, 커서가 끝점에 조금 더 가까우면 중간점까지 같이 죽었다.
+    _resetSnapCache(); modes(['endpoint'])
+    // 끝점(0,0)에 더 가깝지만 중간점(50,0)도 반경 안인 자리는 만들 수 없으니,
+    // 중간점 근처에서 중간점이 살아 있는지만 본다.
+    const mid = snapToWallEndpoint(oneWall() as never, { x: 52, y: 3 })
+    expect(mid?.snapType).toBe('midpoint')
+    // 끝점 자리는 아무것도 안 걸려야 한다
+    _resetSnapCache()
+    expect(snapToWallEndpoint(oneWall() as never, { x: 2, y: 2 })).toBeNull()
+  })
+
+  it('중간점만 끄면 끝점은 그대로 걸린다', () => {
+    _resetSnapCache(); modes(['midpoint'])
+    expect(snapToWallEndpoint(oneWall() as never, { x: 2, y: 2 })?.snapType).toBe('endpoint')
+    _resetSnapCache()
+    expect(snapToWallEndpoint(oneWall() as never, { x: 52, y: 3 })).toBeNull()
+  })
+
+  it('둘 다 끄면 아무것도 안 걸린다', () => {
+    _resetSnapCache(); modes(['endpoint', 'midpoint'])
+    expect(snapToWallEndpoint(oneWall() as never, { x: 2, y: 2 })).toBeNull()
+    _resetSnapCache()
+    expect(snapToWallEndpoint(oneWall() as never, { x: 52, y: 3 })).toBeNull()
+  })
+
+  /** ┼ 자로 만나는 두 벽. 교차점은 (50,0). */
+  const crossWalls = () => makeEditor([
+    { id: 'w1', type: 'wall', x: 0, y: 0, props: { x2: 100, y2: 0, thickness: 10 } },
+    { id: 'w2', type: 'wall', x: 50, y: -50, props: { x2: 0, y2: 100, thickness: 10 } },
+  ])
+
+  it('교차점이 걸린다 / 끄면 안 걸린다', () => {
+    const hit = snapToIntersection(crossWalls() as never, { x: 52, y: 3 })
+    expect(hit?.snapType).toBe('intersection')
+    expect(hit!.x).toBeCloseTo(50, 3)
+    expect(hit!.y).toBeCloseTo(0, 3)
+
+    _resetSnapCache(); modes(['intersection'])
+    expect(snapToIntersection(crossWalls() as never, { x: 52, y: 3 })).toBeNull()
+  })
+
+  it('수직이 걸린다 / 끄면 안 걸린다', () => {
+    // 시작점 (50,-40) 에서 가로벽에 수선 → (50,0)
+    const hit = snapToPerpendicular(oneWall() as never, { x: 50, y: -40 }, { x: 52, y: 3 })
+    expect(hit?.snapType).toBe('perpendicular')
+    expect(hit!.x).toBeCloseTo(50, 3)
+
+    _resetSnapCache(); modes(['perpendicular'])
+    expect(snapToPerpendicular(oneWall() as never, { x: 50, y: -40 }, { x: 52, y: 3 })).toBeNull()
+  })
+
+  it('연장이 걸린다 / 끄면 안 걸린다', () => {
+    // 선분 밖(x>100) 의 연장선 위
+    const hit = snapToExtension(oneWall() as never, { x: 130, y: 3 })
+    expect(hit?.snapType).toBe('extension')
+    expect(hit!.y).toBeCloseTo(0, 3)
+
+    _resetSnapCache(); modes(['extension'])
+    expect(snapToExtension(oneWall() as never, { x: 130, y: 3 })).toBeNull()
+  })
+})
+
+// ── 교차점 스냅의 비용 ──
+//
+// 예전엔 페이지의 **모든 선 쌍**을 미리 구했다. DXF 를 가져오면 선이 수만
+// 개라 쌍이 수십억이 되어 탭이 멈췄다. 이제 커서 반경 안의 선만 짝짓는다.
+
+describe('교차점 스냅 비용', () => {
+  beforeEach(() => { _resetSnapCache(); modes() })
+
+  it('선이 수천 개여도 멈추지 않는다', () => {
+    // 8000개를 쌍으로 다 돌면 3200만 번이다. 실제 도면은 이보다 더 크다.
+    // 커서 근처만 보면 선 수에 **선형**이라 같은 규모에서 1ms 안쪽이다.
+    const N = 8000
+    const shapes = Array.from({ length: N }, (_, i) => ({
+      id: `w${i}`, type: 'wall', x: i * 40, y: 0,
+      props: { x2: 0, y2: 1000, thickness: 10 },
+    }))
+    shapes.push({ id: 'h1', type: 'wall', x: 0, y: 500, props: { x2: N * 40, y2: 0, thickness: 10 } })
+    const editor = makeEditor(shapes) as never
+
+    const t0 = performance.now()
+    for (let i = 0; i < 10; i++) {
+      _resetSnapCache()
+      snapToIntersection(editor, { x: 40 * 7 + 2, y: 502 })
+    }
+    const ms = (performance.now() - t0) / 10
+    expect(ms).toBeLessThan(60)
+  })
+
+  it('커서 근처 교차점을 제대로 찾는다 (가까운 것 우선)', () => {
+    const editor = makeEditor([
+      { id: 'v1', type: 'wall', x: 50, y: -50, props: { x2: 0, y2: 200, thickness: 10 } },
+      { id: 'v2', type: 'wall', x: 400, y: -50, props: { x2: 0, y2: 200, thickness: 10 } },
+      { id: 'h1', type: 'wall', x: 0, y: 0, props: { x2: 600, y2: 0, thickness: 10 } },
+    ]) as never
+    const hit = snapToIntersection(editor, { x: 398, y: 3 })
+    expect(hit).not.toBeNull()
+    expect(hit!.x).toBeCloseTo(400, 3)   // 멀리 있는 (50,0) 이 아니라
+  })
+})

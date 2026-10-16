@@ -19,10 +19,8 @@ let _snapDiagLogged = false
 export function _resetSnapCache() {
   _snapCacheTime = -1
   _lineCacheTime = -1
-  _intersectionCacheTime = -1
   _snapCache = []
   _lineCache = []
-  _intersectionCache = []
   _snapDiagLogged = false
 }
 
@@ -112,6 +110,14 @@ export function snapToWallEndpoint(
   point: { x: number; y: number },
   excludeId?: string,
 ): SnapPoint | null {
+  // **모드를 여기서 거른다.** 예전엔 종류를 가리지 않고 가장 가까운 점 하나를
+  // 돌려주고, 부른 쪽에서 "그 종류가 꺼져 있으면 버리는" 식이었다. 그래서
+  // 끝점을 꺼두면, 커서가 중간점보다 끝점에 조금이라도 가까울 때 **켜져 있는
+  // 중간점까지 같이 사라졌다.**
+  const wantEnd = getSnapMode('endpoint')
+  const wantMid = getSnapMode('midpoint')
+  if (!wantEnd && !wantMid) return null
+
   const radius = SNAP_RADIUS_PX / editor.getZoomLevel()
   let best: SnapPoint | null = null
   let bestDist = radius
@@ -121,31 +127,42 @@ export function snapToWallEndpoint(
   // 패스 1: 중심선 끝점/중간점 (우선순위 높음)
   for (const ep of endpoints) {
     if (ep.id === excludeId || ep.edge) continue
-    const d1 = Math.hypot(ep.x - point.x, ep.y - point.y)
-    if (d1 < bestDist) {
-      bestDist = d1
-      best = { x: ep.x, y: ep.y, sourceId: ep.id, snapType: 'endpoint' }
-    }
-    const d2 = Math.hypot(ep.mx - point.x, ep.my - point.y)
-    if (d2 < bestDist) {
-      bestDist = d2
-      best = { x: ep.mx, y: ep.my, sourceId: ep.id, snapType: 'midpoint' }
-    }
-  }
-
-  // 패스 2: 엣지 끝점 (중심선 스냅이 없을 때만)
-  if (!best) {
-    for (const ep of endpoints) {
-      if (ep.id === excludeId || !ep.edge) continue
+    if (wantEnd) {
       const d1 = Math.hypot(ep.x - point.x, ep.y - point.y)
       if (d1 < bestDist) {
         bestDist = d1
-        best = { x: ep.x, y: ep.y, sourceId: ep.id, snapType: 'edge' }
+        best = { x: ep.x, y: ep.y, sourceId: ep.id, snapType: 'endpoint' }
       }
+    }
+    if (wantMid) {
       const d2 = Math.hypot(ep.mx - point.x, ep.my - point.y)
       if (d2 < bestDist) {
         bestDist = d2
-        best = { x: ep.mx, y: ep.my, sourceId: ep.id, snapType: 'edge' }
+        best = { x: ep.mx, y: ep.my, sourceId: ep.id, snapType: 'midpoint' }
+      }
+    }
+  }
+
+  // 패스 2: 두께 쪽(엣지) 점 — 중심선 스냅이 없을 때만.
+  //
+  // 끝점과 중간점을 **각각의 토글에 맞춰** 본다. 둘 다 'edge' 로 내보내던 때는
+  // 중간점을 꺼도 엣지의 중간점이 그대로 걸렸다.
+  if (!best) {
+    for (const ep of endpoints) {
+      if (ep.id === excludeId || !ep.edge) continue
+      if (wantEnd) {
+        const d1 = Math.hypot(ep.x - point.x, ep.y - point.y)
+        if (d1 < bestDist) {
+          bestDist = d1
+          best = { x: ep.x, y: ep.y, sourceId: ep.id, snapType: 'edge' }
+        }
+      }
+      if (wantMid) {
+        const d2 = Math.hypot(ep.mx - point.x, ep.my - point.y)
+        if (d2 < bestDist) {
+          bestDist = d2
+          best = { x: ep.mx, y: ep.my, sourceId: ep.id, snapType: 'edge' }
+        }
       }
     }
   }
@@ -235,10 +252,24 @@ export function snapToWallLine(
 }
 
 // ── 교차점 스냅: 벽-벽 교차점 ──
+//
+// 페이지의 **모든 선 쌍**을 미리 구해 캐시하고 있었다. 직접 그린 벽 몇 개라면
+// 괜찮지만, DXF 를 가져오면 선이 수만 개라 쌍이 수십억이 된다 — 커서를 움직일
+// 때마다 그걸 돌리니 탭이 멈춘다. ToolOverlay 가 그리기 중이 아닐 때도 부르기
+// 때문에 도면을 띄워 놓기만 해도 걸린다.
+//
+// 지금은 **커서 반경 안을 지나는 선만** 추려서 그것들끼리만 교차를 본다.
+// 교차점이 반경 안에 있으면 두 선 모두 반경 안을 지나므로 놓치는 건 없다.
 
-type IntersectionPoint = { x: number; y: number; id1: string; id2: string }
-let _intersectionCache: IntersectionPoint[] = []
-let _intersectionCacheTime = -1
+/** 한 번에 짝지어 볼 선의 상한. 밀집한 도면에서 쌍이 폭발하지 않게 막는다. */
+const MAX_INTERSECTION_CANDIDATES = 64
+
+/** 점에서 선분까지 최단거리의 제곱. */
+function distSqToSeg(px: number, py: number, w: WallLine): number {
+  const t = Math.max(0, Math.min(1, ((px - w.x) * w.dx + (py - w.y) * w.dy) / (w.len * w.len)))
+  const cx = w.x + w.dx * t, cy = w.y + w.dy * t
+  return (px - cx) * (px - cx) + (py - cy) * (py - cy)
+}
 
 /** 두 선분의 교차점 계산. 교차하지 않으면 null. */
 export function lineSegmentIntersection(
@@ -259,28 +290,6 @@ export function lineSegmentIntersection(
   return { x: ax1 + t * dax, y: ay1 + t * day }
 }
 
-function getIntersections(editor: Editor): IntersectionPoint[] {
-  const now = performance.now()
-  if (now - _intersectionCacheTime < 16) return _intersectionCache
-  _intersectionCacheTime = now
-  _intersectionCache = []
-
-  const walls = getWallLines(editor)
-  for (let i = 0; i < walls.length; i++) {
-    for (let j = i + 1; j < walls.length; j++) {
-      const a = walls[i], b = walls[j]
-      const pt = lineSegmentIntersection(
-        a.x, a.y, a.x + a.dx, a.y + a.dy,
-        b.x, b.y, b.x + b.dx, b.y + b.dy,
-      )
-      if (pt) {
-        _intersectionCache.push({ x: pt.x, y: pt.y, id1: a.id, id2: b.id })
-      }
-    }
-  }
-  return _intersectionCache
-}
-
 /** 교차점 스냅: 두 벽의 교차점에 자동 흡착 */
 export function snapToIntersection(
   editor: Editor,
@@ -292,12 +301,29 @@ export function snapToIntersection(
   let best: SnapPoint | null = null
   let bestDist = radius
 
-  for (const ip of getIntersections(editor)) {
-    if (ip.id1 === excludeId || ip.id2 === excludeId) continue
-    const d = Math.hypot(ip.x - point.x, ip.y - point.y)
-    if (d < bestDist) {
-      bestDist = d
-      best = { x: ip.x, y: ip.y, sourceId: ip.id1, snapType: 'intersection' }
+  // 커서 반경 안을 지나는 선만 추린다
+  const r2 = radius * radius
+  const near: WallLine[] = []
+  for (const w of getWallLines(editor)) {
+    if (w.id === excludeId) continue
+    if (distSqToSeg(point.x, point.y, w) > r2) continue
+    near.push(w)
+    if (near.length >= MAX_INTERSECTION_CANDIDATES) break
+  }
+
+  for (let i = 0; i < near.length; i++) {
+    for (let j = i + 1; j < near.length; j++) {
+      const a = near[i], b = near[j]
+      const ip = lineSegmentIntersection(
+        a.x, a.y, a.x + a.dx, a.y + a.dy,
+        b.x, b.y, b.x + b.dx, b.y + b.dy,
+      )
+      if (!ip) continue
+      const d = Math.hypot(ip.x - point.x, ip.y - point.y)
+      if (d < bestDist) {
+        bestDist = d
+        best = { x: ip.x, y: ip.y, sourceId: a.id, snapType: 'intersection' }
+      }
     }
   }
   return best
@@ -395,15 +421,9 @@ export function resolveDrawPointAt(
   shiftKey: boolean,
   excludeId?: string,
 ): SnapPoint {
-  // 1. 끝점/중간점/엣지 스냅 (최고 우선순위) — 모드 설정에 따라 필터
+  // 1. 끝점/중간점/엣지 스냅 (최고 우선순위). 모드 필터는 함수 안에 있다.
   const epSnap = snapToWallEndpoint(editor, point, excludeId)
-  if (epSnap) {
-    const isEp = epSnap.snapType === 'endpoint' || epSnap.snapType === 'edge'
-    const isMid = epSnap.snapType === 'midpoint'
-    if ((isEp && getSnapMode('endpoint')) || (isMid && getSnapMode('midpoint'))) {
-      return epSnap
-    }
-  }
+  if (epSnap) return epSnap
 
   // 2. 교차점 스냅
   const intSnap = snapToIntersection(editor, point, excludeId)
