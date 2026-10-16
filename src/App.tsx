@@ -509,7 +509,9 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
       }
     }, SERVER_SYNC_MS)
 
-    // 5분마다 자동 버전 저장 (변경 있을 때만)
+    // 30분마다 자동 버전 저장 (변경 있을 때만).
+    // 전엔 5분이었는데, 수 MB 스냅샷이 project_versions 에 쌓여 DB 를
+    // 가득 채웠다. 바꾸면 VersionHistoryPanel 의 안내 문구도 같이 고칠 것.
     const AUTO_VERSION_MS = 30 * 60 * 1000
     const autoVersionTimer = window.setInterval(() => {
       if (!dirtySinceAuto) return
