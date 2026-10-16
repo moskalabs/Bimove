@@ -7,6 +7,7 @@ import { cancelZoneDraw, completeZoneDraw } from '../lib/drawingState'
 import { getScaleConfig } from '../lib/scaleConfig'
 import { shoelaceArea, pxAreaToM2, measurePolygon, type Pt } from '../lib/areaMeasure'
 import { resolveDrawPointAt, type SnapPoint } from '../lib/snap'
+import { normalizeWheelDelta } from '../lib/wheelBehavior'
 
 const SNAP_DIST = 12
 
@@ -134,11 +135,12 @@ export function ZoneDrawOverlay() {
     if (!editor) return
     e.preventDefault()
     e.stopPropagation()
-    const pixelRatio = e.deltaMode === 1 ? 16 : 1
-    const delta = new Vec(e.deltaX * pixelRatio, e.deltaY * pixelRatio)
-    if (delta.x === 0 && delta.y === 0) return
+    // 부호를 뒤집어 넘긴다 — tldraw 가 자기 리스너에서 그렇게 하기 때문이다.
+    // 날것을 넘기면 확대·축소가 통째로 반대로 돈다 (normalizeWheelDelta 주석).
+    const d = normalizeWheelDelta(e)
+    if (d.x === 0 && d.y === 0) return
     editor.dispatch({
-      type: 'wheel', name: 'wheel', delta,
+      type: 'wheel', name: 'wheel', delta: new Vec(d.x, d.y, d.z),
       point: new Vec(e.clientX, e.clientY),
       shiftKey: e.shiftKey, altKey: e.altKey, ctrlKey: e.metaKey || e.ctrlKey,
     })

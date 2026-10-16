@@ -42,3 +42,38 @@ export function isCanvasWheelTarget(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null
   return !!el?.closest?.(CANVAS_WHEEL_SELECTOR)
 }
+
+// ── 오버레이가 직접 쏘는 휠 ──
+//
+// 공간지정·면적측정 오버레이는 `<Tldraw>` 의 형제로 붙어 자기 휠 이벤트를
+// 받아 editor.dispatch 로 넘긴다. 그런데 **tldraw 는 넘겨받은 delta 가 이미
+// 뒤집혀 있다고 가정한다** — 자기 리스너는 normalizeWheel 로 부호를 뒤집어
+// 넣는다. 오버레이는 날것을 그대로 넘겨서 확대·축소와 이동이 통째로 반대로
+// 돌았다.
+//
+// normalizeWheel 은 tldraw 가 내보내지 않아(release type 에서 제외) 여기에
+// 같은 계산을 둔다. 바꾸지 말 것 — tldraw 쪽과 **글자 그대로 같아야** 한다.
+
+/** ctrl/alt/meta 를 눌렀을 때 한 번에 허용하는 최대 확대 폭. */
+const MAX_ZOOM_STEP = 10
+
+const IS_DARWIN = typeof navigator !== 'undefined' &&
+  /Mac|iPod|iPhone|iPad/.test(navigator.platform ?? '')
+
+/** 휠 이벤트에서 읽는 값만 추린 것. */
+export type WheelDeltaSignal =
+  Pick<WheelEvent, 'deltaX' | 'deltaY' | 'ctrlKey' | 'altKey' | 'metaKey' | 'shiftKey'>
+
+/** tldraw 가 기대하는 모양의 delta. tldraw 의 normalizeWheel 과 같은 계산이다. */
+export function normalizeWheelDelta(e: WheelDeltaSignal): { x: number; y: number; z: number } {
+  let { deltaX, deltaY } = e
+  let deltaZ = 0
+  if (e.ctrlKey || e.altKey || e.metaKey) {
+    deltaZ = (Math.abs(deltaY) > MAX_ZOOM_STEP ? MAX_ZOOM_STEP * Math.sign(deltaY) : deltaY) / 100
+  } else if (e.shiftKey && !IS_DARWIN) {
+    // 윈도우·리눅스는 shift+휠을 가로 스크롤로 쓴다
+    deltaX = deltaY
+    deltaY = 0
+  }
+  return { x: -deltaX, y: -deltaY, z: -deltaZ }
+}
