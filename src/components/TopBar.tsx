@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { PageRecordType, createShapeId, GeoShapeGeoStyle } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
+import { useReadonly } from '../context/ReadonlyContext'
 import { startZoneDraw, startPolylineDraw } from '../lib/drawingState'
 import { lineShapeFromPoints } from '../lib/polylineShape'
 import { nextZoneColor } from '../shapes/ZoneShape'
@@ -260,6 +261,7 @@ function ToolGroup({ tools, activeTool, onSelect }: { tools: ToolDef[]; activeTo
 
 export function TopBar() {
   const editor = useEditor()
+  const readonly = useReadonly()
   const [activeTool, setActiveTool] = useState('select')
   const [showDropdown, setShowDropdown] = useState(false)
 
@@ -408,43 +410,57 @@ export function TopBar() {
                   {p.name}
                 </div>
               ))}
-              <div
-                className="topbar-dropdown-item topbar-dropdown-add"
-                onClick={(e) => { e.stopPropagation(); addPage() }}
-              >
-                + 새 도면
-              </div>
+              {!readonly && (
+                <div
+                  className="topbar-dropdown-item topbar-dropdown-add"
+                  onClick={(e) => { e.stopPropagation(); addPage() }}
+                >
+                  + 새 도면
+                </div>
+              )}
             </div>
           )}
         </div>
         <ToolGroup tools={GROUP_BASIC} activeTool={activeTool} onSelect={selectTool} />
-        <button className="topbar-btn" title="명령 취소 (Ctrl+Z)" onClick={() => editor?.undo()}>
-          <Undo2 size={18} strokeWidth={1.75} />
-        </button>
-        <button className="topbar-btn" title="명령 복구 (Ctrl+Y)" onClick={() => editor?.redo()}>
-          <Redo2 size={18} strokeWidth={1.75} />
-        </button>
+        {!readonly && (
+          <>
+            <button className="topbar-btn" title="명령 취소 (Ctrl+Z)" onClick={() => editor?.undo()}>
+              <Undo2 size={18} strokeWidth={1.75} />
+            </button>
+            <button className="topbar-btn" title="명령 복구 (Ctrl+Y)" onClick={() => editor?.redo()}>
+              <Redo2 size={18} strokeWidth={1.75} />
+            </button>
+          </>
+        )}
       </div>
 
-      {/* 공간 설정 */}
-      <div className="topbar-group">
-        <ToolGroup tools={GROUP_SPACE} activeTool={activeTool} onSelect={selectTool} />
-      </div>
+      {/* 그리기 도구는 읽기 전용에서 통째로 빠진다. 작은 화면에서 손가락으로는
+          스냅 반경(12px) 안을 집을 수 없고, 도구 바가 캔버스를 다 덮는다. */}
+      {readonly ? (
+        <div className="topbar-group topbar-readonly">읽기 전용</div>
+      ) : (
+        <>
+          {/* 공간 설정 */}
+          <div className="topbar-group">
+            <ToolGroup tools={GROUP_SPACE} activeTool={activeTool} onSelect={selectTool} />
+          </div>
 
-      {/* 그리기 */}
-      <div className="topbar-group">
-        <ToolGroup tools={GROUP_DRAW} activeTool={activeTool} onSelect={selectTool} />
-      </div>
+          {/* 그리기 */}
+          <div className="topbar-group">
+            <ToolGroup tools={GROUP_DRAW} activeTool={activeTool} onSelect={selectTool} />
+          </div>
 
-      {/* 편집(수정) */}
-      <div className="topbar-group">
-        <ToolGroup tools={GROUP_EDIT} activeTool={activeTool} onSelect={selectTool} />
-      </div>
+          {/* 편집(수정) */}
+          <div className="topbar-group">
+            <ToolGroup tools={GROUP_EDIT} activeTool={activeTool} onSelect={selectTool} />
+          </div>
 
-      {/* 주석 */}
-      <div className="topbar-group">
-        <ToolGroup tools={GROUP_ANNOTATE} activeTool={activeTool} onSelect={selectTool} />
-      </div>
+          {/* 주석 */}
+          <div className="topbar-group">
+            <ToolGroup tools={GROUP_ANNOTATE} activeTool={activeTool} onSelect={selectTool} />
+          </div>
+        </>
+      )}
     </div>
   )
 }

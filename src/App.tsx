@@ -21,6 +21,8 @@ import { ProjectsPage } from './components/ProjectsPage'
 import { AuthPage } from './components/AuthPage'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { ToastProvider, useToast } from './context/ToastContext'
+import { ReadonlyContext } from './context/ReadonlyContext'
+import { isReadonlyViewport, probeViewport } from './lib/readonlyMode'
 const Viewer3D = lazyWithReload(() => import('./components/Viewer3D').then(m => ({ default: m.Viewer3D })))
 const CadPreview = lazyWithReload(() => import('./components/CadPreview'))
 import { WallShapeUtil } from './shapes/WallShape'
@@ -136,6 +138,19 @@ interface PendingCadPreview {
 function EditorView({ projectId, projectName: initialProjectName, onBack }: { projectId: string; projectName?: string; onBack: () => void }) {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [show3D, setShow3D] = useState(false)
+
+  // 태블릿·모바일은 읽기 전용. 창을 줄였다 늘렸다 해도 따라오게 구독한다.
+  const [readonly, setReadonly] = useState(() => isReadonlyViewport(probeViewport()))
+  useEffect(() => {
+    const update = () => setReadonly(isReadonlyViewport(probeViewport()))
+    window.addEventListener('resize', update)
+    const mq = window.matchMedia?.('(pointer: coarse)')
+    mq?.addEventListener?.('change', update)
+    return () => {
+      window.removeEventListener('resize', update)
+      mq?.removeEventListener?.('change', update)
+    }
+  }, [])
   const [pendingCadPreview, setPendingCadPreview] = useState<PendingCadPreview | null>(null)
   const { toast } = useToast()
 
@@ -572,6 +587,12 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
   useEffect(() => {
     if (!editor) return
     const handleKeyDown = (e: KeyboardEvent) => {
+      // 읽기 전용에서는 편집 단축키를 통째로 막는다. 도구 바를 감춰도
+      // Ctrl+D / Delete 는 그대로 들어오기 때문이다.
+      if (readonly) {
+        if (e.key === 'Escape') editor.selectNone()
+        return
+      }
       const mod = e.ctrlKey || e.metaKey
       if (e.key === 'z' && mod) {
         e.preventDefault()
@@ -593,9 +614,21 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [editor])
+  }, [editor, readonly])
+
+  // 읽기 전용이면 tldraw 쪽도 잠그고 도구를 선택으로 돌려놓는다.
+  // UI 를 감추는 것만으로는 부족하다 — 캔버스에 직접 들어오는 조작이 남는다.
+  useEffect(() => {
+    if (!editor) return
+    editor.updateInstanceState({ isReadonly: readonly })
+    if (readonly) {
+      editor.setCurrentTool('select')
+      editor.selectNone()
+    }
+  }, [editor, readonly])
 
   return (
+    <ReadonlyContext.Provider value={readonly}>
     <ProjectContext.Provider value={projectId}>
     <ProjectNameContext.Provider value={projectNameValue}>
     <EditorContext.Provider value={editor}>
@@ -671,6 +704,7 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
     </EditorContext.Provider>
     </ProjectNameContext.Provider>
     </ProjectContext.Provider>
+    </ReadonlyContext.Provider>
   )
 }
 

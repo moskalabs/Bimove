@@ -8,6 +8,7 @@ import { MaterialsPanel } from './panels/MaterialsPanel'
 import { LayoutPanel } from './panels/LayoutPanel'
 import { useImportActions, type ImportKind } from './useImportActions'
 import { useEditor } from '../context/EditorContext'
+import { useReadonly } from '../context/ReadonlyContext'
 import { useProjectId, useProjectName } from '../context/ProjectContext'
 import { exportDxf } from '../lib/dxf'
 import { exportPng } from '../lib/exportPng'
@@ -21,6 +22,7 @@ export function HamburgerMenu({ open, onClose, onImport }: {
   onImport: (kind: ImportKind) => void
 }) {
   const editor = useEditor()
+  const readonly = useReadonly()
   const projectId = useProjectId()
   // 이름은 ProjectNameContext 가 들고 있다. 여기서 localStorage 목록을 직접
   // 뒤지면 (a) 대시보드(서버)에서 연 프로젝트는 그 목록에 없고 (b) 도면을
@@ -46,25 +48,29 @@ export function HamburgerMenu({ open, onClose, onImport }: {
         </div>
         <div className="lbar-menu-divider" />
         <div className="lbar-menu-section">
-          <div className="lbar-menu-item lbar-menu-has-sub" style={{ position: 'relative' }}
-            onClick={() => setOpenSub(openSub === 'import' ? null : 'import')}
-          >
-            가져오기
-            <span className="lbar-menu-arrow">›</span>
-            {openSub === 'import' && (
-              <div className="lbar-menu-sub" onClick={(e) => e.stopPropagation()}>
-                <div className="lbar-menu-item" onClick={() => { onImport('cad'); closeAll() }}>
-                  📐 DXF / DWG 도면
+          {/* 가져오기는 도면을 바꾸는 일이라 읽기 전용에서 뺀다.
+              내보내기는 그대로 둔다 — 현장에서 PDF 로 빼는 건 보기 쪽 일이다. */}
+          {!readonly && (
+            <div className="lbar-menu-item lbar-menu-has-sub" style={{ position: 'relative' }}
+              onClick={() => setOpenSub(openSub === 'import' ? null : 'import')}
+            >
+              가져오기
+              <span className="lbar-menu-arrow">›</span>
+              {openSub === 'import' && (
+                <div className="lbar-menu-sub" onClick={(e) => e.stopPropagation()}>
+                  <div className="lbar-menu-item" onClick={() => { onImport('cad'); closeAll() }}>
+                    📐 DXF / DWG 도면
+                  </div>
+                  <div className="lbar-menu-item" onClick={() => { onImport('pdf'); closeAll() }}>
+                    📄 PDF 도면
+                  </div>
+                  <div className="lbar-menu-item" onClick={() => { onImport('image'); closeAll() }}>
+                    🖼 이미지 배경
+                  </div>
                 </div>
-                <div className="lbar-menu-item" onClick={() => { onImport('pdf'); closeAll() }}>
-                  📄 PDF 도면
-                </div>
-                <div className="lbar-menu-item" onClick={() => { onImport('image'); closeAll() }}>
-                  🖼 이미지 배경
-                </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
           <div className="lbar-menu-item lbar-menu-has-sub" style={{ position: 'relative' }}
             onClick={() => setOpenSub(openSub === 'export' ? null : 'export')}
           >

@@ -4039,3 +4039,22 @@ html[data-dark="true"] .dash-modal-btn.secondary { background: #2a2a30; color: #
 html[data-dark="true"] .dash-modal-btn.secondary:hover { background: #333; }
 html[data-dark="true"] .dash-empty-text { color: #777; }
 html[data-dark="true"] .dash-empty-sub { color: #555; }
+
+/* ── 읽기 전용 배지 ──
+   태블릿·모바일에서 도구 바 자리에 대신 들어간다. 도구가 왜 없는지
+   알려주지 않으면 "고장났다" 로 읽힌다. */
+.topbar-readonly {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #8a8f98;
+  white-space: nowrap;
+}
+.topbar-readonly::before {
+  content: '👁';
+  font-size: 13px;
+}

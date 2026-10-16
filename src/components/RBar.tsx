@@ -9,6 +9,7 @@ import {
   ChevronUp, ChevronDown,
 } from 'lucide-react'
 import { useEditor } from '../context/EditorContext'
+import { useReadonly } from '../context/ReadonlyContext'
 import { detectWalls } from '../lib/detectWalls'
 import {
   getScaleConfig,
@@ -65,7 +66,10 @@ export function RBar() {
     return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
   }, [editor])
 
-  const showWallProps = currentToolId === 'wall' || sel?.type === 'wall'
+  const readonly = useReadonly()
+  // 읽기 전용에서는 벽 두께·정렬 같은 **고치는** 패널을 감춘다. 고른 것의
+  // 속성(PropsPanel)은 보는 값이라 남긴다.
+  const showWallProps = !readonly && (currentToolId === 'wall' || sel?.type === 'wall')
 
   return (
     <aside className="rbar">
@@ -84,7 +88,7 @@ export function RBar() {
       {/* ── 선택 상태에 따른 속성 패널 ── */}
       {showWallProps && <WallDefaultSection scale={scale} />}
       {showWallProps && <WallHeightSection />}
-      {selCount > 1 && <AlignPanel />}
+      {!readonly && selCount > 1 && <AlignPanel />}
       {sel && <PropsPanel sel={sel} scale={scale} />}
 
       {/* ── 섹션 4: 화면 보기 (하단 고정) ── */}
