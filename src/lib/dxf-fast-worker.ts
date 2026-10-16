@@ -11,7 +11,7 @@
  */
 
 import { hexChunksToBytes, readOleImage, readOleFrameRect, rectFromCorners } from './dxfOle'
-import { aciToHex, trueColorToHex, detectPadding, makeGcFormatter, decodeDxfSpecialChars, cleanMtextFormatting, defLineSpacing, sampleArcDeg, type HatchPatternLine, type ParseSpace } from './dxf-shared'
+import { aciToHex, trueColorToHex, detectPadding, makeGcFormatter, decodeDxfSpecialChars, cleanMtextFormatting, defLineSpacing, sampleArcDeg, textAttachPoint, usesAlignPoint, type HatchPatternLine, type ParseSpace } from './dxf-shared'
 
 export type { HatchPatternLine, ParseSpace }
 
@@ -1781,14 +1781,13 @@ function extractTextEntity(
   let mtextFont: string | undefined
   if (type === 'TEXT') {
     text = decodeDxfSpecialChars((codes.get(1)?.[0] ?? '').trim())
-    // TEXT alignment: group 72 (horizontal) + 73 (vertical)
+    // 정렬: gc 72(가로) + 73(세로).
     const hAlign = parseInt(codes.get(72)?.[0] ?? '0') || 0
     const vAlign = parseInt(codes.get(73)?.[0] ?? '0') || 0
-    if (hAlign === 1) attachPt = 8       // Center → BC
-    else if (hAlign === 2) attachPt = 9  // Right → BR
-    else if (hAlign === 4) attachPt = 5  // Middle → MC
-    // TEXT with alignment uses group 11/21 as actual position
-    if ((hAlign > 0 || vAlign > 0) && codes.get(11) && codes.get(21)) {
+    // **항상 채운다.** 비워두면 렌더러가 MTEXT 기본값인 TL 로 떨어져서
+    // 정렬 코드가 없는 평범한 글씨가 한 줄 높이만큼 내려앉는다.
+    attachPt = textAttachPoint(hAlign, vAlign)
+    if (usesAlignPoint(hAlign, vAlign) && codes.get(11) && codes.get(21)) {
       x = parseFloat(codes.get(11)![0])
       y = parseFloat(codes.get(21)![0])
     }
@@ -1917,7 +1916,8 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
   const GC370 = `\n${gc(370)}\n` // lineweight
   const GC440 = `\n${gc(440)}\n` // transparency
   const GC72 = `\n${gc(72)}\n`
-  const GC73 = `\n${gc(73)}\n`
+  const GC73 = `\n${gc(73)}\n`   // TEXT 세로 정렬
+  const GC74 = `\n${gc(74)}\n`   // ATTRIB 세로 정렬 (TEXT 의 73 자리)
   const GC230 = `\n${gc(230)}\n`
   const GC67 = `\n${gc(67)}\n`   // 1 = 종이공간 엔티티
   const GC330 = `\n${gc(330)}\n`  // owner block record handle
@@ -2239,27 +2239,26 @@ function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phas
               const hi = idxIn(dxfText, GC40, eStart, eEnd)
               const ri = idxIn(dxfText, GC50, eStart, eEnd)
               const c62i = idxIn(dxfText, GC62, eStart, eEnd)
-              // TEXT alignment: code 72 (horizontal) + 73 (vertical)
-              // When aligned, actual position is in 11/21 (not 10/20)
+              // 정렬: gc 72(가로) + 세로. **세로는 TEXT 가 73, ATTRIB 은 74** —
+              // ATTRIB 의 73 은 필드 길이라 그대로 읽으면 엉뚱한 값이 들어온다.
               const h72i = idxIn(dxfText, GC72, eStart, eEnd)
-              const v73i = idxIn(dxfText, GC73, eStart, eEnd)
+              const GCV = type === 'ATTRIB' ? GC74 : GC73
+              const vAi = idxIn(dxfText, GCV, eStart, eEnd)
               const hAlign = h72i >= 0 ? parseInt(valAt(dxfText, h72i + GC72.length, eEnd)) || 0 : 0
-              const vAlign = v73i >= 0 ? parseInt(valAt(dxfText, v73i + GC73.length, eEnd)) || 0 : 0
+              const vAlign = vAi >= 0 ? parseInt(valAt(dxfText, vAi + GCV.length, eEnd)) || 0 : 0
               let tx = floatAt(dxfText, xi + GC10.length, eEnd)
               let ty = floatAt(dxfText, yi + GC20.length, eEnd)
-              let attachPt: number | undefined
-              // Use alignment point (11/21) when any alignment is set
-              if (hAlign > 0 || vAlign > 0) {
+              // 정렬이 걸려 있으면 기준점은 11/21 이다 (Aligned/Fit 은 예외 —
+              // 거긴 11/21 이 끝점이다).
+              if (usesAlignPoint(hAlign, vAlign)) {
                 const x11i = idxIn(dxfText, GC11, eStart, eEnd)
                 const y21i = idxIn(dxfText, GC21, eStart, eEnd)
                 if (x11i >= 0 && y21i >= 0) {
                   tx = floatAt(dxfText, x11i + GC11.length, eEnd)
                   ty = floatAt(dxfText, y21i + GC21.length, eEnd)
                 }
-                if (hAlign === 1) attachPt = 8       // Center → BC
-                else if (hAlign === 2) attachPt = 9  // Right → BR
-                else if (hAlign === 4) attachPt = 5  // Middle → MC
               }
+              const attachPt = textAttachPoint(hAlign, vAlign)
               // Resolve font from style (gc 7)
               const s7i = idxIn(dxfText, GC7, eStart, eEnd)
               const styleName = s7i >= 0 ? valAt(dxfText, s7i + GC7.length, eEnd).toUpperCase() : ''

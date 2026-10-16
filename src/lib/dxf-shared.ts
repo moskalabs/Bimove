@@ -494,3 +494,35 @@ export function sampleArcDeg(o: ArcSampleDeg): Array<[number, number]> {
   }
   return pts
 }
+
+/**
+ * TEXT/ATTRIB 의 정렬 코드 → attachment point (1=TL 2=TC 3=TR 4=ML 5=MC 6=MR 7=BL 8=BC 9=BR).
+ *
+ *   gc 72 (가로) : 0=Left 1=Center 2=Right 3=Aligned 4=Middle 5=Fit
+ *   gc 73 (세로) : 0=Baseline 1=Bottom 2=Middle 3=Top
+ *   ※ ATTRIB/ATTDEF 은 세로가 73 이 아니라 **74** 다 (73 은 필드 길이).
+ *
+ * 전에는 가로만 보고 세로를 통째로 버렸다. 그래서 가운데 정렬된 도면틀 글씨가
+ * 글자 높이의 절반만큼, 위 정렬이면 한 칸만큼 어긋나 칸 밖으로 비어져 나왔다.
+ *
+ * Aligned(3)·Fit(5) 은 두 점 사이에 글자를 늘려 맞추는 모드다. 늘이기는 흉내
+ * 내지 않고 **시작점 기준 왼쪽 정렬**로 둔다 — 끝점에 왼쪽 정렬로 찍으면
+ * 글자가 통째로 오른쪽으로 밀려난다.
+ */
+export function textAttachPoint(hAlign: number, vAlign: number): number {
+  if (hAlign === 4) return 5                              // Middle 은 세로 코드와 무관하게 MC
+  const col = hAlign === 1 ? 1 : hAlign === 2 ? 2 : 0     // Center / Right / 그 외는 Left
+  const row = vAlign === 3 ? 0 : vAlign === 2 ? 3 : 6     // Top / Middle / Bottom·Baseline
+  return row + col + 1
+}
+
+/**
+ * 좌표를 10/20 대신 11/21 에서 읽어야 하는지.
+ *
+ * 둘 다 0 이면 10/20 이 기준점이다. 하나라도 설정돼 있으면 11/21 이 정렬점이다.
+ * 단 Aligned/Fit 은 11/21 이 **끝점**이라 기준으로 쓰면 안 된다.
+ */
+export function usesAlignPoint(hAlign: number, vAlign: number): boolean {
+  if (hAlign === 3 || hAlign === 5) return false
+  return hAlign > 0 || vAlign > 0
+}
