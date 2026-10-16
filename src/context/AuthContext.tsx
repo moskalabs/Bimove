@@ -1,5 +1,5 @@
 // Supabase Auth 상태 관리
-import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, useRef, useCallback, type ReactNode } from 'react'
 import type { User, Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { setCurrentUserId } from '../lib/scopedStorage'
@@ -36,34 +36,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const [sessionExpired, setSessionExpired] = useState(false)
+  /** 직전 사용자 id. 콜백이 state 를 붙들지 않게 ref 로 둔다. */
+  const lastUserIdRef = useRef<string | null>(null)
+  /** 사용자가 직접 로그아웃하는 중인지 — 그건 '만료' 가 아니다. */
+  const signingOutRef = useRef(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
       setSession(s)
       setUser(s?.user ?? null)
+      lastUserIdRef.current = s?.user?.id ?? null
       setCurrentUserId(s?.user?.id ?? null)
       setLoading(false)
     })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
-      const prevUser = user
+      // **ref 로 본다.** 이 콜백은 deps [] 인 effect 안에서 한 번만 만들어지므로
+      // state 를 읽으면 첫 렌더의 null 을 영원히 붙들고 있다. 그래서 "전에
+      // 로그인 상태였나" 가 늘 false 였고 — 세션 만료가 **한 번도 안 잡혔다.**
+      const prevUserId = lastUserIdRef.current
+      const nextUserId = s?.user?.id ?? null
+      lastUserIdRef.current = nextUserId
+
+      // 세션이 끊긴 건지(만료) 사용자가 나간 건지 가른다.
+      const expired =
+        !!prevUserId && !s &&
+        (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') &&
+        !signingOutRef.current
+
       setSession(s)
       setUser(s?.user ?? null)
-      setCurrentUserId(s?.user?.id ?? null)
       setLoading(false)
 
-      // 세션 만료 감지: 이전에 로그인 상태였는데 세션이 사라진 경우
-      if (event === 'SIGNED_OUT' && prevUser && !s) {
-        setSessionExpired(true)
-      }
-      // TOKEN_REFRESHED 실패 시 세션 null
-      if (event === 'TOKEN_REFRESHED' && !s && prevUser) {
-        setSessionExpired(true)
-      }
+      // 만료일 때는 **사용자 스코프를 놓지 않는다.** 여기서 null 로 돌리면
+      // 저장 키가 `u:<id>:…` 에서 글로벌로 바뀌어, 배너를 띄운 채 이어서 한
+      // 작업이 엉뚱한 자리에 저장된다 (다시 로그인하면 사라진 것처럼 보인다).
+      if (!expired) setCurrentUserId(nextUserId)
+
+      if (expired) setSessionExpired(true)
     })
 
+    // 이제 이 effect 는 state 를 읽지 않는다 (ref 로 본다) — 그래서
+    // exhaustive-deps 억제가 필요 없다. 다시 state 를 읽기 시작하면 lint 가
+    // 바로 잡아준다.
     return () => subscription.unsubscribe()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const signIn = async (email: string, password: string): Promise<string | null> => {
@@ -82,8 +98,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const signOut = async () => {
+    // 스스로 나가는 건 '만료' 가 아니다. 플래그로 알려주고, 끝나면 되돌린다.
+    signingOutRef.current = true
     setSessionExpired(false)
-    await supabase.auth.signOut()
+    try {
+      await supabase.auth.signOut()
+    } finally {
+      signingOutRef.current = false
+      setCurrentUserId(null)
+    }
   }
 
   const resetPassword = async (email: string): Promise<string | null> => {

@@ -2,6 +2,8 @@ import { scopedGet, scopedSet, scopedRemove } from './scopedStorage'
 import { clearVersions } from './versions'
 import { idbGet, idbSet, idbDelete, requestPersistentStorage } from './idb'
 import { deleteRecords } from './snapshotRecords'
+import { deletePurchaseOrder } from './purchaseOrder'
+import { deleteFinishingData } from './finishingData'
 
 export type Project = {
   id: string
@@ -53,12 +55,50 @@ export function deleteProject(id: string) {
   // 프로젝트는 이미 목록에서 빠졌고, 남은 버전 레코드는 아무도 못 찾는다.
   // (clearVersions 가 레거시 localStorage 키도 같이 치운다.)
   void clearVersions(id)
+  // 프로젝트에 딸린 표들도 같이. 도면만 치우고 두면 지워진 프로젝트의
+  // 발주서·물량이 localStorage 에 계속 남는다.
+  deletePurchaseOrder(id)
+  deleteFinishingData(id)
 }
 
 export function renameProject(id: string, name: string) {
   saveProjectList(getProjects().map(p =>
     p.id === id ? { ...p, name: name.trim() || p.name, updatedAt: Date.now() } : p
   ))
+}
+
+/**
+ * 로컬 목록에 이 프로젝트가 있는지 보고, 없으면 넣는다.
+ *
+ * 프로젝트를 만드는 자리는 이제 대시보드(서버) 뿐이라 **로컬 목록에 들어가는
+ * 경로가 아예 없었다.** 그러면 touchProject() 가 갱신할 항목을 못 찾고,
+ * isLocalNewer() 는 localAt 이 없어 늘 false 를 돌려준다 — 로컬이 더 최신인
+ * 경우를 집어내려고 만든 장치가 통째로 죽어 있었다.
+ *
+ * **updatedAt 은 서버 시각으로 넣는다.** 여기서 Date.now() 를 쓰면 여는 순간
+ * 로컬이 서버보다 최신으로 보여서, 정작 낡은 로컬 스냅샷을 고르게 된다.
+ * 로컬이 앞서는 건 저장이 **성공한 뒤** touchProject() 가 찍을 때뿐이다.
+ *
+ * 이미 있으면 updatedAt 을 건드리지 않는다 — 그게 이 판정의 전부다.
+ */
+export function ensureProjectEntry(id: string, name: string, serverUpdatedAt?: string) {
+  const list = getProjects()
+  const existing = list.find(p => p.id === id)
+  if (existing) {
+    // 이름만 서버 쪽으로 맞춰둔다 (대시보드에서 고쳤을 수 있다)
+    if (name && existing.name !== name) {
+      saveProjectList(list.map(p => (p.id === id ? { ...p, name } : p)))
+    }
+    return
+  }
+  const at = serverUpdatedAt ? Date.parse(serverUpdatedAt) : NaN
+  list.unshift({
+    id,
+    name: name.trim() || '새 프로젝트',
+    createdAt: Date.now(),
+    updatedAt: Number.isNaN(at) ? 0 : at,
+  })
+  saveProjectList(list)
 }
 
 export function touchProject(id: string) {

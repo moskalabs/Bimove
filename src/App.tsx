@@ -42,7 +42,7 @@ import { CommentTool } from './tools/CommentTool'
 import { DimensionTool } from './tools/DimensionTool'
 import { EditorContext } from './context/EditorContext'
 import { ProjectContext, ProjectNameContext } from './context/ProjectContext'
-import { loadSnapshot, dropLegacySnapshot, saveThumbnail, touchProject, resolveSnapshot, renameProject } from './lib/projectStore'
+import { loadSnapshot, dropLegacySnapshot, saveThumbnail, touchProject, resolveSnapshot, renameProject, ensureProjectEntry } from './lib/projectStore'
 import { readRecordSnapshot, writeFullRecords, writeRecordDiff, type SnapshotLike } from './lib/snapshotRecords'
 import { createDebouncedSaver } from './lib/debouncedSave'
 import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, saveProjectVersion, renameProject as renameProjectOnServer } from './lib/supabaseSync'
@@ -215,6 +215,11 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
           serverUpdatedAtRef.current = result.updatedAt
         }
       } catch { /* Supabase 실패 */ }
+      // 로컬 목록에 이 프로젝트를 등록한다. 프로젝트는 대시보드(서버)에서만
+      // 만들어지므로 여기서 넣지 않으면 로컬 목록에 영영 안 들어가고,
+      // touchProject()/isLocalNewer() 가 통째로 무력해진다.
+      // **서버 시각으로** 넣는다 — 자세한 이유는 ensureProjectEntry 주석.
+      ensureProjectEntry(projectId, projectName, server?.updatedAt)
       // 로컬 후보는 레코드 저장본이 우선이다. null 이면 아직 레코드로 저장된
       // 적이 없는(또는 읽기가 실패한) 프로젝트라 옛 통짜 스냅샷으로 폴백한다.
       const local = (await readRecordSnapshot(projectId)) ?? (await loadSnapshot(projectId))
@@ -802,16 +807,13 @@ function AppContent() {
     )
   }
 
-  if (!user) {
-    return (
-      <>
-        <SessionExpiredBanner />
-        <AuthPage />
-      </>
-    )
-  }
-
-  // 세션 만료 상태이면 에디터 유지하면서 배너만 표시 (작업 보존)
+  // 세션이 끊겼는데 열어둔 도면이 있으면 **에디터를 그대로 둔다.** 배너만
+  // 띄우고 작업을 이어갈 수 있게 한다 — 그 사이 저장은 로컬로 간다.
+  //
+  // 이 분기가 `!user` 보다 **먼저** 와야 한다. 만료되면 user 가 null 이라,
+  // 순서가 반대였을 때는 로그인 화면이 먼저 걸려 여기까지 오지 못했다
+  // (사실상 죽은 코드였다). 사용자 스코프를 놓지 않는 것도 짝이다 —
+  // AuthContext 의 `if (!expired) setCurrentUserId(...)` 참고.
   if (sessionExpired && currentProject) {
     return (
       <>
@@ -821,6 +823,15 @@ function AppContent() {
           projectName={currentProject.name}
           onBack={closeProject}
         />
+      </>
+    )
+  }
+
+  if (!user) {
+    return (
+      <>
+        <SessionExpiredBanner />
+        <AuthPage />
       </>
     )
   }

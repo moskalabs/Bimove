@@ -1,6 +1,6 @@
 // 마감재 Tables 데이터 모델
 // 카테고리(마감재/조명/이동집기/주방집기) → 자재 아이템 → 변형(서브탭) → 구역별 물량표
-import { scopedGet, scopedSet } from './scopedStorage'
+import { scopedGet, scopedSet, scopedRemove } from './scopedStorage'
 
 // ── 구역별 행 ──
 
@@ -592,4 +592,9 @@ export function saveFinishingData(projectId: string, data: FinishingTablesData):
 
 export function resetFinishingData(): FinishingTablesData {
   return { categories: structuredClone(DEFAULT_CATEGORIES), updatedAt: Date.now(), schemaVersion: SCHEMA_VERSION }
+}
+
+/** 이 프로젝트의 마감재 물량을 이 기기에서 지운다 (프로젝트 삭제 때). */
+export function deleteFinishingData(projectId: string): void {
+  scopedRemove(`${STORAGE_KEY}_${projectId}`)
 }

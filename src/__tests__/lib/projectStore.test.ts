@@ -192,3 +192,108 @@ describe('migrateOldData', () => {
     expect(localStorage.getItem('bimova_snapshot_v1')).toBeNull()
   })
 })
+
+// ── 서버에서 만든 프로젝트의 로컬 등록 ──
+//
+// 프로젝트를 만드는 자리는 이제 대시보드(서버)뿐이라, 로컬 목록에 들어가는
+// 경로가 **아예 없었다.** 그러면 touchProject() 가 갱신할 항목을 못 찾고
+// isLocalNewer() 는 늘 false 를 돌려준다 — "로컬이 더 최신이면 로컬을 쓴다"
+// 는 장치가 통째로 죽는다. 네트워크가 끊겼다 돌아온 뒤 다시 열면, 이 기기에
+// 남은 최근 작업을 놔두고 서버의 옛 도면이 올라온다.
+
+import { ensureProjectEntry, isLocalNewer, resolveSnapshot } from '../../lib/projectStore'
+
+describe('ensureProjectEntry', () => {
+  it('없으면 넣는다', () => {
+    ensureProjectEntry('p1', '리모델링')
+    expect(getProjects().map(p => p.id)).toContain('p1')
+  })
+
+  it('updatedAt 은 서버 시각으로 넣는다 (지금 시각이 아니다)', () => {
+    // 여기서 Date.now() 를 쓰면 여는 순간 로컬이 서버보다 최신으로 보여서,
+    // 정작 낡은 로컬 스냅샷을 고르게 된다.
+    const serverAt = '2026-10-01T00:00:00.000Z'
+    ensureProjectEntry('p1', '리모델링', serverAt)
+    const entry = getProjects().find(p => p.id === 'p1')!
+    expect(entry.updatedAt).toBe(Date.parse(serverAt))
+  })
+
+  it('서버 시각이 없으면 0 — 로컬이 이기지 않는다', () => {
+    ensureProjectEntry('p1', '리모델링')
+    expect(getProjects().find(p => p.id === 'p1')!.updatedAt).toBe(0)
+  })
+
+  it('이미 있으면 updatedAt 을 건드리지 않는다', () => {
+    // 그게 이 판정의 전부다. 다시 열 때마다 초기화되면 로컬 저장 기록이 날아간다.
+    ensureProjectEntry('p1', '리모델링', '2026-10-01T00:00:00.000Z')
+    touchProject('p1')
+    const after = getProjects().find(p => p.id === 'p1')!.updatedAt
+    ensureProjectEntry('p1', '리모델링', '2026-10-01T00:00:00.000Z')
+    expect(getProjects().find(p => p.id === 'p1')!.updatedAt).toBe(after)
+  })
+
+  it('이름은 서버 쪽으로 맞춘다', () => {
+    ensureProjectEntry('p1', '옛이름')
+    ensureProjectEntry('p1', '새이름')
+    expect(getProjects().find(p => p.id === 'p1')!.name).toBe('새이름')
+  })
+})
+
+describe('등록 뒤의 최신 판정', () => {
+  const SERVER_AT = '2026-10-01T00:00:00.000Z'
+
+  it('열자마자는 서버가 이긴다', () => {
+    ensureProjectEntry('p1', 'x', SERVER_AT)
+    expect(isLocalNewer('p1', SERVER_AT)).toBe(false)
+    expect(resolveSnapshot('p1', { snapshot: { s: 1 }, updatedAt: SERVER_AT }, { l: 1 }))
+      .toEqual({ s: 1 })
+  })
+
+  it('로컬 저장이 성공하면 그 뒤로는 로컬이 이긴다', () => {
+    // 이게 안 되면 네트워크 장애 직후 작업이 옛 서버 도면에 덮인다.
+    ensureProjectEntry('p1', 'x', SERVER_AT)
+    touchProject('p1')
+    expect(isLocalNewer('p1', SERVER_AT)).toBe(true)
+    expect(resolveSnapshot('p1', { snapshot: { s: 1 }, updatedAt: SERVER_AT }, { l: 1 }))
+      .toEqual({ l: 1 })
+  })
+
+  it('등록이 안 돼 있으면 로컬 저장을 해도 서버가 이긴다 (고치기 전 모습)', () => {
+    // touchProject 는 목록에 **있는** 항목만 갱신한다. 등록을 건너뛰면
+    // 아무 일도 일어나지 않는다는 걸 못으로 박아둔다.
+    touchProject('ghost')
+    expect(getProjects().find(p => p.id === 'ghost')).toBeUndefined()
+    expect(isLocalNewer('ghost', SERVER_AT)).toBe(false)
+  })
+})
+
+// ── 프로젝트 삭제 시 딸린 표까지 ──
+//
+// 대시보드 삭제가 서버 행만 지우고 로컬 정리 함수를 부르지 않아서, 지워진
+// 프로젝트의 도면·버전·발주서·물량이 이 기기에 계속 남았다.
+
+import { savePurchaseOrder, loadPurchaseOrder } from '../../lib/purchaseOrder'
+import { saveFinishingData, loadFinishingData, resetFinishingData } from '../../lib/finishingData'
+
+describe('deleteProject 가 딸린 표까지 치운다', () => {
+  it('발주서를 지운다', () => {
+    savePurchaseOrder({ projectId: 'p9', tables: [], updatedAt: Date.now() })
+    expect(localStorage.getItem('bimova_po_p9')).not.toBeNull()
+    deleteProject('p9')
+    expect(localStorage.getItem('bimova_po_p9')).toBeNull()
+  })
+
+  it('마감재 물량을 지운다', () => {
+    saveFinishingData('p9', resetFinishingData())
+    expect(localStorage.getItem('bimova_finishing_tables_v1_p9')).not.toBeNull()
+    deleteProject('p9')
+    expect(localStorage.getItem('bimova_finishing_tables_v1_p9')).toBeNull()
+  })
+
+  it('지운 뒤 읽으면 빈 값이다 (옛 데이터가 되살아나지 않는다)', () => {
+    savePurchaseOrder({ projectId: 'p9', tables: [{ id: 't', title: 'x', items: [] }] as never, updatedAt: 1 })
+    deleteProject('p9')
+    expect(loadPurchaseOrder('p9').tables).toEqual([])
+    expect(loadFinishingData('p9').categories.length).toBeGreaterThan(0)  // 기본값으로 돌아간다
+  })
+})

@@ -130,7 +130,7 @@ export function uid(): string {
 
 // ── localStorage CRUD ──
 
-import { scopedGet, scopedSet } from './scopedStorage'
+import { scopedGet, scopedSet, scopedRemove } from './scopedStorage'
 
 const PO_KEY = (projectId: string) => `bimova_po_${projectId}`
 
@@ -189,4 +189,9 @@ export function fmtKRW(amount: number): string {
 export function fmtArea(m2: number): string {
   if (m2 <= 0) return '-'
   return m2.toFixed(2) + ' m²'
+}
+
+/** 이 프로젝트의 발주서를 이 기기에서 지운다 (프로젝트 삭제 때). */
+export function deletePurchaseOrder(projectId: string): void {
+  scopedRemove(PO_KEY(projectId))
 }

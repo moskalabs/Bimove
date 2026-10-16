@@ -8,6 +8,7 @@ import {
   saveProjectSnapshot,
 } from '../lib/supabaseSync'
 import { readShareFromHash, clearShareHash } from '../lib/shareLink'
+import { deleteProject as deleteLocalProject } from '../lib/projectStore'
 import { pickCadFile } from '../lib/dxf'
 
 type Project = {
@@ -335,6 +336,10 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string, name?: string) =
       toast('프로젝트를 삭제하지 못했습니다.', 'error')
       return
     }
+    // 이 기기에 남은 것도 같이 치운다 — 도면 본문(IndexedDB), 버전 기록,
+    // 발주서. 서버 행만 지우면 지워진 프로젝트의 수 MB 짜리 도면이 계속
+    // 쌓인다. 서버 삭제가 성공한 **뒤에** 한다.
+    deleteLocalProject(id)
     await loadProjects()
   }
 
