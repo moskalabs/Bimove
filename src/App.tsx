@@ -13,6 +13,7 @@ import { RoomOverlay } from './components/RoomOverlay'
 import { CanvasPickOverlay } from './components/CanvasPickOverlay'
 import { AreaMeasureOverlay } from './components/AreaMeasureOverlay'
 import { ZoneDrawOverlay } from './components/ZoneDrawOverlay'
+import { PolylineDrawOverlay } from './components/PolylineDrawOverlay'
 import { ZoneNamePopup } from './components/ZoneNamePopup'
 import { ScaleRuler } from './components/ScaleRuler'
 import { ChatPanel } from './components/ChatPanel'
@@ -615,6 +616,7 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
             <CanvasPickOverlay />
             <AreaMeasureOverlay />
             <ZoneDrawOverlay />
+            <PolylineDrawOverlay />
             <ZoneNamePopup />
             <RoomOverlay />
             <ScaleRuler />

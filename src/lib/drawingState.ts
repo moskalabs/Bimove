@@ -97,3 +97,35 @@ export function cancelZoneDraw() {
   zoneDrawState.callback = null
   window.dispatchEvent(new CustomEvent('bimova:zone-draw', { detail: { active: false } }))
 }
+
+// ── 폴리라인 드로잉 모드 ──
+//
+// tldraw 의 line 도구는 **드래그 한 번에 두 점**이고, 점을 더 붙이려면 기존
+// 선을 shift 로 집어야 한다. CAD 에서 쓰는 "클릭 클릭 클릭" 이 안 된다.
+// 그래서 공간지정과 같은 오버레이 방식으로 따로 받는다 — 덤으로 점마다
+// 스냅 체인(끝점·중간점·교차점·수직·연장·직교)을 그대로 쓸 수 있다.
+
+export const polylineDrawState = {
+  active: false,
+  callback: null as ((points: { x: number; y: number }[]) => void) | null,
+}
+
+export function startPolylineDraw(cb: (points: { x: number; y: number }[]) => void) {
+  polylineDrawState.active = true
+  polylineDrawState.callback = cb
+  window.dispatchEvent(new CustomEvent('bimova:polyline-draw', { detail: { active: true } }))
+}
+
+export function completePolylineDraw(points: { x: number; y: number }[]) {
+  const cb = polylineDrawState.callback
+  polylineDrawState.active = false
+  polylineDrawState.callback = null
+  window.dispatchEvent(new CustomEvent('bimova:polyline-draw', { detail: { active: false } }))
+  cb?.(points)
+}
+
+export function cancelPolylineDraw() {
+  polylineDrawState.active = false
+  polylineDrawState.callback = null
+  window.dispatchEvent(new CustomEvent('bimova:polyline-draw', { detail: { active: false } }))
+}

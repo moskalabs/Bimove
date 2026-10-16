@@ -6,7 +6,8 @@ import {
 } from 'lucide-react'
 import { PageRecordType, createShapeId, GeoShapeGeoStyle } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
-import { startZoneDraw } from '../lib/drawingState'
+import { startZoneDraw, startPolylineDraw } from '../lib/drawingState'
+import { lineShapeFromPoints } from '../lib/polylineShape'
 import { nextZoneColor } from '../shapes/ZoneShape'
 
 /* ── 커스텀 SVG 아이콘 (건축 특화, 모노톤) ──
@@ -339,6 +340,23 @@ export function TopBar() {
           },
         })
         window.dispatchEvent(new CustomEvent('bimova:zone-name', { detail: { shapeId } }))
+      })
+      return
+    }
+
+    // 폴리라인: 클릭을 이어 받는 전용 오버레이. tldraw 의 line 도구는 드래그
+    // 한 번에 두 점이라 "선" 과 같아져 버린다 — 그쪽은 선 도구에 그대로 둔다.
+    if (id === 'polyline' && editor) {
+      startPolylineDraw((pts) => {
+        const geo = lineShapeFromPoints(pts)
+        if (!geo) return
+        editor.createShape({
+          id: createShapeId(),
+          type: 'line',
+          x: geo.x,
+          y: geo.y,
+          props: { points: geo.points, spline: 'line', dash: 'solid', size: 's' },
+        })
       })
       return
     }
