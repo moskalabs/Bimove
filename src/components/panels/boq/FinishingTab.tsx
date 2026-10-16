@@ -1,10 +1,12 @@
 // 마감재 Tables 탭 — 카테고리 트리 + 자재별 상세 물량표
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronRight, ChevronDown, Plus, Upload, MoreHorizontal, Trash2, Pencil, MapPin } from 'lucide-react'
+import { ChevronRight, ChevronDown, Plus, Upload, MoreHorizontal, Trash2, Pencil, MapPin, Table2 } from 'lucide-react'
 import { startAreaMeasure } from '../../../lib/drawingState'
 import { useProjectId } from '../../../context/ProjectContext'
 import { useEditor } from '../../../context/EditorContext'
 import { getScaleConfig } from '../../../lib/scaleConfig'
+import { createShapeId } from 'tldraw'
+import { boqTableProps } from '../../../shapes/BoqTableShape'
 import {
   loadFinishingData, saveFinishingData,
   createVariant, uid,
@@ -772,6 +774,28 @@ export function FinishingTab() {
     }))
   }, [])
 
+  /**
+   * 지금 물량으로 산출표를 만들어 화면 가운데에 놓는다.
+   *
+   * 값은 만들 때 한 번 담는다(스냅샷). 자재를 고친 뒤에는 표를 **더블클릭**해
+   * 다시 읽는다 — 도면에 출력되는 물건이라 저절로 바뀌는 쪽이 오히려 곤란하다.
+   */
+  const placeBoqTable = () => {
+    if (!editor || !projectId) return
+    const props = boqTableProps(projectId)
+    const vp = editor.getViewportPageBounds()
+    const id = createShapeId()
+    editor.createShape({
+      id,
+      type: 'boqtable',
+      x: vp.midX - props.w / 2,
+      y: vp.midY - props.h / 2,
+      props,
+      meta: { projectId },
+    })
+    editor.select(id)
+  }
+
   return (
     <div className="ft-container">
       <CategoryTree
@@ -781,11 +805,19 @@ export function FinishingTab() {
         onToggle={toggleCategory}
       />
 
-      {selectedItem ? (
-        <MaterialDetail item={selectedItem} onUpdate={updateItem} />
-      ) : (
-        <div className="ft-empty">좌측에서 마감재를 선택하세요</div>
-      )}
+      <div className="ft-detail-wrap">
+        {selectedItem ? (
+          <MaterialDetail item={selectedItem} onUpdate={updateItem} />
+        ) : (
+          <div className="ft-empty">좌측에서 마감재를 선택하세요</div>
+        )}
+        <div className="ft-row-btns ft-place-table">
+          <button className="ft-add-row" onClick={placeBoqTable}
+            title="지금 물량으로 산출표를 만들어 도면에 놓습니다 (표를 더블클릭하면 다시 읽습니다)">
+            <Table2 size={12} /> 캔버스에 산출표 넣기
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

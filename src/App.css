@@ -4082,3 +4082,16 @@ html[data-dark="true"] .dash-empty-sub { color: #555; }
   opacity: 0.35;
   cursor: default;
 }
+
+/* 마감재 상세 + '캔버스에 산출표 넣기' 를 한 칸에 세로로 쌓는다 */
+.ft-detail-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ft-place-table {
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid #eee;
+}

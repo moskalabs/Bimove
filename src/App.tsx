@@ -33,6 +33,7 @@ import { BlockShapeUtil } from './shapes/BlockShape'
 import { CommentShapeUtil } from './shapes/CommentShape'
 import { DimensionShapeUtil } from './shapes/DimensionShape'
 import { ZoneShapeUtil } from './shapes/ZoneShape'
+import { BoqTableShapeUtil } from './shapes/BoqTableShape'
 import { WallTool } from './tools/WallTool'
 import { DoorTool } from './tools/DoorTool'
 import { WindowTool } from './tools/WindowTool'
@@ -83,7 +84,7 @@ async function saveVersionSynced(projectId: string, snapshot: object, label?: st
   return v
 }
 
-const SHAPE_UTILS = [WallShapeUtil, DxfGroupShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil, CommentShapeUtil, DimensionShapeUtil, ZoneShapeUtil]
+const SHAPE_UTILS = [WallShapeUtil, DxfGroupShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil, CommentShapeUtil, DimensionShapeUtil, ZoneShapeUtil, BoqTableShapeUtil]
 const TOOLS = [WallTool, DoorTool, WindowTool, BlockTool, CommentTool, DimensionTool]
 
 function EmptyCanvasHint({ editor }: { editor: Editor | null }) {
