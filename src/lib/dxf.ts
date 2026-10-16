@@ -2976,6 +2976,16 @@ export async function commitCadImportV2(
         // 1) 양쪽 10px 미만 → 점/기호
         if (clusterW < 10 && clusterH < 10) continue
 
+        // shape 원점. 경계 선의 stroke 가 잘리지 않게 bbox 에서 2px 물러선다.
+        //
+        // **선·글자·해치가 전부 이 값 하나를 기준으로 로컬 좌표를 잡아야 한다.**
+        // 전에는 패딩을 글자·해치를 모은 **뒤에** 깎아서, 선은 물러선 원점을
+        // 쓰고 글자·해치는 물러서기 전 원점을 썼다 — 그만큼(2px) 글자가 그림에서
+        // 밀려 있었다.
+        const BBOX_PAD = 2
+        const oX = gMinX - BBOX_PAD
+        const oY = gMinY - BBOX_PAD
+
         // 2) 총 경로 길이 계산
         let totalPathLen = 0
         for (const s of cluster) totalPathLen += Math.hypot(s.dx, s.dy)
@@ -3003,8 +3013,8 @@ export async function commitCadImportV2(
               if (t.x >= gMinX - margin && t.x <= gMaxX + margin &&
                   t.y >= gMinY - margin && t.y <= gMaxY + margin) {
                 localTexts.push({
-                  x: +(t.x - gMinX).toFixed(1),
-                  y: +(t.y - gMinY).toFixed(1),
+                  x: +(t.x - oX).toFixed(1),
+                  y: +(t.y - oY).toFixed(1),
                   t: t.text,
                   h: +t.height.toFixed(1),
                   r: t.rotation,
@@ -3031,8 +3041,8 @@ export async function commitCadImportV2(
             const localPath = hh.pathData.replace(
               /([MLZ])([\d.e+-]+),([\d.e+-]+)/g,
               (_, cmd: string, xStr: string, yStr: string) => {
-                const lx = parseFloat(xStr) - gMinX
-                const ly = parseFloat(yStr) - gMinY
+                const lx = parseFloat(xStr) - oX
+                const ly = parseFloat(yStr) - oY
                 hMinX2 = Math.min(hMinX2, lx); hMaxX2 = Math.max(hMaxX2, lx)
                 hMinY2 = Math.min(hMinY2, ly); hMaxY2 = Math.max(hMaxY2, ly)
                 return `${cmd}${lx.toFixed(1)},${ly.toFixed(1)}`
@@ -3048,15 +3058,10 @@ export async function commitCadImportV2(
           }
         }
 
-        // 바운딩박스 패딩: 경계 선 stroke가 잘리지 않도록 2px 여유
-        const BBOX_PAD = 2
-        gMinX -= BBOX_PAD; gMinY -= BBOX_PAD
-        gMaxX += BBOX_PAD; gMaxY += BBOX_PAD
-
-        const gx = gMinX - offsetX
-        const gy = gMinY - offsetY
-        const w = Math.max(gMaxX - gMinX, 1)
-        const h = Math.max(gMaxY - gMinY, 1)
+        const gx = oX - offsetX
+        const gy = oY - offsetY
+        const w = Math.max(gMaxX + BBOX_PAD - oX, 1)
+        const h = Math.max(gMaxY + BBOX_PAD - oY, 1)
 
         // shape당 최대 3000 세그먼트 → 초과 시 여러 shape로 분할 (데이터 손실 없음)
         const maxSegsPerShape = 3000
@@ -3065,8 +3070,8 @@ export async function commitCadImportV2(
           const sliceSegs = cluster.slice(si * maxSegsPerShape, (si + 1) * maxSegsPerShape)
 
           const pathData = sliceSegs.map((s) => {
-            const x1 = s.x1 - gMinX
-            const y1 = s.y1 - gMinY
+            const x1 = s.x1 - oX
+            const y1 = s.y1 - oY
             const x2 = x1 + s.dx
             const y2 = y1 + s.dy
             return `M${x1.toFixed(1)},${y1.toFixed(1)}L${x2.toFixed(1)},${y2.toFixed(1)}`
