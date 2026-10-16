@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
+import { scopedGet, scopedSet } from '../lib/scopedStorage'
+import { useProjectId } from '../context/ProjectContext'
 
 type Message = {
   id: string
@@ -7,15 +9,20 @@ type Message = {
   ts: number
 }
 
-const STORAGE_KEY = 'bimova_chat_v1'
+// 메모는 **프로젝트별**로 따로 둔다. 전엔 글로벌 키 하나를 모두가 나눠 써서,
+// 다른 프로젝트를 열어도 남의 현장 메모가 그대로 떠 있었다.
+// 사용자 분리는 scopedGet/scopedSet 이 `u:<id>:` 를 붙여 처리한다 — 같은 PC
+// 에서 계정을 바꿔도 섞이지 않는다.
+const chatKey = (projectId: string) => `bimova_chat_v1_${projectId}`
+/** 작성자 이름은 사람 단위라 프로젝트를 안 가린다 (사용자 스코프만). */
 const AUTHOR_KEY = 'bimova_chat_author'
 
-function loadMessages(): Message[] {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') } catch { return [] }
+function loadMessages(projectId: string): Message[] {
+  try { return JSON.parse(scopedGet(chatKey(projectId)) ?? '[]') } catch { return [] }
 }
 
-function saveMessages(msgs: Message[]) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(msgs.slice(-200))) } catch { /**/ }
+function saveMessages(projectId: string, msgs: Message[]) {
+  try { scopedSet(chatKey(projectId), JSON.stringify(msgs.slice(-200))) } catch { /**/ }
 }
 
 function fmt(ts: number): string {
@@ -24,13 +31,21 @@ function fmt(ts: number): string {
 }
 
 export function ChatPanel() {
+  const projectId = useProjectId() ?? ''
   const [open, setOpen] = useState(false)
-  const [messages, setMessages] = useState<Message[]>(loadMessages)
-  const [author, setAuthor] = useState(() => localStorage.getItem(AUTHOR_KEY) ?? '')
+  const [messages, setMessages] = useState<Message[]>(() => loadMessages(projectId))
+  const [author, setAuthor] = useState(() => scopedGet(AUTHOR_KEY) ?? '')
   const [draft, setDraft] = useState('')
   const [unread, setUnread] = useState(0)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // 프로젝트가 바뀌면 그 프로젝트의 메모로 갈아 끼운다. 패널이 다시
+  // 마운트되지 않는 경로가 있어서 초기값만으로는 옛 메모가 남는다.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMessages(loadMessages(projectId))
+  }, [projectId])
 
   useEffect(() => {
     if (open) {
@@ -53,12 +68,12 @@ export function ChatPanel() {
     const name = author.trim() || '익명'
     if (author !== name) {
       setAuthor(name)
-      localStorage.setItem(AUTHOR_KEY, name)
+      scopedSet(AUTHOR_KEY, name)
     }
     const msg: Message = { id: crypto.randomUUID(), author: name, text, ts: Date.now() }
     const next = [...messages, msg]
     setMessages(next)
-    saveMessages(next)
+    saveMessages(projectId, next)
     setDraft('')
   }
 

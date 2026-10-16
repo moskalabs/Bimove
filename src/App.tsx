@@ -190,6 +190,21 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
   // Supabase에서 로드 시 받아온 서버 타임스탬프 (충돌 방지용)
   const serverUpdatedAtRef = useRef<string | undefined>(undefined)
 
+  /**
+   * handleMount 가 window 에 건 'bimova:settings' 리스너.
+   *
+   * handleMount 는 effect 가 아니라 tldraw 콜백이라 cleanup 자리가 없다.
+   * 떼어내지 않으면 프로젝트를 여닫을 때마다 **버려진 에디터를 붙든 리스너가
+   * 쌓인다** — 설정을 한 번 바꾸면 죽은 에디터들에 대고 다 같이 실행된다.
+   */
+  const settingsHandlerRef = useRef<(() => void) | null>(null)
+
+  useEffect(() => () => {
+    if (!settingsHandlerRef.current) return
+    window.removeEventListener('bimova:settings', settingsHandlerRef.current)
+    settingsHandlerRef.current = null
+  }, [])
+
   const handleMount = (ed: Editor) => {
     ed.updateInstanceState({ isGridMode: false })
     // 대형 DXF 도면을 위해 최소 zoom을 0.0001로 확장 (10,000m 축소 지원)
@@ -204,6 +219,11 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
       ed.user.updateUserPreferences({ colorScheme: getDarkMode() ? 'dark' : 'light' })
       ed.setCameraOptions({ ...ed.getCameraOptions(), wheelBehavior: getWheelBehavior() })
     }
+    // 같은 화면에서 에디터가 다시 마운트될 수도 있다 — 걸기 전에 먼저 뗀다.
+    if (settingsHandlerRef.current) {
+      window.removeEventListener('bimova:settings', settingsHandlerRef.current)
+    }
+    settingsHandlerRef.current = onSettingsChange
     window.addEventListener('bimova:settings', onSettingsChange)
     // Supabase와 localStorage 중 더 최근 쪽을 쓴다 (resolveSnapshot 참고)
     ;(async () => {
