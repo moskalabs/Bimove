@@ -791,35 +791,67 @@ export async function dwgToDxfBytes(buffer: ArrayBuffer): Promise<Uint8Array> {
   return await convertDwgToDxf(dwgBytes, { wasmBase })
 }
 
-/** raw DXF 바이트를 인코딩 감지 후 텍스트로 디코딩 */
+/**
+ * raw DXF 바이트를 인코딩 감지 후 텍스트로 디코딩.
+ *
+ * **dxfBytes 를 제자리에서 고친다 (CRLF 제거).** 넘긴 쪽은 이 호출 뒤에 그
+ * 배열을 다시 쓰면 안 된다. 사본을 안 만들려고 이렇게 한다 — 아래 주석 참고.
+ */
 export function decodeDxfBytes(dxfBytes: Uint8Array): string {
-  // Uint8Array.buffer가 WASM memory 전체일 수 있으므로 복사
-  const buf = (dxfBytes.buffer.byteLength === dxfBytes.byteLength
-    ? dxfBytes.buffer
-    : dxfBytes.slice().buffer) as ArrayBuffer
-  const encoding = detectDxfEncoding(buf)
+  // 인코딩 감지는 앞 10만 바이트만 본다. 예전엔 이 호출의 인자 타입을
+  // 맞추려고 전체를 slice() 했다 (`buffer` 가 wasm memory 전체일 수 있다는
+  // 이유였는데, wasm-bindgen 이 이미 .slice() 로 JS 배열에 담아 돌려준다).
+  const encoding = detectDxfEncoding(dxfBytes)
+  const body = stripCarriageReturns(dxfBytes)
   let text: string
   try {
-    text = new TextDecoder(encoding).decode(dxfBytes)
+    text = new TextDecoder(encoding).decode(body)
   } catch {
-    text = new TextDecoder('utf-8').decode(dxfBytes)
+    text = new TextDecoder('utf-8').decode(body)
   }
   // 이중 인코딩 복원: DWG→DXF 변환기가 EUC-KR 바이트를 Latin-1로 해석 후
   // UTF-8로 인코딩하는 경우 ($DWGCODEPAGE=ANSI_1252 but 실제 EUC-KR)
   // → ÇöÀå (Latin chars) 가 되어야 할 텍스트가 현장 (Korean) 으로 복원
-  return normalizeNewlines(reverseDoubleEncodingIfNeeded(text))
+  return reverseDoubleEncodingIfNeeded(text)
 }
 
-/** CRLF → LF 통일.
+/**
+ * CRLF → LF 통일. **바이트 배열을 제자리에서** 고친다.
  *
- *  DXF 파서 전체가 LF 기준 문자열(줄바꿈 + "0" + 줄바꿈 + "SECTION" 등) 로
- *  indexOf 를 한다. 윈도우 오토캐드가 내보낸 CRLF DXF 는 그 바늘이 하나도
- *  안 맞아서 섹션을 통째로 못 찾고, 에러 없이 빈 도면이 들어온다.
- *  디코딩 직후 한 번만 고친다 — DXF 텍스트가 만들어지는 유일한 입구가 여기다.
+ * DXF 파서 전체가 LF 기준 문자열(줄바꿈 + "0" + 줄바꿈 + "SECTION" 등) 로
+ * indexOf 를 한다. 윈도우 오토캐드가 내보낸 CRLF DXF 는 그 바늘이 하나도 안
+ * 맞아서 섹션을 통째로 못 찾고, 에러 없이 빈 도면이 들어온다.
  *
- *  캐리지리턴이 없으면 복사도 하지 않는다 (대용량 도면에서 괜한 한 패스 방지). */
-function normalizeNewlines(text: string): string {
-  return text.indexOf('\r') < 0 ? text : text.replace(/\r\n?/g, '\n')
+ * 전엔 디코딩한 **문자열**에 `.replace(/\r\n?/g, '\n')` 를 했다. 그게 전체
+ * 사본을 하나 더 만든다 — 한의 10.3MB DWG(→45MB DXF)에서 재보니 그 한 줄이
+ * **+242MB** 였다. 한글이 섞인 DXF 는 문자열이 2바이트/자라 바이트 수의 두 배다.
+ * 바이트 단계에서 치우면 사본이 0 이다.
+ *
+ * 제자리 수정이 안전한 근거: 들어오는 배열은 wasm 이 돌려준 **JS 소유** 사본
+ * (wasm-bindgen 이 `.slice()` 해서 주고 원본을 free 한다) 이거나 방금 읽은
+ * 파일 버퍼이고, 둘 다 이 뒤로 쓰이지 않는다.
+ *
+ * 멀티바이트 안전: EUC-KR 의 뒤바이트는 0x41-0xFE, UTF-8 의 이어바이트는
+ * 0x80-0xBF 다. 0x0D 는 어느 쪽에도 없으므로 **항상 진짜 CR** 이다.
+ *
+ * CR 이 없으면 한 바이트도 건드리지 않고 원본을 그대로 돌려준다.
+ */
+function stripCarriageReturns(bytes: Uint8Array): Uint8Array {
+  const first = bytes.indexOf(0x0D)
+  if (first < 0) return bytes
+
+  let w = first
+  for (let r = first; r < bytes.length; r++) {
+    const b = bytes[r]
+    if (b === 0x0D) {
+      // CR 과 CRLF 를 모두 LF 한 개로 — 옛 정규식 /\r\n?/g 와 같은 동작이다
+      bytes[w++] = 0x0A
+      if (bytes[r + 1] === 0x0A) r++
+    } else {
+      bytes[w++] = b
+    }
+  }
+  return bytes.subarray(0, w)
 }
 
 /**
@@ -860,8 +892,10 @@ export function reverseDoubleEncodingIfNeeded(text: string): string {
  * 2. EUC-KR(CP949) 한글 바이트 패턴 감지 (0xB0-0xC8 + 0xA1-0xFE)
  * 3. Fallback: UTF-8 디코딩 후 U+FFFD replacement char 확인
  */
-export function detectDxfEncoding(buffer: ArrayBuffer): 'utf-8' | 'euc-kr' {
-  const bytes = new Uint8Array(buffer)
+export function detectDxfEncoding(source: ArrayBuffer | Uint8Array): 'utf-8' | 'euc-kr' {
+  // Uint8Array 를 그대로 받는다. 앞 10만 바이트만 보는데 ArrayBuffer 만 받으면
+  // 호출부가 전체를 복사해서 넘겨야 한다 (수백 MB 짜리 도면에서 그게 컸다).
+  const bytes = source instanceof Uint8Array ? source : new Uint8Array(source)
   const scanLen = Math.min(bytes.length, 100000)
 
   // 1. $DWGCODEPAGE 헤더 찾기 (raw ASCII 바이트 검색)

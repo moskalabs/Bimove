@@ -25,8 +25,8 @@ export function importPdf(
     if (!file) return
     // 읽기 전에 막는다 — arrayBuffer() 로 넘어가면 OOM 으로 탭이 죽고,
     // 그건 아래 catch 에 안 걸린다.
-    const tooBig = checkPdfSize(file.size)
-    if (tooBig) { notify?.onError?.(tooBig); return }
+    const sizeCheck = checkPdfSize(file.size)
+    if (sizeCheck.kind === 'block') { notify?.onError?.(sizeCheck.message); return }
     try {
       await importPdfFile(editor, file)
       notify?.onSuccess?.(`"${file.name}" PDF를 가져왔습니다.`)

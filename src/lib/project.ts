@@ -67,8 +67,8 @@ export function uploadImage(
 
     // 읽기 전에 막는다. 이 이미지는 base64 로 **스냅샷에 박혀** 영구 저장되므로
     // (importLimits 주석 참고) 한 번 들어오면 프로젝트가 계속 그걸 짊어진다.
-    const tooBig = checkImageSize(file.size)
-    if (tooBig) { notify?.onError?.(tooBig); return }
+    const sizeCheck = checkImageSize(file.size)
+    if (sizeCheck.kind === 'block') { notify?.onError?.(sizeCheck.message); return }
 
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader()
