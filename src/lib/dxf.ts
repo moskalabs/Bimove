@@ -1,9 +1,9 @@
 // DXF 파싱은 dxf-fast-worker 의 자체 파서가 전부 한다. dxf-parser(npm) 를
 // 쓰던 레거시 경로(parseCadFile)는 앱에서 호출하는 곳이 없어 지웠다.
-import { convertDwgToDxf } from 'dwgdxf'
 import { AssetRecordType, createShapeId, type Editor } from 'tldraw'
 import { getScaleConfig } from './scaleConfig'
 import { reloadForStaleChunk } from './lazyWithReload'
+import type { ConvertRequest, ConvertOut } from './dwg-convert.worker'
 import { getDefaultWallThicknessMm } from './settings'
 import { ACI_TO_HEX as ACI_TABLE, trueColorToHex as trueColorToHexShared, defLineSpacing, sampleArcDeg, type ViewportClip, type HatchPatternLine, type SheetRect } from './dxf-shared'
 
@@ -784,11 +784,81 @@ export function parseDxfHatches(
  * CDN(jsDelivr) 대신 public/dwgdxf/ 에 깔린 걸 쓴다. 거기 있는 wasm 은
  * OLE 데이터 상한(10MB)을 풀어놓은 것이라, 큰 배치도 스캔이 잘리지 않는다.
  * 만드는 쪽은 scripts/patch-dwgdxf-wasm.mjs (postinstall/prebuild).
+ *
+ * **워커에서 돌리고 끝나면 죽인다.** 변환기가 잡는 wasm 메모리(DWG 1MB 당
+ * 25.8MB)를 회수하는 유일한 방법이고, 2.6초짜리 UI 멈춤도 같이 사라진다 —
+ * 자세한 근거는 dwg-convert.worker.ts 주석에.
+ *
+ * **입력 buffer 는 워커로 transfer 되어 detach 된다.** 부른 쪽은 이 호출 뒤에
+ * buffer 를 쓸 수 없다 (`byteLength` 가 0 이 된다). 사본을 만들지 않으려고
+ * 이렇게 한다 — 수백 MB 짜리다.
  */
-export async function dwgToDxfBytes(buffer: ArrayBuffer): Promise<Uint8Array> {
-  const dwgBytes = new Uint8Array(buffer)
+export function dwgToDxfBytes(buffer: ArrayBuffer): Promise<Uint8Array> {
   const wasmBase = new URL('dwgdxf', document.baseURI).href
-  return await convertDwgToDxf(dwgBytes, { wasmBase })
+
+  return new Promise<Uint8Array>((resolve, reject) => {
+    const worker = new Worker(
+      new URL('./dwg-convert.worker.ts', import.meta.url),
+      { type: 'module' },
+    )
+
+    // 크기에 비례한 타임아웃. 한의 10.28MB 가 2.6초였으니 MB 당 3초면 10배
+    // 넘는 여유다. 상한 10분은 DXF 파서 쪽과 같이 둔다.
+    const sizeMB = buffer.byteLength / 1_000_000
+    const timeoutMs = Math.min(600_000, Math.max(60_000, sizeMB * 3000 + 60_000))
+
+    // 워커 모듈이 평가되어 핸들러가 걸렸는지. onerror 가 "청크 로딩 실패" 인지
+    // "워커 안의 런타임 에러" 인지 가르는 유일한 확정 신호다 (runFastWorker 와
+    // 같은 이유 — 거기 주석 참고).
+    let booted = false
+    let settled = false
+
+    /** 어느 길로 끝나든 워커를 반드시 죽인다 — 안 죽이면 회수가 목적인데 남는다. */
+    const done = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      worker.terminate()
+      fn()
+    }
+
+    const timeout = setTimeout(() => {
+      done(() => reject(new Error(`DWG 변환 타임아웃 (${(timeoutMs / 1000).toFixed(0)}초)`)))
+    }, timeoutMs)
+
+    worker.onmessage = (e: MessageEvent<ConvertOut>) => {
+      const msg = e.data
+      if (msg.type === 'boot') {
+        booted = true
+      } else if (msg.type === 'result') {
+        done(() => resolve(msg.bytes))
+      } else if (msg.type === 'error') {
+        done(() => reject(new Error(`DWG 변환 실패: ${msg.message}`)))
+      }
+    }
+
+    worker.onerror = (err) => {
+      if (!booted) {
+        // 모듈 스크립트 **로딩 자체**가 실패했다 (배포가 갈려 청크가 사라진 탭).
+        // runFastWorker 와 같은 처리 — 판별은 err.message 가 비었는지가 아니라
+        // boot ack 수신 여부로 한다.
+        worker.terminate()
+        const reloading = reloadForStaleChunk({
+          confirm: 'DWG 변환기를 불러오지 못했습니다 (배포가 갱신된 것 같아요).\n'
+            + '새로고침하면 저장되지 않은 변경이 사라질 수 있습니다. 새로고침할까요?',
+        })
+        if (reloading) return  // 리로드 중 — 일부러 settle 하지 않는다
+        done(() => reject(new Error('DWG 변환기(Worker) 를 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.')))
+        return
+      }
+      done(() => reject(new Error(`DWG 변환 Worker 에러: ${err.message || '(메시지 없음)'}`)))
+    }
+
+    worker.postMessage(
+      { type: 'convert', buffer, wasmBase } satisfies ConvertRequest,
+      { transfer: [buffer] },
+    )
+  })
 }
 
 /**

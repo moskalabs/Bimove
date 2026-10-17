@@ -115,13 +115,15 @@ export function useImportActions(): ImportActions {
         // DWG → DXF 변환
         setLoading(`DWG → DXF 변환 중... (${sizeMB}MB)`)
         const buffer = await file.arrayBuffer()
+        // buffer 는 워커로 transfer 되어 **detach 된다** — 이 뒤로는 쓸 수 없다.
+        // (예전엔 아래 로그가 buffer.byteLength 를 읽어서 "0.0MB" 가 찍혔다.)
         const dxfBytes = await dwgToDxfBytes(buffer)
         if (!dxfBytes || dxfBytes.length < 100) {
           toast('DWG 변환 실패: DXF 데이터가 비어있습니다.', 'error')
           setLoading(null)
           return
         }
-        console.log(`[Import] DWG→DXF 변환: ${(buffer.byteLength / 1048576).toFixed(1)}MB DWG → ${(dxfBytes.length / 1048576).toFixed(1)}MB DXF`)
+        console.log(`[Import] DWG→DXF 변환: ${sizeMB}MB DWG → ${(dxfBytes.length / 1048576).toFixed(1)}MB DXF`)
         // 변환 결과는 원본 크기로 예측이 안 된다 (블록을 얼마나 펼치는지에
         // 달렸다). 여기서 멈추면 뒤따르는 문자열 사본 서너 벌을 안 만든다.
         const grew = checkConvertedDxfSize(dxfBytes.length)
