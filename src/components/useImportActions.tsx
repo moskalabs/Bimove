@@ -10,6 +10,7 @@ import { buildLayoutTargets, unlabeledPaperOwner, sheetRect, type ParseSpace } f
 import type { LayoutImportInfo } from './CadPreview'
 import { lazyWithReload } from '../lib/lazyWithReload'
 import { importPdf } from '../lib/pdfImport'
+import { checkCadSize, checkConvertedDxfSize } from '../lib/importLimits'
 import { ImportLoadingOverlay } from './ImportLoadingOverlay'
 
 const CadPreview = lazyWithReload(() => import('./CadPreview'))
@@ -98,6 +99,11 @@ export function useImportActions(): ImportActions {
     const sizeMB = (file.size / 1024 / 1024).toFixed(1)
     const isDwg = file.name.toLowerCase().endsWith('.dwg')
 
+    // 읽기 전에 막는다. arrayBuffer() 로 들어가면 되돌릴 데가 없다 —
+    // 브라우저가 OOM 으로 탭을 죽이는 건 catch 로 안 잡힌다.
+    const tooBig = checkCadSize(file.name, file.size)
+    if (tooBig) { toast(tooBig, 'error'); return }
+
     try {
       let dxfText: string
 
@@ -112,6 +118,10 @@ export function useImportActions(): ImportActions {
           return
         }
         console.log(`[Import] DWG→DXF 변환: ${(buffer.byteLength / 1048576).toFixed(1)}MB DWG → ${(dxfBytes.length / 1048576).toFixed(1)}MB DXF`)
+        // 변환 결과는 원본 크기로 예측이 안 된다 (블록을 얼마나 펼치는지에
+        // 달렸다). 여기서 멈추면 뒤따르는 문자열 사본 서너 벌을 안 만든다.
+        const grewTooBig = checkConvertedDxfSize(dxfBytes.length)
+        if (grewTooBig) { toast(grewTooBig, 'error'); setLoading(null); return }
         dxfText = decodeDxfBytes(dxfBytes)
         if (!dxfText || (!dxfText.includes('SECTION') && !dxfText.includes('ENTITIES'))) {
           toast('DWG 변환 실패: 유효하지 않은 DXF입니다.', 'error')
@@ -321,7 +331,7 @@ export function useImportActions(): ImportActions {
       if (!editor) return
       if (kind === 'cad') void handleCadImport()
       else if (kind === 'pdf') void importPdf(editor, notify)
-      else uploadImage(editor)
+      else uploadImage(editor, notify)
     },
     overlays: (
       <>

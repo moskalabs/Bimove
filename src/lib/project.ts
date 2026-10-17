@@ -1,5 +1,6 @@
 import { AssetRecordType, createShapeId, type Editor } from 'tldraw'
 import { isDesktop, openFileDialog, saveFileDialog, readTextFile, writeTextFile } from './tauri'
+import { checkImageSize } from './importLimits'
 
 // ---- project file save / load ----
 
@@ -53,13 +54,21 @@ export async function openProject(editor: Editor) {
 
 // ---- image upload (background trace) ----
 
-export function uploadImage(editor: Editor) {
+export function uploadImage(
+  editor: Editor,
+  notify?: { onError?: (msg: string) => void },
+) {
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = 'image/jpeg,image/png,image/webp,image/gif'
   input.onchange = async () => {
     const file = input.files?.[0]
     if (!file) return
+
+    // 읽기 전에 막는다. 이 이미지는 base64 로 **스냅샷에 박혀** 영구 저장되므로
+    // (importLimits 주석 참고) 한 번 들어오면 프로젝트가 계속 그걸 짊어진다.
+    const tooBig = checkImageSize(file.size)
+    if (tooBig) { notify?.onError?.(tooBig); return }
 
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader()

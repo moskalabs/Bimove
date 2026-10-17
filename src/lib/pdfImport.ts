@@ -2,6 +2,7 @@
 // pdf.js (pdfjs-dist) 사용.
 
 import { AssetRecordType, createShapeId, type Editor } from 'tldraw'
+import { checkPdfSize } from './importLimits'
 
 // pdf.js worker — dynamic import로 번들 사이즈 영향 최소
 async function getPdfJs() {
@@ -22,6 +23,10 @@ export function importPdf(
   input.onchange = async () => {
     const file = input.files?.[0]
     if (!file) return
+    // 읽기 전에 막는다 — arrayBuffer() 로 넘어가면 OOM 으로 탭이 죽고,
+    // 그건 아래 catch 에 안 걸린다.
+    const tooBig = checkPdfSize(file.size)
+    if (tooBig) { notify?.onError?.(tooBig); return }
     try {
       await importPdfFile(editor, file)
       notify?.onSuccess?.(`"${file.name}" PDF를 가져왔습니다.`)
