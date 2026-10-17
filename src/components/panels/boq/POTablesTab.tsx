@@ -14,7 +14,7 @@ import {
   poGrandTotal, fmtKRW, uid, shouldTakeRemotePO, hasStoredPurchaseOrder,
 } from '../../../lib/purchaseOrder'
 import { fetchPurchaseOrder, syncPurchaseOrder } from '../../../lib/supabaseSync'
-import { createSerialSender } from '../../../lib/serialSender'
+import { createSerialSender, type SerialSender } from '../../../lib/serialSender'
 import type { BOQTemplate } from '../../../lib/boqTemplates'
 import { createItemFromTemplate } from '../../../lib/boqTemplates'
 import { getFinishingAreaForPO } from '../../../lib/finishingData'
@@ -82,35 +82,47 @@ export function POTablesTab() {
    * 끝난 옛 요청이 새 내용을 덮는다. 보내는 중에 들어온 값은 쌓지 않고
    * 마지막 것만 이어서 보낸다 (serialSender 주석 참고).
    */
-  const senderRef = useRef<ReturnType<typeof createSerialSender<PurchaseOrder>> | null>(null)
-  if (!senderRef.current) {
-    senderRef.current = createSerialSender<PurchaseOrder>(
-      async (po) => {
-        await syncPurchaseOrder(po)
-        if (syncFailCount.current > 0) {
-          toast('동기화가 복구되었습니다.', 'success')
-          syncFailCount.current = 0
-        }
-      },
-      (err) => {
-        syncFailCount.current++
-        console.warn('[po-sync] Supabase sync failed', err)
-        // 첫 실패 시에만 토스트 (반복 방지)
-        if (syncFailCount.current === 1) {
-          toast('발주서 동기화에 실패했습니다. 로컬에 저장됩니다.', 'error')
-        }
-      },
-    )
-  }
+  const senderRef = useRef<SerialSender<PurchaseOrder> | null>(null)
+
+  // **렌더 중에 만들지 않는다.** 처음 보낼 때(타이머 콜백 안)에 만든다 —
+  // 렌더 도중 ref 를 건드리면 React 가 경고하고, 실제로도 StrictMode 의
+  // 두 번 렌더에서 큐가 두 개 생길 수 있다.
+  const getSender = useCallback(() => {
+    if (senderRef.current === null) {
+      senderRef.current = createSerialSender<PurchaseOrder>(
+        async (po) => {
+          await syncPurchaseOrder(po)
+          if (syncFailCount.current > 0) {
+            toast('동기화가 복구되었습니다.', 'success')
+            syncFailCount.current = 0
+          }
+        },
+        (err) => {
+          syncFailCount.current++
+          console.warn('[po-sync] Supabase sync failed', err)
+          // 첫 실패 시에만 토스트 (반복 방지)
+          if (syncFailCount.current === 1) {
+            toast('발주서 동기화에 실패했습니다. 로컬에 저장됩니다.', 'error')
+          }
+        },
+      )
+    }
+    return senderRef.current
+  }, [toast])
+
+  // 언마운트 cleanup 은 deps [] 라 그때의 getSender 를 붙들 수 없다.
+  // 최신 것을 ref 에 담아둔다 (렌더가 아니라 effect 에서 쓴다).
+  const getSenderRef = useRef(getSender)
+  useEffect(() => { getSenderRef.current = getSender }, [getSender])
 
   const syncToSupabase = useCallback((purchaseOrder: PurchaseOrder) => {
     clearTimeout(syncTimerRef.current)
     pendingSyncRef.current = true
     syncTimerRef.current = window.setTimeout(() => {
       pendingSyncRef.current = false
-      senderRef.current!.push(purchaseOrder)
+      getSender().push(purchaseOrder)
     }, 2000)
-  }, [])
+  }, [getSender])
 
   // 자동 저장 (localStorage 즉시 + Supabase 디바운스)
   useEffect(() => {
@@ -136,7 +148,7 @@ export function POTablesTab() {
       pendingSyncRef.current = false
       // 큐에 올린다 — 진행 중인 요청이 있으면 그 뒤에 붙는다. 바로 fetch 를
       // 띄우면 그 요청과 겹쳐서, 늦게 끝난 쪽이 새 내용을 덮을 수 있다.
-      senderRef.current?.push(poRef.current)
+      getSenderRef.current().push(poRef.current)
     }
   }, [])
 
