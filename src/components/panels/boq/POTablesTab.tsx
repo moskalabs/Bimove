@@ -11,9 +11,10 @@ import type { BOQTable, PurchaseOrder } from '../../../lib/purchaseOrder'
 import {
   loadPurchaseOrder, savePurchaseOrder,
   addTable, removeTable, updateTableItems,
-  poGrandTotal, fmtKRW, uid, shouldTakeRemotePO,
+  poGrandTotal, fmtKRW, uid, shouldTakeRemotePO, hasStoredPurchaseOrder,
 } from '../../../lib/purchaseOrder'
 import { fetchPurchaseOrder, syncPurchaseOrder } from '../../../lib/supabaseSync'
+import { createSerialSender } from '../../../lib/serialSender'
 import type { BOQTemplate } from '../../../lib/boqTemplates'
 import { createItemFromTemplate } from '../../../lib/boqTemplates'
 import { getFinishingAreaForPO } from '../../../lib/finishingData'
@@ -38,6 +39,14 @@ export function POTablesTab() {
   const pendingSyncRef = useRef(false)
   /** 마운트 시점의 로컬 발주서. 불러오기 전에 사용자가 손댔는지 가리는 기준. */
   const localAtMountRef = useRef(po)
+  /**
+   * 이 기기에 저장된 발주서가 처음부터 있었는지.
+   *
+   * 없으면 **시각을 비교하지 않고 서버를 그대로 받는다.** 비교할 로컬이
+   * 애초에 없는데 "빈 발주서 vs 서버" 를 재면, 새 기기에서 서버를 거부하고
+   * 빈 내용을 올려 남의 발주서를 지운다.
+   */
+  const hadLocalRef = useRef(hasStoredPurchaseOrder(projectId ?? ''))
 
   useEffect(() => { poRef.current = po }, [po])
 
@@ -52,9 +61,10 @@ export function POTablesTab() {
         // 아직 updatedAt 에 반영되기 전이라 시각 비교로는 못 지킨다
         // (updatedAt 은 loaded 이후의 자동 저장에서만 올라간다).
         const editedWhileLoading = poRef.current !== localAtMountRef.current
-        if (!cancelled && remote && !editedWhileLoading &&
-            shouldTakeRemotePO(remote, poRef.current)) {
-          setPo(remote)
+        if (!cancelled && remote && !editedWhileLoading) {
+          // 이 기기에 저장된 게 없으면 비교할 게 없다 — 서버를 그대로 받는다.
+          const takeRemote = !hadLocalRef.current || shouldTakeRemotePO(remote, poRef.current)
+          if (takeRemote) setPo(remote)
         }
       } catch {
         if (!cancelled) toast('서버에서 발주서를 불러오지 못했습니다. 로컬 데이터를 사용합니다.', 'error')
@@ -65,33 +75,49 @@ export function POTablesTab() {
   }, [projectId, loaded, toast])
 
   // 디바운스된 Supabase 동기화
-  const syncToSupabase = useCallback((purchaseOrder: PurchaseOrder) => {
-    clearTimeout(syncTimerRef.current)
-    pendingSyncRef.current = true
-    syncTimerRef.current = window.setTimeout(async () => {
-      pendingSyncRef.current = false
-      try {
-        await syncPurchaseOrder(purchaseOrder)
+  /**
+   * 서버로 보내는 길. **한 번에 하나만** 나간다.
+   *
+   * 발주서 RPC 는 서버에서 전부 지우고 다시 넣는다. 두 요청이 겹치면 늦게
+   * 끝난 옛 요청이 새 내용을 덮는다. 보내는 중에 들어온 값은 쌓지 않고
+   * 마지막 것만 이어서 보낸다 (serialSender 주석 참고).
+   */
+  const senderRef = useRef<ReturnType<typeof createSerialSender<PurchaseOrder>> | null>(null)
+  if (!senderRef.current) {
+    senderRef.current = createSerialSender<PurchaseOrder>(
+      async (po) => {
+        await syncPurchaseOrder(po)
         if (syncFailCount.current > 0) {
           toast('동기화가 복구되었습니다.', 'success')
           syncFailCount.current = 0
         }
-      } catch (err) {
+      },
+      (err) => {
         syncFailCount.current++
         console.warn('[po-sync] Supabase sync failed', err)
         // 첫 실패 시에만 토스트 (반복 방지)
         if (syncFailCount.current === 1) {
           toast('발주서 동기화에 실패했습니다. 로컬에 저장됩니다.', 'error')
         }
-      }
+      },
+    )
+  }
+
+  const syncToSupabase = useCallback((purchaseOrder: PurchaseOrder) => {
+    clearTimeout(syncTimerRef.current)
+    pendingSyncRef.current = true
+    syncTimerRef.current = window.setTimeout(() => {
+      pendingSyncRef.current = false
+      senderRef.current!.push(purchaseOrder)
     }, 2000)
-  }, [toast])
+  }, [])
 
   // 자동 저장 (localStorage 즉시 + Supabase 디바운스)
   useEffect(() => {
     if (projectId && loaded) {
-      savePurchaseOrder(po)
-      syncToSupabase(po)
+      // 저장본을 받아 그대로 서버로 보낸다. savePurchaseOrder 는 넘긴 객체를
+      // 고치지 않으므로(React state 다), 새 updatedAt 은 돌려받아야 한다.
+      syncToSupabase(savePurchaseOrder(po))
     }
   }, [po, projectId, loaded, syncToSupabase])
 
@@ -108,9 +134,9 @@ export function POTablesTab() {
       clearTimeout(syncTimerRef.current)
       if (!pendingSyncRef.current) return
       pendingSyncRef.current = false
-      void syncPurchaseOrder(poRef.current).catch(err => {
-        console.warn('[po-sync] 닫는 중 저장 실패', err)
-      })
+      // 큐에 올린다 — 진행 중인 요청이 있으면 그 뒤에 붙는다. 바로 fetch 를
+      // 띄우면 그 요청과 겹쳐서, 늦게 끝난 쪽이 새 내용을 덮을 수 있다.
+      senderRef.current?.push(poRef.current)
     }
   }, [])
 

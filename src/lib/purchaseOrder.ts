@@ -134,19 +134,38 @@ import { scopedGet, scopedSet, scopedRemove } from './scopedStorage'
 
 const PO_KEY = (projectId: string) => `bimova_po_${projectId}`
 
+/** 이 기기에 저장된 발주서가 있는지. 없으면 서버를 그대로 받아야 한다. */
+export function hasStoredPurchaseOrder(projectId: string): boolean {
+  return scopedGet(PO_KEY(projectId)) !== null
+}
+
+/**
+ * 이 기기의 발주서. 저장된 게 없으면 **updatedAt 0** 인 빈 발주서다.
+ *
+ * 여기서 Date.now() 를 쓰면 안 된다. 처음 들어온 기기는 로컬이 없는데 시각이
+ * "지금" 으로 찍혀서, 서버 발주서가 낡아 보인다 → 서버를 거부하고 → 빈 발주서를
+ * 서버로 올려 **남의 발주서를 지운다.** 저장한 적이 없으면 0 이 맞다.
+ */
 export function loadPurchaseOrder(projectId: string): PurchaseOrder {
   try {
     const raw = scopedGet(PO_KEY(projectId))
     if (raw) return JSON.parse(raw) as PurchaseOrder
   } catch { /* ignore */ }
-  return { projectId, tables: [], updatedAt: Date.now() }
+  return { projectId, tables: [], updatedAt: 0 }
 }
 
-export function savePurchaseOrder(po: PurchaseOrder): void {
-  po.updatedAt = Date.now()
+/**
+ * 이 기기에 저장하고, 저장된 모습(새 updatedAt)을 돌려준다.
+ *
+ * 건네받은 객체를 **고치지 않는다.** 호출부가 넘기는 건 React state 라,
+ * 제자리에서 바꾸면 리렌더 없이 값만 달라져 화면과 어긋난다.
+ */
+export function savePurchaseOrder(po: PurchaseOrder): PurchaseOrder {
+  const saved: PurchaseOrder = { ...po, updatedAt: Date.now() }
   try {
-    scopedSet(PO_KEY(po.projectId), JSON.stringify(po))
+    scopedSet(PO_KEY(saved.projectId), JSON.stringify(saved))
   } catch { /* storage full */ }
+  return saved
 }
 
 // ── 헬퍼 ──

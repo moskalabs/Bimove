@@ -102,10 +102,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signingOutRef.current = true
     setSessionExpired(false)
     try {
-      await supabase.auth.signOut()
+      const { error } = await supabase.auth.signOut()
+      // **성공했을 때만** 사용자 스코프를 놓는다. 로그아웃이 실패했는데
+      // 스코프를 지우면 세션은 살아 있는 채로 이후 저장이 `u:<id>:` 가 아닌
+      // 글로벌 키로 들어간다 — 다시 들어오면 작업이 사라진 것처럼 보인다.
+      if (error) {
+        console.warn('[auth] 로그아웃 실패 — 사용자 스코프를 유지한다', error)
+        return
+      }
+      setCurrentUserId(null)
+      lastUserIdRef.current = null
     } finally {
       signingOutRef.current = false
-      setCurrentUserId(null)
     }
   }
 

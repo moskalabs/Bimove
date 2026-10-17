@@ -4,6 +4,7 @@ import { idbGet, idbSet, idbDelete, requestPersistentStorage } from './idb'
 import { deleteRecords } from './snapshotRecords'
 import { deletePurchaseOrder } from './purchaseOrder'
 import { deleteFinishingData } from './finishingData'
+import { deleteChatMessages } from './chatStore'
 
 export type Project = {
   id: string
@@ -59,6 +60,7 @@ export function deleteProject(id: string) {
   // 발주서·물량이 localStorage 에 계속 남는다.
   deletePurchaseOrder(id)
   deleteFinishingData(id)
+  deleteChatMessages(id)
 }
 
 export function renameProject(id: string, name: string) {

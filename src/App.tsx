@@ -492,8 +492,13 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
      *
      * 진행 중이면 그냥 건너뛴다 — serverDirty 는 그대로 남아 다음 회차에서
      * 처리된다.
+     *
+     * boolean 이 아니라 **진행 중인 Promise** 를 들고 있는다. 화면을 떠날 때
+     * 하는 마지막 저장이 그 뒤에 붙어야 하기 때문이다 — boolean 이면 "진행
+     * 중" 을 알아도 기다릴 수가 없어서, 같은 기준 시각으로 요청이 하나 더
+     * 나간다.
      */
-    let syncInFlight = false
+    let syncInFlight: Promise<void> | null = null
 
     supabaseTimer = window.setInterval(async () => {
       if (syncInFlight) return
@@ -504,7 +509,8 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
       if (!snap) return
       serverDirty = false
       const thumb = pendingThumbnail
-      syncInFlight = true
+      let settle!: () => void
+      syncInFlight = new Promise<void>(res => { settle = res })
       try {
         const result = await saveSnapshotToSupabase(projectId, snap, thumb, lastServerUpdatedAt)
         if (result.conflict) {
@@ -546,7 +552,8 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
           syncFailed = true
         }
       } finally {
-        syncInFlight = false
+        syncInFlight = null
+        settle()
       }
     }, SERVER_SYNC_MS)
 
@@ -580,10 +587,22 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
       const snap = serverDirty && !syncPaused ? buildFullSnapshot() : null
       serverDirty = false
       if (snap) {
+        const thumb = pendingThumbnail
         // 언마운트 뒤에도 fetch 는 계속 진행된다. 충돌이면 서버를 건드리지 않고
         // 넘어간다 — 로컬에는 이미 남아 있고, 다음 진입 때 isLocalNewer 가 집어낸다.
-        void saveSnapshotToSupabase(projectId, snap, pendingThumbnail, lastServerUpdatedAt)
-          .catch(err => console.warn('[supabase-sync] 언마운트 flush 실패', err))
+        //
+        // **진행 중인 저장이 있으면 그 뒤에 붙인다.** 바로 보내면 둘이 같은
+        // lastServerUpdatedAt 으로 출발해 서로를 충돌로 보거나, 늦게 끝난 쪽이
+        // 먼저 끝난 쪽을 덮는다. 기준 시각은 기다린 뒤에 읽어야 최신이다.
+        const inFlight = syncInFlight
+        void (async () => {
+          if (inFlight) { try { await inFlight } catch { /* 그쪽에서 이미 처리했다 */ } }
+          try {
+            await saveSnapshotToSupabase(projectId, snap, thumb, lastServerUpdatedAt)
+          } catch (err) {
+            console.warn('[supabase-sync] 언마운트 flush 실패', err)
+          }
+        })()
       }
     }
   }, [editor, projectId, toast])
