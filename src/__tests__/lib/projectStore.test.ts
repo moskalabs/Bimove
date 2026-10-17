@@ -297,3 +297,43 @@ describe('deleteProject 가 딸린 표까지 치운다', () => {
     expect(loadFinishingData('p9').categories.length).toBeGreaterThan(0)  // 기본값으로 돌아간다
   })
 })
+
+// ── 저장본이 깨졌을 때 ──
+//
+// 예전엔 loadSnapshot 실패를 통째로 삼켰다 (`catch { /* ignore corrupt */ }`).
+// 그러면 **빈 에디터가 멀쩡한 것처럼 올라오고**, 곧바로 자동 저장이 돌아서
+// 멀쩡하던 도면을 빈 캔버스로 덮어썼다. 되돌릴 방법이 없다.
+//
+// 이제 (1) 고른 쪽이 깨졌으면 다른 쪽도 시도하고 (2) 둘 다 안 되면 에디터를
+// 아예 올리지 않는다. 여기서는 (1)의 **순서**를 못으로 박아둔다.
+
+import { snapshotCandidates } from '../../lib/projectStore'
+
+describe('snapshotCandidates', () => {
+  const server = { s: 1 }
+  const local = { l: 1 }
+
+  it('고른 게 없으면 열 것도 없다', () => {
+    expect(snapshotCandidates(null, server, local)).toEqual([])
+  })
+
+  it('서버를 골랐으면 서버 먼저, 로컬이 예비', () => {
+    expect(snapshotCandidates(server, server, local)).toEqual([server, local])
+  })
+
+  it('로컬을 골랐으면 로컬 먼저, 서버가 예비', () => {
+    // 고른 쪽이 늘 먼저다 — 그게 더 최신이라고 판단한 쪽이다.
+    expect(snapshotCandidates(local, server, local)).toEqual([local, server])
+  })
+
+  it('한쪽만 있으면 하나만', () => {
+    expect(snapshotCandidates(local, null, local)).toEqual([local])
+    expect(snapshotCandidates(server, server, null)).toEqual([server])
+  })
+
+  it('둘이 같은 객체면 한 번만 넣는다', () => {
+    // 같은 걸 두 번 시도해봐야 똑같이 깨진다.
+    const same = { x: 1 }
+    expect(snapshotCandidates(same, same, same)).toEqual([same])
+  })
+})

@@ -42,7 +42,7 @@ import { CommentTool } from './tools/CommentTool'
 import { DimensionTool } from './tools/DimensionTool'
 import { EditorContext } from './context/EditorContext'
 import { ProjectContext, ProjectNameContext } from './context/ProjectContext'
-import { loadSnapshot, dropLegacySnapshot, saveThumbnail, touchProject, resolveSnapshot, renameProject, ensureProjectEntry } from './lib/projectStore'
+import { loadSnapshot, dropLegacySnapshot, saveThumbnail, touchProject, resolveSnapshot, renameProject, ensureProjectEntry, snapshotCandidates } from './lib/projectStore'
 import { readRecordSnapshot, writeFullRecords, writeRecordDiff, type SnapshotLike } from './lib/snapshotRecords'
 import { createDebouncedSaver } from './lib/debouncedSave'
 import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, saveProjectVersion, renameProject as renameProjectOnServer } from './lib/supabaseSync'
@@ -139,6 +139,13 @@ interface PendingCadPreview {
 function EditorView({ projectId, projectName: initialProjectName, onBack }: { projectId: string; projectName?: string; onBack: () => void }) {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [show3D, setShow3D] = useState(false)
+  /**
+   * 저장본을 하나도 읽지 못했을 때의 사유.
+   *
+   * 이게 차 있으면 **에디터를 올리지 않는다.** 빈 캔버스를 띄우면 자동 저장이
+   * 곧바로 돌아서 멀쩡하던 도면을 덮어쓴다 — 되돌릴 수 없다.
+   */
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // 태블릿·모바일은 읽기 전용. 창을 줄였다 늘렸다 해도 따라오게 구독한다.
   const [readonly, setReadonly] = useState(() => isReadonlyViewport(probeViewport()))
@@ -244,8 +251,42 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
       // 적이 없는(또는 읽기가 실패한) 프로젝트라 옛 통짜 스냅샷으로 폴백한다.
       const local = (await readRecordSnapshot(projectId)) ?? (await loadSnapshot(projectId))
       const saved = resolveSnapshot(projectId, server, local)
+
+      // 저장본 읽기.
+      //
+      // 예전엔 실패를 통째로 삼켰다(`catch { /* ignore corrupt */ }`). 그러면
+      // **빈 에디터가 멀쩡한 것처럼 올라오고**, 곧바로 자동 저장이 돌아서
+      // 멀쩡하던 도면을 빈 캔버스로 덮어썼다. 되돌릴 방법이 없다.
+      //
+      // 그래서 두 가지를 바꾼다.
+      //   1. 고른 쪽이 깨졌으면 **다른 쪽도 시도한다** (서버/로컬 중 하나는
+      //      멀쩡한 경우가 많다).
+      //   2. 둘 다 안 되면 **에디터를 올리지 않는다** — setEditor 를 부르지
+      //      않으면 저장 루프가 시작되지 않으므로 아무것도 덮어쓰지 않는다.
       if (saved) {
-        try { ed.loadSnapshot(saved as TLEditorSnapshot) } catch { /* ignore corrupt */ }
+        const candidates = snapshotCandidates(saved, server?.snapshot ?? null, local)
+        let usedIndex = -1
+        let lastErr: unknown
+        for (let i = 0; i < candidates.length; i++) {
+          try {
+            ed.loadSnapshot(candidates[i] as TLEditorSnapshot)
+            usedIndex = i
+            break
+          } catch (err) {
+            lastErr = err
+            console.warn('[load] 저장본을 읽지 못했다 — 다른 후보를 시도한다', err)
+          }
+        }
+        if (usedIndex < 0) {
+          console.error('[load] 저장본을 모두 읽지 못했다', lastErr)
+          setLoadError(lastErr instanceof Error ? lastErr.message : String(lastErr))
+          return   // ← setEditor 를 부르지 않는다. 저장 루프가 안 돈다.
+        }
+        if (usedIndex > 0) {
+          // 더 최신인 쪽이 깨져서 예비본으로 열었다. 조용히 넘기면 사용자가
+          // "왜 아까 작업이 없지" 하고 그 위에 또 저장해 덮어쓴다.
+          toast('최근 저장본이 손상돼 이전 저장본으로 열었습니다. 작업 내용을 확인해주세요.', 'error')
+        }
       }
       // 빈 페이지 자동 정리: 셰이프가 없는 여분 페이지 삭제 (최소 1페이지 유지)
       const allPages = ed.getPages()
@@ -293,7 +334,12 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
           }
         })()
       }
-    })()
+    })().catch(err => {
+      // 불러오는 길 어디서 터지든 **빈 화면으로 두지 않는다.** setEditor 까지
+      // 못 갔으면 에디터는 안 올라오는데, 알려주지 않으면 사용자는 멈춘 줄 안다.
+      console.error('[load] 프로젝트를 여는 중 실패', err)
+      setLoadError(err instanceof Error ? err.message : String(err))
+    })
   }
 
   useEffect(() => {
@@ -689,6 +735,61 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
       editor.selectNone()
     }
   }, [editor, readonly])
+
+  // 저장본을 못 읽었으면 **에디터 대신 이 화면**을 띄운다. 여기서 끝내야
+  // setEditor 로 넘어간 뒤 자동 저장이 도는 일이 없다.
+  if (loadError) {
+    return (
+      <div style={{
+        minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: '#f8f8f8', padding: 24,
+      }}>
+        <div style={{
+          maxWidth: 520, background: '#fff', border: '1px solid #e8e8e8', borderRadius: 10,
+          padding: '28px 30px', boxShadow: '0 2px 16px rgba(0,0,0,.06)',
+        }}>
+          <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 10 }}>
+            도면을 열지 못했습니다
+          </div>
+          <p style={{ fontSize: 14, lineHeight: 1.7, color: '#444', margin: '0 0 14px' }}>
+            저장된 내용을 읽는 데 실패했어요. <b>아무것도 덮어쓰지 않았습니다</b> —
+            저장된 도면은 그대로 있어요.
+          </p>
+          <p style={{ fontSize: 13, lineHeight: 1.7, color: '#666', margin: '0 0 18px' }}>
+            다시 시도해보시고, 계속 같으면 <b>버전 기록</b>에서 이전 저장본으로
+            되돌릴 수 있어요.
+          </p>
+          <pre style={{
+            fontSize: 11, color: '#888', background: '#fafafa', border: '1px solid #eee',
+            borderRadius: 6, padding: '8px 10px', margin: '0 0 18px',
+            whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+          }}>{loadError}</pre>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={() => window.location.reload()}
+              style={{
+                padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                border: '1px solid #2f6fed', background: '#2f6fed', color: '#fff', borderRadius: 6,
+              }}
+            >
+              다시 시도
+            </button>
+            {onBack && (
+              <button
+                onClick={onBack}
+                style={{
+                  padding: '8px 16px', fontSize: 13, cursor: 'pointer',
+                  border: '1px solid #ddd', background: '#fff', color: '#444', borderRadius: 6,
+                }}
+              >
+                프로젝트 목록으로
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <ReadonlyContext.Provider value={readonly}>

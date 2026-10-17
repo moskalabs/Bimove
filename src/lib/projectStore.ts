@@ -175,6 +175,23 @@ export function resolveSnapshot(
 }
 
 /**
+ * 저장본을 열 순서.
+ *
+ * resolveSnapshot 이 고른 쪽이 **먼저**, 안 고른 쪽이 예비다. 더 최신인 쪽이
+ * 깨져 있어도 다른 쪽은 멀쩡한 경우가 많다 — 통째로 포기하기 전에 한 번 더
+ * 본다. 같은 객체면 한 번만 넣는다.
+ */
+export function snapshotCandidates(
+  chosen: object | null,
+  server: object | null,
+  local: object | null,
+): object[] {
+  if (!chosen) return []
+  const other = chosen === local ? server : local
+  return other && other !== chosen ? [chosen, other] : [chosen]
+}
+
+/**
  * 스냅샷 저장. 실패하면 false — 호출한 쪽에서 알려줄 수 있게.
  *
  * IndexedDB 라 JSON.stringify 가 없다 (structured clone). 한의 37.5MB DXF 는
