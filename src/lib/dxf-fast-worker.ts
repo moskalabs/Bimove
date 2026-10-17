@@ -11,7 +11,7 @@
  */
 
 import { hexChunksToBytes, readOleImage, readOleFrameRect, rectFromCorners } from './dxfOle'
-import { aciToHex, trueColorToHex, detectPadding, makeGcFormatter, decodeDxfSpecialChars, cleanMtextFormatting, defLineSpacing, sampleArcDeg, textAttachPoint, usesAlignPoint, type HatchPatternLine, type ParseSpace } from './dxf-shared'
+import { aciToHex, trueColorToHex, detectPadding, makeGcFormatter, decodeDxfSpecialChars, cleanMtextFormatting, defLineSpacing, sampleArcDeg, textAttachPoint, usesAlignPoint, mtextHeightOverride, type HatchPatternLine, type ParseSpace } from './dxf-shared'
 
 export type { HatchPatternLine, ParseSpace }
 
@@ -1693,12 +1693,8 @@ function entityToPolyline(
                 const pt = [[td.x - block.baseX, td.y - block.baseY]]
                 for (const tr of nextTransforms) applyTransform(pt, tr)
                 td.x = pt[0][0]; td.y = pt[0][1]
-                // INSERT 스케일/회전을 텍스트 height/rotation에 반영
-                for (const tr of nextTransforms) {
-                  const avgScale = (Math.abs(tr.sx) + Math.abs(tr.sy)) / 2
-                  td.height *= avgScale
-                  if (tr.rot) td.rotation = (td.rotation || 0) + tr.rot
-                }
+                // 크기·각도도 위치와 **같은 변환 목록**으로 따라간다
+                applyTextMetrics(td, nextTransforms)
                 textsOutput.push(td)
               }
             } else {
@@ -1783,6 +1779,7 @@ function extractTextEntity(
   let attachPt: number | undefined
   let mtextWidth: number | undefined
   let mtextFont: string | undefined
+  let heightOverride: ReturnType<typeof mtextHeightOverride> = null
   if (type !== 'MTEXT') {
     text = decodeDxfSpecialChars((codes.get(1)?.[0] ?? '').trim())
     // 정렬: gc 72(가로) + 세로. **세로는 TEXT 가 73, ATTRIB 은 74** —
@@ -1804,6 +1801,9 @@ function extractTextEntity(
     // 서식 코드로 싸잡아 지우므로 **지우기 전에** 뽑아둬야 한다.
     const fMatch = raw.match(/\\[fF]([^;|]+)/)
     if (fMatch) mtextFont = fMatch[1].trim()
+    // 인라인 높이 지정도 같은 사정이다. 버리면 gc 40 이 그대로 쓰여서 글자가
+    // 제멋대로 커진다 — mtextHeightOverride 주석 참고.
+    heightOverride = mtextHeightOverride(raw)
     text = cleanMtextFormatting(raw)
     // MTEXT attachment point (group 71): 1=TL 2=TC 3=TR 4=ML 5=MC 6=MR 7=BL 8=BC 9=BR
     attachPt = parseInt(codes.get(71)?.[0] ?? '0') || undefined
@@ -1819,6 +1819,19 @@ function extractTextEntity(
     for (const tr of transforms) applyTransform(pt, tr)
     x = pt[0][0]; y = pt[0][1]
   }
+  // 크기·각도도 위치와 **같은 변환 목록**을 타야 한다. 지금 이 함수를 비어
+  // 있지 않은 transforms 로 부르는 자리는 없지만(호출부가 전부 `[]` 를 넘기고
+  // 바깥에서 따로 보정한다), 그러다 하나가 빠지면 글자가 제자리에 선 채로
+  // 크기만 제멋대로가 된다 — 지금까지 그런 식으로 세 군데가 갈라져 있었다.
+  const metrics = { height, rotation }
+  // 인라인 높이가 먼저다. 배율 꼴(`0.4x`)은 **gc 40 기준**이고, INSERT 스케일은
+  // 그렇게 정해진 최종 글자 크기에 다시 곱해진다.
+  if (heightOverride) {
+    metrics.height = heightOverride.kind === 'factor'
+      ? metrics.height * heightOverride.value
+      : heightOverride.value
+  }
+  if (transforms.length) applyTextMetrics(metrics, transforms)
 
   // Resolve font name from style (gc 7 → STYLE table → font family)
   let fontName: string | undefined
@@ -1832,7 +1845,35 @@ function extractTextEntity(
   // fontFileToFamily 를 거쳐 한글 폰트 매핑과 이름 위생 검사를 같이 받는다.
   if (!fontName && mtextFont) fontName = fontFileToFamily(mtextFont)
 
-  return { x, y, text, height, rotation, layer, colorNumber: colorNum, attachPt, width: mtextWidth, fontName }
+  return {
+    x, y, text, height: metrics.height, rotation: metrics.rotation,
+    layer, colorNumber: colorNum, attachPt, width: mtextWidth, fontName,
+  }
+}
+
+/**
+ * INSERT 변환을 글자 **크기와 각도**에 반영한다.
+ *
+ * 위치를 옮기는 applyTransform 과 **같은 변환 목록으로** 불러야 한다. 둘이
+ * 갈라지면 글자가 제자리에 서 있는데 크기만 제멋대로가 된다 — 실제로
+ * 배치 탭의 "11/11_최종" 도면틀 글씨가 혼자 거대하게 나왔다. 블록 펼치기
+ * 쪽에는 이 보정이 있었는데 extractTextEntity 안에는 없어서, 종이공간
+ * INSERT 안의 TEXT 만 빠져나갔다. 그래서 한 함수로 합쳤다.
+ *
+ * 크기는 |sx|,|sy| 평균을 쓴다. 글자 높이는 원래 Y 를 따라가지만, 블록을
+ * 비균등으로 늘리는 경우가 드물고(거의 늘 sx==sy) 한쪽만 보면 비균등일 때
+ * 더 크게 틀린다.
+ */
+function applyTextMetrics(
+  // rotation 은 **optional** 이어야 한다. TextData 가 `rotation?: number` 라
+  // `number | undefined` 로 받으면 "속성이 있어야 한다" 가 되어 못 넘긴다.
+  m: { height: number; rotation?: number },
+  transforms: Transform[],
+): void {
+  for (const tr of transforms) {
+    m.height *= (Math.abs(tr.sx) + Math.abs(tr.sy)) / 2
+    if (tr.rot) m.rotation = (m.rotation || 0) + tr.rot
+  }
 }
 
 function parseDxfFast(rawText: string, selectedLayers: string[], progress: (phase: string, pct: number) => void, space: ParseSpace = { kind: 'model' }): { polylines: PolylineData[]; insUnits: number; texts: TextData[]; hatches: HatchData[]; linetypes: LinetypeDef[]; ltscale: number; layers: Record<string, LayerInfo>; skipped: SkipReport; oleImages: OleImageData[] } {

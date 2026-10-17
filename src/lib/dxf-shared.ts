@@ -101,6 +101,43 @@ export function decodeDxfSpecialChars(text: string): string {
 }
 
 /** MTEXT 서식 코드 제거 */
+/**
+ * MTEXT 인라인 높이 지정 `\H…;` 을 읽는다. **서식 코드를 지우기 전에** 불러야 한다
+ * (cleanMtextFormatting 이 `\H` 를 다른 서식과 함께 버린다 — `\f` 폰트와 같은 사정).
+ *
+ * 두 가지 꼴이 있다.
+ *   `\H0.4x;` — 엔티티 높이(gc 40)의 0.4배
+ *   `\H600;`  — 절대 높이 600
+ *
+ * 이걸 버리면 gc 40 이 그대로 쓰인다. 실제로 한의 도면에서 표제란 글씨가
+ * `{\H0.4x;11/11_최종}` + gc40=1500 이었는데, 배율을 버려서 **2.5배 크게**
+ * 나왔다 (600 이어야 할 것이 1500).
+ *
+ * 구간마다 높이가 다르면 null 이다. 우리 모델은 엔티티당 높이가 하나뿐이라
+ * 어느 한 구간의 값을 문장 전체에 씌우는 건 틀린 쪽이 더 크다 — 그럴 땐
+ * gc 40 을 그대로 두는 게 낫다. (전체를 `{...}` 로 감싼 흔한 경우는 지정이
+ * 하나뿐이라 그대로 걸린다.)
+ */
+export function mtextHeightOverride(
+  raw: string,
+): { kind: 'factor' | 'absolute'; value: number } | null {
+  const matches = [...raw.matchAll(/\\H(\d*\.?\d+)(x?);/gi)]
+  if (matches.length === 0) return null
+
+  const first = matches[0]
+  const value = parseFloat(first[1])
+  const kind = first[2].toLowerCase() === 'x' ? 'factor' : 'absolute'
+  if (!Number.isFinite(value) || value <= 0) return null
+
+  // 구간마다 다르게 지정했으면 손대지 않는다
+  for (const m of matches) {
+    if (parseFloat(m[1]) !== value || (m[2].toLowerCase() === 'x') !== (kind === 'factor')) {
+      return null
+    }
+  }
+  return { kind, value }
+}
+
 export function cleanMtextFormatting(text: string): string {
   return text
     .replace(/\\P/g, '\n')                        // 문단 구분 → 줄바꿈 (SVG tspan으로 렌더링)
