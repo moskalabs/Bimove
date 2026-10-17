@@ -297,6 +297,26 @@ export async function fetchProjects(userId: string) {
   return data ?? []
 }
 
+/**
+ * 프로젝트 하나만 — `#project=<id>` 로 들어왔을 때 쓴다.
+ *
+ * **`user_id` 를 쿼리에 박는다.** RLS 가 이미 막아주지만, 거기 의지하면 정책을
+ * 한 번 손볼 때 조용히 열린다. 남의 id 를 주소창에 넣어도 여기서 null 이다.
+ *
+ * 없으면 null (에러가 아니다) — 지워진 프로젝트 주소가 북마크에 남아 있을 수
+ * 있다. 네트워크 실패는 throw 해서 "없음" 과 구분한다.
+ */
+export async function fetchProject(projectId: string, userId: string) {
+  const { data, error } = await supabase
+    .from('projects')
+    .select('id, name, updated_at')
+    .eq('id', projectId)
+    .eq('user_id', userId)
+    .maybeSingle()
+  if (error) throw error
+  return data
+}
+
 export async function createProject(userId: string, name: string) {
   const { data, error } = await supabase
     .from('projects')

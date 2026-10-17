@@ -45,7 +45,8 @@ import { ProjectContext, ProjectNameContext } from './context/ProjectContext'
 import { loadSnapshot, dropLegacySnapshot, saveThumbnail, touchProject, resolveSnapshot, renameProject, ensureProjectEntry, snapshotCandidates } from './lib/projectStore'
 import { readRecordSnapshot, writeFullRecords, writeRecordDiff, type SnapshotLike } from './lib/snapshotRecords'
 import { createDebouncedSaver } from './lib/debouncedSave'
-import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, saveProjectVersion, renameProject as renameProjectOnServer } from './lib/supabaseSync'
+import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, saveProjectVersion, renameProject as renameProjectOnServer, fetchProject } from './lib/supabaseSync'
+import { readProjectHash, pushProjectHash, replaceProjectHash, clearProjectHash } from './lib/projectHash'
 import { saveVersion, getVersion, type Version } from './lib/versions'
 import { pushVersion } from './lib/versionSync'
 import { backupServerSnapshot } from './lib/conflictBackup'
@@ -917,7 +918,15 @@ const SERVER_SYNC_MS = 30 * 1000
 
 function AppContent() {
   const { user, loading, sessionExpired } = useAuth()
+  const { toast } = useToast()
   const [currentProject, setCurrentProject] = useState<{ id: string; name: string } | null>(null)
+  /**
+   * 주소에 실려 들어온 프로젝트 id — 아직 되살리지 못한 것.
+   *
+   * 첫 렌더에서 바로 읽는다. 이걸 effect 에서 읽으면 대시보드를 한 프레임
+   * 그렸다가 에디터로 넘어가서, 목록을 잘못 누른 것처럼 번쩍인다.
+   */
+  const [restoreId, setRestoreId] = useState<string | null>(() => readProjectHash())
 
   // 유저 인증 후 body 속성 동기화 (모듈 레벨 init은 userId 없어서 실패할 수 있음)
   useEffect(() => {
@@ -930,7 +939,7 @@ function AppContent() {
   // 프로젝트 열기/닫기 시 브라우저 히스토리 동기화
   const openProject = (id: string, name: string) => {
     setCurrentProject({ id, name })
-    history.pushState({ view: 'editor', id }, '', `#project=${id}`)
+    pushProjectHash(id)
   }
 
   const closeProject = () => {
@@ -951,6 +960,44 @@ function AppContent() {
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
+
+  /**
+   * `#project=<id>` 로 들어왔으면 그 도면을 연다 (새로고침·북마크·공유된 주소).
+   *
+   * 로컬 목록에 이름이 있어도 **서버에 한 번 물어본다.** 이름을 몰라서가 아니라
+   * 그 프로젝트가 아직 내 것인지 봐야 하기 때문이다 — 지워졌거나 다른 계정의
+   * id 를 주소창에 넣었을 수 있다. 로그인 전이면 user 가 null 이라 여기서
+   * 기다리고, 로그인하는 순간 다시 들어온다.
+   */
+  useEffect(() => {
+    if (!restoreId || !user) return
+    let alive = true
+    void (async () => {
+      try {
+        const p = await fetchProject(restoreId, user.id)
+        if (!alive) return
+        if (p) {
+          // 대시보드를 안 거쳐 들어왔으니 로컬 목록에도 없을 수 있다.
+          // updatedAt 은 서버 시각으로 — projectStore 쪽 주석 참고.
+          ensureProjectEntry(p.id, p.name, p.updated_at)
+          // 이미 이 주소에 서 있다. push 하면 뒤로가기를 두 번 눌러야 나간다.
+          replaceProjectHash(p.id)
+          setCurrentProject({ id: p.id, name: p.name })
+        } else {
+          clearProjectHash()
+          toast('그 프로젝트를 찾을 수 없습니다. 지워졌거나 다른 계정의 도면일 수 있습니다.', 'error')
+        }
+      } catch (err) {
+        if (!alive) return
+        // 네트워크 문제면 **주소는 그대로 둔다** — 다시 새로고침하면 열린다.
+        // 여기서 hash 를 치우면 되살릴 단서까지 사라진다.
+        console.warn('[restore] 프로젝트를 확인하지 못했다', err)
+        toast('프로젝트를 불러오지 못했습니다. 연결을 확인해주세요.', 'error')
+      }
+      if (alive) setRestoreId(null)
+    })()
+    return () => { alive = false }
+  }, [restoreId, user, toast])
 
   if (loading) {
     return (
@@ -989,6 +1036,19 @@ function AppContent() {
         <SessionExpiredBanner />
         <AuthPage />
       </>
+    )
+  }
+
+  // 주소에 실린 도면을 확인하는 동안. `!user` 보다 **뒤**에 와야 한다 —
+  // 로그인 전에 걸리면 restoreId 를 치울 사람이 없어서 영원히 돌아간다.
+  if (restoreId) {
+    return (
+      <div style={{
+        minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: '#f8f8f8', color: '#999', fontSize: 14,
+      }}>
+        도면을 여는 중...
+      </div>
     )
   }
 
