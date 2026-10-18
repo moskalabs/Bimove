@@ -77,6 +77,9 @@ export async function fetchPurchaseOrder(projectId: string): Promise<PurchaseOrd
     projectId,
     tables: boqTables,
     updatedAt: new Date(po.updated_at).getTime(),
+    // 서버가 준 문자열을 **깎지 않고** 들고 간다 — optimistic lock 의
+    // 기준값이다 (PurchaseOrder.serverUpdatedAt 주석 참고).
+    serverUpdatedAt: po.updated_at,
   }
 }
 
@@ -268,16 +271,82 @@ async function syncSequential(po: PurchaseOrder): Promise<void> {
   await pruneRows('boq_tables', 'purchase_order_id', [poRow.id], tableIds)
 }
 
+/** 발주서 행의 서버 수정 시각. 행이 아직 없으면 undefined. */
+async function readPoUpdatedAt(projectId: string): Promise<string | undefined> {
+  const { data, error } = await supabase
+    .from('purchase_orders')
+    .select('updated_at')
+    .eq('project_id', projectId)
+    .maybeSingle()
+  if (error) throw error
+  return data?.updated_at ?? undefined
+}
+
+/**
+ * 쓰기 권리를 **원자적으로 집는다.**
+ *
+ * "읽어서 같은지 보고 쓴다" 로는 막히지 않는다 — 읽고 쓰는 사이에 상대가
+ * 들어온다. 조건부 UPDATE 한 문장이면 그 틈이 없다: `updated_at` 이 우리가
+ * 알던 값일 때만 1행이 바뀌고, 그 순간 시각이 올라가므로 뒤따라온 쪽은
+ * 0행을 받는다.
+ */
+async function claimPurchaseOrder(
+  projectId: string, expected: string,
+): Promise<{ kind: 'ok' } | { kind: 'conflict'; serverUpdatedAt?: string }> {
+  const { data, error } = await supabase
+    .from('purchase_orders')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('project_id', projectId)
+    .eq('updated_at', expected)
+    .select('updated_at')
+    .maybeSingle()
+  if (error) throw error
+  if (data) return { kind: 'ok' }
+
+  // 0행이다. 기준이 어긋났거나(충돌) 행이 아직/이미 없다.
+  const current = await readPoUpdatedAt(projectId)
+  if (current === undefined) return { kind: 'ok' }   // 행이 없다 → 첫 쓰기
+  return { kind: 'conflict', serverUpdatedAt: current }
+}
+
+export type POSyncResult =
+  | { kind: 'ok'; serverUpdatedAt?: string }
+  /** 다른 기기가 먼저 저장했다. **쓰지 않았다.** */
+  | { kind: 'conflict'; serverUpdatedAt?: string }
+
 /**
  * 발주서 동기화 (메인 진입점).
  * 1차: RPC 트랜잭션 (원자적, 안전)
  * 2차: 순차 방식 (RPC 미배포 시에만)
+ *
+ * ── 기준값을 주면 optimistic lock 이 걸린다 ──
+ *
+ * 전엔 조건 없이 썼다. 두 기기가 같은 발주서를 고치면 나중 쪽이 이기는데,
+ * 이 길에는 `pruneRows` 가 붙어 있다 — 서버에 있는데 내 목록에 없는 행을
+ * **지운다.** 즉 상대가 방금 만든 물량표·품목이 흔적 없이 삭제된다.
+ * 도면 스냅샷은 충돌 때 버전으로 백업하지만 발주서에는 그런 게 없어서
+ * 되돌릴 방법도 없다.
+ *
+ * `expectedUpdatedAt` 을 주면 그 값일 때만 쓴다. 어긋나면 **아무것도 쓰지
+ * 않고** `conflict` 를 돌려준다 — 호출부가 사용자에게 알리고 멈출 수 있게.
+ * 안 주면 옛 동작(조건 없는 쓰기)이다. 서버에 발주서가 처음 올라가는
+ * 경우가 그렇다.
  */
-export async function syncPurchaseOrder(po: PurchaseOrder): Promise<void> {
+export async function syncPurchaseOrder(
+  po: PurchaseOrder,
+  expectedUpdatedAt?: string,
+): Promise<POSyncResult> {
+  if (expectedUpdatedAt) {
+    const claim = await claimPurchaseOrder(po.projectId, expectedUpdatedAt)
+    if (claim.kind === 'conflict') return claim
+  }
   const ok = await syncViaRpc(po)
   if (!ok) {
     await syncSequential(po)
   }
+  // RPC·순차 경로가 각자 updated_at 을 다시 찍는다. 우리가 보낸 값이 아니라
+  // **서버가 들고 있는 값**을 다음 기준으로 삼아야 형식이 어긋나지 않는다.
+  return { kind: 'ok', serverUpdatedAt: await readPoUpdatedAt(po.projectId) }
 }
 
 // ── 프로젝트 CRUD ──

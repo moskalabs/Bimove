@@ -56,6 +56,22 @@ export type PurchaseOrder = {
   projectId: string
   tables: BOQTable[]
   updatedAt: number
+  /**
+   * 서버가 들고 있던 `purchase_orders.updated_at` **그대로**.
+   *
+   * 발주서 값이 아니라 **optimistic lock 의 기준값**이다. 이게 없으면 서버
+   * 쓰기가 조건 없는 덮어쓰기가 되고, 그 길에는 `pruneRows` 가 붙어 있어서
+   * 다른 기기가 방금 만든 품목이 **지워진다.** 스냅샷과 달리 발주서에는
+   * 버전 백업이 없어서 되돌릴 방법이 없다.
+   *
+   * 숫자(`updatedAt`)로 바꾸지 않는다 — ms 로 깎으면 서버의 마이크로초와
+   * 어긋나서 `.eq('updated_at', …)` 가 영원히 안 맞는다. 받은 문자열을
+   * 그대로 되돌려줘야 한다.
+   *
+   * localStorage 에도 같이 실린다. 새로고침 뒤 서버 읽기가 실패해도 기준값
+   * 없이 쓰는 일이 없게 하려는 것이다.
+   */
+  serverUpdatedAt?: string
 }
 
 // ── 계산 함수 ──

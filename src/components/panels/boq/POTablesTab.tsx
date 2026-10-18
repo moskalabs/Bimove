@@ -47,6 +47,34 @@ export function POTablesTab() {
    * 빈 내용을 올려 남의 발주서를 지운다.
    */
   const hadLocalRef = useRef(hasStoredPurchaseOrder(projectId ?? ''))
+  /**
+   * 서버 쓰기의 기준값 — 마지막으로 **서버가 들고 있다고 확인한** 시각.
+   *
+   * 이게 없으면 조건 없는 덮어쓰기가 되고, 그 길에 붙은 prune 이 다른 기기가
+   * 방금 만든 품목을 지운다. 서버에 발주서가 아직 없을 때만 undefined 로
+   * 남는다 (그때는 덮을 것도 없다).
+   *
+   * 로컬 저장본에도 실려 있지만 **거기서 시작하지 않는다.** 며칠 전 값일 수
+   * 있고, 그러면 아무도 안 고쳤는데 충돌로 보고 "다른 기기에서 수정했다" 는
+   * 틀린 말을 하게 된다.
+   */
+  const serverBaseRef = useRef<string | undefined>(undefined)
+  /**
+   * 열 때 서버 발주서를 **못 읽었나.**
+   *
+   * 못 읽었으면 서버가 무엇을 들고 있는지 모른다. 그 상태로 쓰면 기준 없는
+   * 덮어쓰기 + prune 이라 남의 품목이 지워진다. 이 세션에서는 서버로 보내지
+   * 않는다 — 로컬 저장은 계속 돌아가고, 사용자는 이미 토스트로 들었다.
+   */
+  const fetchFailedRef = useRef(false)
+  /**
+   * 충돌을 만나 서버 쓰기를 멈췄는지.
+   *
+   * 멈춘 채로 둔다. 자동으로 덮어쓰면 상대 작업이 사라지고, 발주서에는
+   * 되돌릴 버전 백업이 없다. 로컬 저장은 계속 돌아가므로 이 기기 작업은
+   * 그대로 남는다 — 사용자가 새로고침해서 가리면 된다.
+   */
+  const syncPausedRef = useRef(false)
 
   useEffect(() => { poRef.current = po }, [po])
 
@@ -61,13 +89,22 @@ export function POTablesTab() {
         // 아직 updatedAt 에 반영되기 전이라 시각 비교로는 못 지킨다
         // (updatedAt 은 loaded 이후의 자동 저장에서만 올라간다).
         const editedWhileLoading = poRef.current !== localAtMountRef.current
-        if (!cancelled && remote && !editedWhileLoading) {
-          // 이 기기에 저장된 게 없으면 비교할 게 없다 — 서버를 그대로 받는다.
-          const takeRemote = !hadLocalRef.current || shouldTakeRemotePO(remote, poRef.current)
-          if (takeRemote) setPo(remote)
+        if (!cancelled && remote) {
+          // 화면을 서버 것으로 바꾸지 않더라도 **기준값은 받아 둔다.**
+          // 쓰기 조건과 화면 선택은 별개다 — 로컬이 더 최신이라 로컬을
+          // 올리기로 했어도, 올릴 때는 서버가 들고 있는 값을 기준으로
+          // 조건을 걸어야 그 사이 들어온 남의 저장을 안 덮는다.
+          serverBaseRef.current = remote.serverUpdatedAt
+          if (!editedWhileLoading) {
+            // 이 기기에 저장된 게 없으면 비교할 게 없다 — 서버를 그대로 받는다.
+            const takeRemote = !hadLocalRef.current || shouldTakeRemotePO(remote, poRef.current)
+            if (takeRemote) setPo(remote)
+          }
         }
       } catch {
-        if (!cancelled) toast('서버에서 발주서를 불러오지 못했습니다. 로컬 데이터를 사용합니다.', 'error')
+        // 못 읽었으면 서버 상태를 모른다 → 이 세션에서는 서버로 쓰지 않는다.
+        fetchFailedRef.current = true
+        if (!cancelled) toast('서버에서 발주서를 불러오지 못했습니다. 이 기기에만 저장됩니다.', 'error')
       }
       if (!cancelled) setLoaded(true)
     })()
@@ -91,7 +128,19 @@ export function POTablesTab() {
     if (senderRef.current === null) {
       senderRef.current = createSerialSender<PurchaseOrder>(
         async (po) => {
-          await syncPurchaseOrder(po)
+          if (syncPausedRef.current || fetchFailedRef.current) return
+          const r = await syncPurchaseOrder(po, serverBaseRef.current)
+          if (r.kind === 'conflict') {
+            // 다른 기기가 먼저 저장했다. **아무것도 쓰지 않았다.** 여기서
+            // 덮어쓰면 상대의 물량표·품목이 prune 으로 지워지고, 발주서에는
+            // 되돌릴 버전 백업이 없다. 멈추고 알린다.
+            syncPausedRef.current = true
+            serverBaseRef.current = r.serverUpdatedAt
+            console.warn('[po-sync] 충돌 — 서버 쓰기를 멈춘다')
+            toast('다른 기기에서 발주서를 수정했습니다. 이 기기 내용을 덮어쓰지 않고 서버 저장을 멈췄습니다 — 새로고침해서 확인해주세요.', 'error')
+            return
+          }
+          serverBaseRef.current = r.serverUpdatedAt
           if (syncFailCount.current > 0) {
             toast('동기화가 복구되었습니다.', 'success')
             syncFailCount.current = 0
