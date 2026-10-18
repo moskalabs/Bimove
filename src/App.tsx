@@ -17,6 +17,7 @@ import { PolylineDrawOverlay } from './components/PolylineDrawOverlay'
 import { ZoneNamePopup } from './components/ZoneNamePopup'
 import { ScaleRuler } from './components/ScaleRuler'
 import { ChatPanel } from './components/ChatPanel'
+import { ImportLoadingOverlay } from './components/ImportLoadingOverlay'
 import { ProjectsPage } from './components/ProjectsPage'
 import { AuthPage } from './components/AuthPage'
 import { AuthProvider, useAuth } from './context/AuthContext'
@@ -47,6 +48,7 @@ import { readRecordSnapshot, writeFullRecords, writeRecordDiff, type SnapshotLik
 import { createDebouncedSaver } from './lib/debouncedSave'
 import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, saveProjectVersion, renameProject as renameProjectOnServer, fetchProject } from './lib/supabaseSync'
 import { readProjectHash, pushProjectHash, replaceProjectHash, clearProjectHash } from './lib/projectHash'
+const CadCraftViewer = lazyWithReload(() => import('./components/CadCraftViewer').then(m => ({ default: m.CadCraftViewer })))
 import { saveVersion, getVersion, type Version } from './lib/versions'
 import { pushVersion } from './lib/versionSync'
 import { backupServerSnapshot } from './lib/conflictBackup'
@@ -927,6 +929,14 @@ function AppContent() {
    * 그렸다가 에디터로 넘어가서, 목록을 잘못 누른 것처럼 번쩍인다.
    */
   const [restoreId, setRestoreId] = useState<string | null>(() => readProjectHash())
+  /**
+   * `#cadcraft` — CADCraft 엔진을 시험하는 화면.
+   *
+   * tldraw 를 걷어내려면 저장된 도면(전부 tldraw 스냅샷)을 먼저 옮겨야 한다.
+   * 그동안 나란히 두고 비교하려고 **따로 난 문**이다. 기존 흐름은 이 플래그가
+   * 켜질 때만 비켜준다.
+   */
+  const [cadcraft, setCadcraft] = useState(() => window.location.hash === '#cadcraft')
 
   // 유저 인증 후 body 속성 동기화 (모듈 레벨 init은 userId 없어서 실패할 수 있음)
   useEffect(() => {
@@ -998,6 +1008,19 @@ function AppContent() {
     })()
     return () => { alive = false }
   }, [restoreId, user, toast])
+
+  // `#cadcraft` 는 로그인과 무관한 실험 화면이다. 인증·복원보다 앞에 둔다 —
+  // 뒤에 두면 로그인하지 않고는 열어볼 수가 없다.
+  if (cadcraft) {
+    return (
+      <Suspense fallback={<ImportLoadingOverlay message="CAD 엔진 불러오는 중..." />}>
+        <CadCraftViewer onClose={() => {
+          setCadcraft(false)
+          history.replaceState(null, '', window.location.pathname + window.location.search)
+        }} />
+      </Suspense>
+    )
+  }
 
   if (loading) {
     return (
