@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { type TLShapeId, createShapeId } from 'tldraw'
 import {
   Lock, Unlock, FlipHorizontal2, RotateCw, Check, Wand2,
-  History, Play, User, MoreHorizontal,
+  History, Play, User,
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
   AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
@@ -298,19 +298,14 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
       {/* 단위 */}
       <div className="rbar-prop-row">
         <span className="rbar-prop-label">단 위</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1 }}>
-          <select
-            className="rbar-select"
-            style={{ flex: 1 }}
-            value={scale.unit}
-            onChange={e => handleUnit(e.target.value as ScaleUnit)}
-          >
-            {UNIT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-          <button className="rbar-more-btn" title="단위 상세 설정">
-            <MoreHorizontal size={14} strokeWidth={1.75} />
-          </button>
-        </div>
+        {/* .rbar-prop-row 가 flex 이고 .rbar-select 에 이미 flex:1 이 있다 */}
+        <select
+          className="rbar-select"
+          value={scale.unit}
+          onChange={e => handleUnit(e.target.value as ScaleUnit)}
+        >
+          {UNIT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
       </div>
     </section>
   )
