@@ -2194,7 +2194,7 @@ html[data-dark="true"] .rbar-toggle-group { border-color: #444; }
 html[data-dark="true"] .rbar-toggle-btn { color: #888; }
 html[data-dark="true"] .rbar-toggle-btn.active { background: #ddd; color: #222; }
 html[data-dark="true"] .rbar-toggle-btn:hover:not(.active) { background: #333; color: #ddd; }
-html[data-dark="true"] html[data-dark="true"] html[data-dark="true"] .rbar-row span:first-child { color: #888; }
+html[data-dark="true"] .rbar-row span:first-child { color: #888; }
 html[data-dark="true"] .rbar-row span:last-child { color: #ddd; }
 html[data-dark="true"] .rbar-view-section { background: #1e1e22; border-color: #333; }
 html[data-dark="true"] .rbar-distance-bar { background: #2a2a30; border-color: #444; }
