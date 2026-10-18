@@ -292,7 +292,7 @@ async function readPoUpdatedAt(projectId: string): Promise<string | undefined> {
  */
 async function claimPurchaseOrder(
   projectId: string, expected: string,
-): Promise<{ kind: 'ok' } | { kind: 'conflict'; serverUpdatedAt?: string }> {
+): Promise<{ kind: 'ok'; claimed: string } | { kind: 'conflict'; serverUpdatedAt?: string }> {
   const { data, error } = await supabase
     .from('purchase_orders')
     .update({ updated_at: new Date().toISOString() })
@@ -301,11 +301,14 @@ async function claimPurchaseOrder(
     .select('updated_at')
     .maybeSingle()
   if (error) throw error
-  if (data) return { kind: 'ok' }
+  // 찍힌 값을 **서버가 돌려준 모양 그대로** 들고 나간다. 뒤이은 저장이
+  // 실패했을 때 이 값으로 되돌려야 하기 때문이다 (syncPurchaseOrder 참고).
+  if (data) return { kind: 'ok', claimed: data.updated_at }
 
   // 0행이다. 기준이 어긋났거나(충돌) 행이 아직/이미 없다.
   const current = await readPoUpdatedAt(projectId)
-  if (current === undefined) return { kind: 'ok' }   // 행이 없다 → 첫 쓰기
+  // 행이 없다 → 첫 쓰기. 집은 게 없으니 되돌릴 것도 없다 (claimed 없음).
+  if (current === undefined) return { kind: 'ok', claimed: '' }
   return { kind: 'conflict', serverUpdatedAt: current }
 }
 
@@ -336,14 +339,46 @@ export async function syncPurchaseOrder(
   po: PurchaseOrder,
   expectedUpdatedAt?: string,
 ): Promise<POSyncResult> {
+  let claimed: string | undefined
   if (expectedUpdatedAt) {
     const claim = await claimPurchaseOrder(po.projectId, expectedUpdatedAt)
     if (claim.kind === 'conflict') return claim
+    claimed = claim.claimed
   }
-  const ok = await syncViaRpc(po)
-  if (!ok) {
-    await syncSequential(po)
+
+  try {
+    const ok = await syncViaRpc(po)
+    if (!ok) {
+      await syncSequential(po)
+    }
+  } catch (err) {
+    // ── 집어놓고 못 쓴 경우를 **되돌린다** ──
+    //
+    // 권리를 집을 때 updated_at 을 앞으로 찍는데, 그 뒤 저장이 (네트워크든
+    // 권한이든) 실패하면 **내용은 그대로인데 시각만 전진한** 상태가 남는다.
+    // 그러면 두 가지가 한꺼번에 깨진다.
+    //
+    //   1. 다음 시도가 제 claim 을 "다른 기기 충돌" 로 오인해 **영영 멈춘다.**
+    //   2. 그 사이 새로고침하면 안 바뀐 서버 쪽이 더 최신으로 보여서
+    //      (shouldTakeRemotePO) 올리지 못한 로컬 수정을 덮는다.
+    //
+    // 그래서 찍어둔 값을 조건으로 걸어 **원래 시각으로 되돌린다.** 조건이
+    // 걸려 있으니 그 사이 누가 제대로 저장했다면 되돌리지 않는다.
+    if (claimed && expectedUpdatedAt) {
+      try {
+        await supabase
+          .from('purchase_orders')
+          .update({ updated_at: expectedUpdatedAt })
+          .eq('project_id', po.projectId)
+          .eq('updated_at', claimed)
+      } catch (undoErr) {
+        // 되돌리기까지 실패했다. 삼키면 "왜 동기화가 멈췄지" 를 영영 모른다.
+        console.warn('[po-sync] 집어둔 시각을 되돌리지 못했다', undoErr)
+      }
+    }
+    throw err
   }
+
   // RPC·순차 경로가 각자 updated_at 을 다시 찍는다. 우리가 보낸 값이 아니라
   // **서버가 들고 있는 값**을 다음 기준으로 삼아야 형식이 어긋나지 않는다.
   return { kind: 'ok', serverUpdatedAt: await readPoUpdatedAt(po.projectId) }

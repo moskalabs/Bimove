@@ -16,9 +16,21 @@
 // 번 훑는 순수 함수라 **읽을 때마다 해도 된다.** 그러면 원본이 곧 진실이고,
 // 낡을 것도 빠질 것도 없다.
 //
-// 그래서 저장해 두는 건 **캐시**다. 진실이 아니다. 원본의 지문(sourceHash)과
-// 맞을 때만 쓰고, 어긋나면 버리고 다시 변환한다. 캐시가 아예 없어도 동작은
-// 똑같다 — 조금 느릴 뿐이다.
+// ── 캐시는 없앴다 ──
+//
+// 한때 변환 결과를 IndexedDB 에 캐시하고 원본의 지문으로 낡았는지 봤다.
+// 두 가지가 어긋나서 걷어냈다.
+//
+//   1. **지문이 틀렸다.** props 의 키 개수만 봐서, 벽 길이(`x2`)나 DXF
+//      `pathData` 처럼 키는 그대로고 값만 바뀌는 편집을 못 잡았다. 그러면
+//      낡은 캐시를 최신 문서라고 내준다 — 조용히 틀린 도면을 그린다.
+//   2. **제대로 고쳐도 남는 게 없다.** 지문을 믿으려면 수 MB 짜리
+//      pathData·textsJson 을 전부 훑어야 하는데, 그건 캐시가 아껴주는
+//      변환보다 비싸다. 게다가 지문을 내려면 **원본을 어차피 읽어야** 해서,
+//      캐시가 아끼는 건 얕은 변환 한 번뿐이다. 캐시를 IndexedDB 에서
+//      꺼내는 비용(수 MB 구조화 복제)이 그보다 크다.
+//
+// 그래서 매번 변환한다. 느리면 그때 **재서** 고친다.
 //
 // ── 그래도 지키는 것 ──
 //
@@ -26,28 +38,10 @@
 // 2. **유실이 있으면 도면을 내주지 않는다.** 변환기가 못 읽은 레코드를
 //    세는데(`skipped`), 0 이 아니면 반쪽짜리를 "읽었다" 고 넘기지 않는다 —
 //    그 위에 저장이 돌면 그때 진짜로 잃는다.
-// 3. **캐시 쓰기 실패는 읽기를 막지 않는다.**
 
-import { idbGet, idbSet } from './idb'
 import { loadSnapshot } from './projectStore'
 import { readRecordSnapshot } from './snapshotRecords'
-import { getCurrentUserId } from './scopedStorage'
-import {
-  fromTldrawSnapshot, countByType, snapshotFingerprint,
-  type BimoveDocument,
-} from './bimoveDoc'
-
-const STORE = 'bimovedocs' as const
-
-export function docCacheKey(projectId: string): string {
-  return projectId
-}
-
-/** 캐시에 놓인 문서. 없으면 null. **낡았을 수 있다** — 지문을 직접 봐야 한다. */
-export async function readDocCache(projectId: string): Promise<BimoveDocument | null> {
-  const d = await idbGet<BimoveDocument>(STORE, docCacheKey(projectId))
-  return d ?? null
-}
+import { fromTldrawSnapshot, type BimoveDocument } from './bimoveDoc'
 
 /**
  * 읽기 결과.
@@ -58,7 +52,7 @@ export async function readDocCache(projectId: string): Promise<BimoveDocument | 
  * (SizeVerdict·POSyncResult 도 같은 이유로 `kind` 를 쓴다.)
  */
 export type DocLoad =
-  | { kind: 'ok'; doc: BimoveDocument; from: 'cache' | 'converted' }
+  | { kind: 'ok'; doc: BimoveDocument }
   | { kind: 'fail'; reason: string; skipped?: number }
 
 /**
@@ -73,33 +67,14 @@ async function resolveSnapshot(projectId: string, snapshot?: unknown): Promise<u
   return (await readRecordSnapshot(projectId)) ?? (await loadSnapshot(projectId))
 }
 
-/**
- * 이 프로젝트의 도면을 우리 포맷으로 읽는다.
- *
- * 캐시가 원본과 맞으면 캐시를, 아니면 그 자리에서 변환해서 준다. 변환한
- * 경우엔 캐시를 갱신해 두지만 **기다리지 않는다** — 캐시는 속도용이고,
- * 못 써도 결과는 같다.
- */
+/** 이 프로젝트의 도면을 우리 포맷으로 읽는다. */
 export async function loadDocument(
   projectId: string,
   snapshot?: unknown,
 ): Promise<DocLoad> {
-  // 시작한 시점의 주인. 아래 캐시 쓰기가 **await 들 뒤에** 오므로 여기서
-  // 굳혀야 의미가 있다 (writeDocCache 주석 참고).
-  const owner = getCurrentUserId()
   try {
     const snap = await resolveSnapshot(projectId, snapshot)
     if (!snap) return { kind: 'fail', reason: '저장된 도면이 없다' }
-
-    const fingerprint = snapshotFingerprint(snap)
-
-    // 캐시는 **지문이 맞을 때만** 쓴다. 전엔 있으면 그냥 썼는데, 옮긴 뒤에
-    // 사용자가 더 편집하면 그 사본이 낡는다. 날짜로는 못 가린다 — 낡은 쪽이
-    // 더 나중에 쓰였을 수도 있다.
-    const cached = await readDocCache(projectId)
-    if (cached && fingerprint && cached.source?.sourceHash === fingerprint) {
-      return { kind: 'ok', doc: cached, from: 'cache' }
-    }
 
     const doc = fromTldrawSnapshot(snap)
 
@@ -117,59 +92,8 @@ export async function loadDocument(
       return { kind: 'fail', reason: '읽을 내용이 없다 (빈 도면이거나 못 읽었다)' }
     }
 
-    void writeDocCache(projectId, doc, owner)
-    return { kind: 'ok', doc, from: 'converted' }
+    return { kind: 'ok', doc }
   } catch (e) {
     return { kind: 'fail', reason: e instanceof Error ? e.message : String(e) }
   }
-}
-
-/**
- * 캐시에 써 둔다. 실패는 삼키되 콘솔에는 남긴다 (속도만 손해다).
- *
- * 계정 전환을 여기서 막는다. 이건 **기다리지 않는 쓰기**라, 변환하는 사이에
- * 로그아웃이나 계정 전환이 일어날 수 있다. 그러면 IndexedDB 키의 사용자
- * 스코프가 바뀌어서 A 가 시작한 쓰기가 **B 의 칸에 A 의 도면을** 넣는다.
- * idb 쪽에서 키를 부를 때 굳히긴 하지만 그 호출 자체가 await 들 뒤에 온다.
- *
- * @param owner 읽기를 시작한 시점의 사용자. 호출부가 **await 전에** 잡아야 한다.
- */
-async function writeDocCache(
-  projectId: string, doc: BimoveDocument, owner: string | null,
-): Promise<boolean> {
-  try {
-    // 쓰기 직전에 주인을 다시 본다. 바뀌었으면 쓰지 않는다 — 새 주인이 이
-    // 도면을 열면 그때 다시 변환한다 (원본이 진실이니 잃는 건 없다).
-    if (getCurrentUserId() !== owner) return false
-    const ok = await idbSet(STORE, docCacheKey(projectId), doc)
-    if (!ok) console.warn(`[문서캐시] ${projectId}: 쓰지 못했다 (용량?)`)
-    return ok
-  } catch (e) {
-    console.warn('[문서캐시] 쓰기 실패', e)
-    return false
-  }
-}
-
-/**
- * 도면을 연 김에 캐시를 데워 둔다.
- *
- * **기다리지 않는다.** 사용자는 도면을 보러 온 것이다. 실패해도 조용히
- * 넘어가되 콘솔에는 남긴다.
- *
- * 에디터가 **실제로 연 그 스냅샷**을 넘겨야 한다. 저장소를 다시 읽으면
- * 화면에 있는 것과 다른 걸 캐시할 수 있다 (예비본으로 열었을 때).
- */
-export function warmDocCache(projectId: string, snapshot?: unknown): void {
-  void (async () => {
-    const r = await loadDocument(projectId, snapshot)
-    if (r.kind === 'fail') {
-      console.warn(`[문서캐시] ${projectId}: ${r.reason}`)
-      return
-    }
-    if (r.from === 'cache') return        // 이미 맞는 게 있었다
-    console.log(
-      `[문서캐시] ${projectId}: 도형 ${r.doc.shapes.length}개 / 페이지 ${r.doc.pages.length}개`,
-      countByType(r.doc),
-    )
-  })()
 }

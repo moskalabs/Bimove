@@ -43,12 +43,11 @@ import { CommentTool } from './tools/CommentTool'
 import { DimensionTool } from './tools/DimensionTool'
 import { EditorContext } from './context/EditorContext'
 import { ProjectContext, ProjectNameContext } from './context/ProjectContext'
-import { loadSnapshot, dropLegacySnapshot, saveThumbnail, touchProject, resolveSnapshot, renameProject, ensureProjectEntry, snapshotCandidates, isLocalNewer } from './lib/projectStore'
+import { loadSnapshot, dropLegacySnapshot, saveThumbnail, touchProject, resolveSnapshot, renameProject, ensureProjectEntry, snapshotCandidates } from './lib/projectStore'
 import { readRecordSnapshot, writeFullRecords, writeRecordDiff, type SnapshotLike } from './lib/snapshotRecords'
 import { createDebouncedSaver } from './lib/debouncedSave'
 import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, saveProjectVersion, renameProject as renameProjectOnServer, fetchProject } from './lib/supabaseSync'
 import { readProjectHash, pushProjectHash, replaceProjectHash, clearProjectHash } from './lib/projectHash'
-import { warmDocCache } from './lib/bimoveDocStore'
 const CadCraftViewer = lazyWithReload(() => import('./components/CadCraftViewer').then(m => ({ default: m.CadCraftViewer })))
 import { saveVersion, getVersion, type Version } from './lib/versions'
 import { pushVersion } from './lib/versionSync'
@@ -287,6 +286,15 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
       //      멀쩡한 경우가 많다).
       //   2. 둘 다 안 되면 **에디터를 올리지 않는다** — setEditor 를 부르지
       //      않으면 저장 루프가 시작되지 않으므로 아무것도 덮어쓰지 않는다.
+      // 서버를 **못 읽었는데** 로컬도 없다. 이대로 가면 빈 에디터가 올라오고
+      // 자동 저장이 돌아서, 서버에 멀쩡히 있던 도면을 **빈 캔버스로 덮는다.**
+      // (서버를 멀쩡히 읽었는데 아무것도 없는 건 새 프로젝트다 — 그건 정상이다.)
+      if (!saved && serverReadFailedRef.current) {
+        console.error('[load] 서버도 못 읽고 이 기기에도 없다 — 에디터를 올리지 않는다')
+        setLoadError('서버에 연결하지 못했고 이 기기에도 저장본이 없습니다. 연결을 확인하고 새로고침해주세요.')
+        return
+      }
+
       if (saved) {
         const candidates = snapshotCandidates(saved, server?.snapshot ?? null, local)
         let usedIndex = -1
@@ -311,14 +319,6 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
           // "왜 아까 작업이 없지" 하고 그 위에 또 저장해 덮어쓴다.
           toast('최근 저장본이 손상돼 이전 저장본으로 열었습니다. 작업 내용을 확인해주세요.', 'error')
         }
-        // 연 김에 우리 포맷 캐시를 데워 둔다 (tldraw 를 걷어내기 위한 준비).
-        // **캐시일 뿐이다** — 원본이 진실이고, 읽을 때 지문이 안 맞으면
-        // 그 자리에서 다시 변환한다. 그래서 여기서 실패해도 아무것도 안 잃는다.
-        // 기다리지 않는다. 사용자는 도면을 보러 온 것이다.
-        //
-        // 에디터가 **실제로 연 그 후보**를 넘긴다. 저장소를 다시 읽으면
-        // 화면에 있는 것과 다른 걸 캐시할 수 있다 (예비본으로 열었을 때).
-        warmDocCache(projectId, candidates[usedIndex])
       }
       // 빈 페이지 자동 정리: 셰이프가 없는 여분 페이지 삭제 (최소 1페이지 유지)
       const allPages = ed.getPages()
@@ -606,11 +606,19 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
           const late = await loadSnapshotFromSupabase(projectId)
           needServerRead = false
           lastServerUpdatedAt = late?.updatedAt
-          // 서버 쪽이 우리 로컬보다 최신이면, 지금 쓰는 건 **사용자가 본 적
-          // 없는 내용**을 덮는 일이다. 충돌과 같은 처리를 한다 — 버전으로
-          // 백업하고 알린다.
-          if (late && !isLocalNewer(projectId, late.updatedAt)) {
-            console.warn('[supabase-sync] 늦게 읽은 서버 쪽이 더 최신 — 백업 후 덮어쓴다')
+          // 서버에 뭔가 있으면 **무조건** 백업하고 덮는다.
+          //
+          // 전엔 `isLocalNewer()` 로 걸렀는데 그게 틀렸다. 열 때 서버를 못
+          // 읽었으면 그 뒤 첫 로컬 저장이 `touchProject()` 로 **지금 시각**을
+          // 찍는다. 그러면 isLocalNewer 가 거의 항상 참이 되어 백업을 건너뛰고,
+          // 사용자가 **본 적도 없는** 서버 도면을 조용히 덮는다.
+          //
+          // 애초에 비교가 성립하지 않는다 — 우리가 연 건 로컬이고, 서버 쪽은
+          // 보지도 못했다. "우리 게 더 새것" 이라고 주장할 근거가 없다.
+          // backupServerSnapshot 이 같은 서버 버전을 두 번 뜨지는 않으므로
+          // 무조건 불러도 버전 기록이 더럽혀지지 않는다.
+          if (late) {
+            console.warn('[supabase-sync] 못 보고 연 서버 내용 — 백업 후 덮어쓴다')
             const backup = await backupServerSnapshot(
               projectId, late.updatedAt, backedUpServerAt,
               { loadRemote: loadSnapshotFromSupabase, saveVersion: saveVersionSynced, getVersion },

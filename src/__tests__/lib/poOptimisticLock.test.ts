@@ -25,6 +25,8 @@ type ServerTable = { id: string; label: string }
 let server: { updatedAt: string; tables: ServerTable[] } | null = null
 /** RPC 가 몇 번 불렸나 — 충돌 때 **아무것도 안 썼는지** 보는 데 쓴다. */
 let rpcCalls = 0
+/** true 면 RPC 가 터진다 (네트워크 끊김 흉내). */
+let rpcFails = false
 
 vi.mock('../../lib/supabase', () => {
   const makeBuilder = () => {
@@ -69,7 +71,14 @@ vi.mock('../../lib/supabase', () => {
       delete: () => builder,
       single: async () => run(),
       maybeSingle: async () => run(),
-      then: (res: (v: unknown) => unknown) => res({ data: [], error: null }),
+      // `.single()`/`.maybeSingle()` 없이 **그냥 await** 하는 질의도 있다
+      // (되돌리기 UPDATE 가 그렇다). PostgREST 는 그때도 실제로 실행하므로
+      // 여기서도 run() 을 불러야 한다 — 안 그러면 되돌리기가 "안 한 것" 이
+      // 되고, 테스트가 코드를 통과시킨다.
+      then: (res: (v: unknown) => unknown) => {
+        run()
+        return res({ data: [], error: null })
+      },
     }
     return builder
   }
@@ -78,6 +87,7 @@ vi.mock('../../lib/supabase', () => {
       from: () => makeBuilder(),
       rpc: async (_fn: string, args: { p_project_id: string; p_tables: Array<{ id: string; label: string }> }) => {
         rpcCalls++
+        if (rpcFails) return { error: { code: 'XX000', message: '네트워크' } }
         // RPC 는 목록을 그대로 반영하고 updated_at 을 다시 찍는다
         server = {
           updatedAt: toPg(new Date(Date.parse(server?.updatedAt ?? '2026-10-09T09:00:00.000Z') + 60_000).toISOString()),
@@ -103,6 +113,7 @@ const po = (...labels: string[]): PurchaseOrder => ({
 beforeEach(() => {
   server = { updatedAt: toPg('2026-10-09T09:00:00.000Z'), tables: [{ id: 't0', label: '벽체' }] }
   rpcCalls = 0
+  rpcFails = false
 })
 
 describe('syncPurchaseOrder — optimistic lock', () => {
@@ -141,6 +152,33 @@ describe('syncPurchaseOrder — optimistic lock', () => {
     expect(server!.tables.map(t => t.label)).toEqual(afterOther)   // 서버 그대로
     // 호출부가 다시 맞출 수 있게 지금 서버 값을 알려준다
     expect(r.serverUpdatedAt).toBe(server!.updatedAt)
+  })
+
+  it('집어놓고 못 쓰면 **시각을 되돌린다**', async () => {
+    // 권리를 집을 때 updated_at 을 앞으로 찍는다. 그 뒤 저장이 실패하면
+    // **내용은 그대로인데 시각만 전진한** 상태가 남고, 두 가지가 깨진다 —
+    //   1. 다음 시도가 제 claim 을 "다른 기기 충돌" 로 오인해 영영 멈춘다
+    //   2. 그 사이 새로고침하면 안 바뀐 서버가 더 최신으로 보여 로컬을 덮는다
+    const base = server!.updatedAt
+    const tablesBefore = server!.tables.map(t => t.label)
+
+    rpcFails = true
+    await expect(syncPurchaseOrder(po('벽체', '천장'), base)).rejects.toThrow()
+
+    expect(server!.updatedAt).toBe(base)
+    expect(server!.tables.map(t => t.label)).toEqual(tablesBefore)
+  })
+
+  it('되돌린 뒤 같은 기준값으로 다시 쓰면 통과한다', async () => {
+    // 되돌리기가 제대로 안 되면 여기서 conflict 가 나면서 영구 정지한다.
+    const base = server!.updatedAt
+    rpcFails = true
+    await expect(syncPurchaseOrder(po('벽체'), base)).rejects.toThrow()
+
+    rpcFails = false
+    const r = await syncPurchaseOrder(po('벽체', '천장'), base)
+    expect(r.kind).toBe('ok')
+    expect(server!.tables.map(t => t.label)).toEqual(['벽체', '천장'])
   })
 
   it('기준값을 안 주면 옛 동작 — 조건 없이 쓴다', async () => {

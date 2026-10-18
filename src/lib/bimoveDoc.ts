@@ -67,11 +67,15 @@ export interface BimoveDocument {
   /**
    * 어디서 왔는지.
    *
-   * `at` 만으로는 **이 이전본이 최신인지 알 수 없다.** 옮긴 뒤에 사용자가
-   * 더 편집했으면 낡은 것이다. 그래서 원본의 지문(`sourceHash`)과 도형 수를
-   * 같이 남긴다 — 읽는 쪽이 지금 스냅샷과 견줘 "다시 옮겨야 하나" 를 판단한다.
+   * 한때 원본의 지문(`sourceHash`)도 같이 남겼다. 캐시가 낡았는지 보려던
+   * 것인데, **지문이 props 의 키 개수만 봐서** 벽 길이나 pathData 처럼 값만
+   * 바뀌는 편집을 못 잡았다 — 낡은 캐시를 최신으로 내줬다는 뜻이다.
+   *
+   * 제대로 고치려면 수 MB 짜리 문자열을 전부 훑어야 하는데, 그건 캐시가
+   * 아껴주는 변환보다 비싸다. 그래서 **캐시째로 없앴다** (bimoveDocStore 주석).
+   * 틀린 값을 남겨두면 언젠가 누가 믿는다.
    */
-  source: { from: string; at: number; sourceHash: string; shapeCount: number }
+  source: { from: string; at: number; shapeCount: number }
   /**
    * 옮기다 **못 읽은 레코드** 수. 0 이 아니면 유실이다.
    *
@@ -97,45 +101,6 @@ function num(v: unknown, fallback = 0): number {
 
 function str(v: unknown, fallback = ''): string {
   return typeof v === 'string' ? v : fallback
-}
-
-/**
- * 레코드 맵의 지문.
- *
- * 암호학적일 필요가 없다 — "같은가 달라졌나" 만 가리면 된다. 전체를
- * JSON 으로 만들면 수십 MB 를 훑으므로, **키와 각 레코드의 바뀜 표시**만
- * 본다 (tldraw 는 레코드를 고칠 때마다 새 객체를 만들지만 그걸 믿을 수는
- * 없어서, 도형은 좌표·인덱스까지 섞는다).
- */
-function fingerprint(store: Record<string, unknown>): string {
-  let h = 2166136261 >>> 0
-  const push = (sv: string) => {
-    for (let i = 0; i < sv.length; i++) {
-      h ^= sv.charCodeAt(i)
-      h = Math.imul(h, 16777619) >>> 0
-    }
-  }
-  for (const key of Object.keys(store).sort()) {
-    push(key)
-    const r = store[key]
-    if (isRecord(r)) {
-      // 바뀌면 달라지는 것들만 — 전체 직렬화는 큰 도면에서 너무 비싸다
-      push(String(r.x) + ',' + String(r.y) + ',' + String(r.rotation) + ',' + String(r.index))
-      if (isRecord(r.props)) push(String(Object.keys(r.props).length))
-    }
-  }
-  return h.toString(16)
-}
-
-/** 스냅샷의 지문 — 이전본이 낡았는지 견주는 데 쓴다. */
-export function snapshotFingerprint(snapshot: unknown): string {
-  const store = storeOf(snapshot)
-  return store ? fingerprint(store) : ''
-}
-
-/** 이 이전본이 지금 스냅샷과 맞나. 다르면 다시 옮겨야 한다. */
-export function isUpToDate(doc: BimoveDocument, snapshot: unknown): boolean {
-  return !!doc.source.sourceHash && doc.source.sourceHash === snapshotFingerprint(snapshot)
 }
 
 /**
@@ -169,7 +134,7 @@ export function fromTldrawSnapshot(snapshot: unknown): BimoveDocument {
   if (!store) {
     return {
       version: BIMOVE_DOC_VERSION, pages, shapes, records,
-      source: { from: 'tldraw', at: Date.now(), sourceHash: '', shapeCount: 0 }, skipped: 0,
+      source: { from: 'tldraw', at: Date.now(), shapeCount: 0 }, skipped: 0,
     }
   }
 
@@ -229,7 +194,6 @@ export function fromTldrawSnapshot(snapshot: unknown): BimoveDocument {
     source: {
       from: 'tldraw',
       at: Date.now(),
-      sourceHash: fingerprint(store),
       shapeCount: shapes.length,
     },
     skipped,

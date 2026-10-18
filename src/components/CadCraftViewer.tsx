@@ -7,6 +7,7 @@
 // 주소에 `#cadcraft` 를 붙이면 열린다. 그 밖에는 아무 데서도 안 불린다.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useAuth } from '../context/AuthContext'
 import { openDxf, openBimoveDoc, type CadDoc } from '../lib/cadcraft'
 import { pickCadFile, dwgToDxfBytes } from '../lib/dxf'
 import { checkCadSize } from '../lib/importLimits'
@@ -47,10 +48,19 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
    * 도면" 과 "해치를 못 그린 도면" 이 구분되지 않는다.
    */
   const [notes, setNotes] = useState<string[]>([])
-  /** 이 기기에 저장된 프로젝트 목록 (저장본을 엔진으로 열어보는 용도) */
-  const [projects] = useState(() => {
-    try { return getProjects() } catch { return [] }
-  })
+  /**
+   * 이 기기에 저장된 프로젝트 목록 (저장본을 엔진으로 열어보는 용도).
+   *
+   * **로그인이 끝난 뒤에 다시 읽는다.** 이 화면은 `#cadcraft` 로 바로 들어오면
+   * 인증 로딩보다 먼저 그려진다. 그때는 사용자 스코프가 아직 null 이라
+   * `getProjects()` 가 **로그인 전 칸**을 보고 빈 목록을 준다. 한 번만 읽으면
+   * 로그인이 끝나도 영영 비어 있다.
+   */
+  const { user } = useAuth()
+  const [projects, setProjects] = useState<ReturnType<typeof getProjects>>([])
+  useEffect(() => {
+    try { setProjects(getProjects()) } catch { setProjects([]) }
+  }, [user?.id])
   /** 저장본으로 열었을 때의 페이지들. DXF 로 열면 빈 배열이라 선택기가 안 뜬다. */
   const [pages, setPages] = useState<Array<{ id: string; name: string }>>([])
   const [pageId, setPageId] = useState('')
@@ -166,10 +176,7 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
       const doc = await openBimoveDoc(r.doc)
       adopt(doc)
       setOpened({ id: projectId, name })
-      setStatus(
-        `${name} · ${counts(doc)} · 페이지 ${doc.pageIds().length}개` +
-        ` (${r.from === 'cache' ? '캐시' : '변환'})`,
-      )
+      setStatus(`${name} · ${counts(doc)} · 페이지 ${doc.pageIds().length}개`)
     } catch (e) {
       setStatus(`실패: ${e instanceof Error ? e.message : String(e)}`)
       console.error('[cadcraft]', e)
