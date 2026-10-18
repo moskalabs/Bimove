@@ -278,13 +278,18 @@ function WallComponent({ shape }: { shape: WallShape }) {
 
   // DXF lineweight → strokeWidth (0.01mm → screen px)
   const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
-  const strokeW = dxfLw > 0 ? Math.max(0.5, Math.min(dxfLw * 0.04, 6)) : 1
+  // 0.8px. 1px 이면 가는 벽에서 윤곽이 속을 다 먹는다.
+  const strokeW = dxfLw > 0 ? Math.max(0.5, Math.min(dxfLw * 0.04, 6)) : 0.8
 
   // Grayscale 모드: 패턴 OFF, 흑백 선
   // DXF 색상이 있으면 fill/stroke 대신 사용 (BUG 8)
   const dxfColorRaw = shape.meta?.dxfColor as string | undefined
   const dxfColor = dxfColorRaw && isNearWhite(dxfColorRaw) ? '#333' : dxfColorRaw
-  const rawFill = (shape.meta?.fill as string) ?? dxfColor ?? '#555'
+  // 기본 채움은 **흰색**이다. 전엔 '#555' (진회색) 이라 0.10m 짜리 벽도
+  // 시커먼 막대로 보였다 — 한이 "너무 두껍게 나온다" 고 한 게 이거다.
+  // 평면도에서 벽은 **가는 윤곽선 두 줄 + 흰 속**이 맞다 (경쟁 제품도 그렇다).
+  // meta.fill 을 직접 준 벽과 패턴이 걸린 벽은 그대로 둔다.
+  const rawFill = (shape.meta?.fill as string) ?? dxfColor ?? '#fff'
   const rawStroke = (shape.meta?.stroke as string) ?? dxfColor ?? '#222'
   const fill = isSelected ? '#e8f0fe' : (grayscale ? '#f5f5f5' : rawFill)
   const stroke = isSelected ? '#1a73e8' : (grayscale ? '#333' : rawStroke)
@@ -295,7 +300,13 @@ function WallComponent({ shape }: { shape: WallShape }) {
   const fillAttr = patKey ? `url(#${patKey})` : fill
 
   if (len < 4 || !effectiveShowDim) {
-    return <SVGContainer>{patternDef}<path d={d} fill={fillAttr} stroke={stroke} strokeWidth={strokeW} /></SVGContainer>
+    return (
+      <SVGContainer>
+        {patternDef}
+        <path d={d} fill={fillAttr} stroke={stroke} strokeWidth={strokeW}
+          style={{ strokeWidth: screenStrokeWidth(strokeW) }} />
+      </SVGContainer>
+    )
   }
 
   const nx = -y2 / len, ny = x2 / len
@@ -315,15 +326,16 @@ function WallComponent({ shape }: { shape: WallShape }) {
   return (
     <SVGContainer>
       {patternDef}
-      <path d={d} fill={fillAttr} stroke={stroke} strokeWidth={strokeW} />
+      <path d={d} fill={fillAttr} stroke={stroke} strokeWidth={strokeW}
+        style={{ strokeWidth: screenStrokeWidth(strokeW) }} />
 
       {effectiveShowDim && (
         <>
-          <line x1={d1.x} y1={d1.y} x2={d2.x} y2={d2.y} stroke="#1a73e8" strokeWidth={0.8} />
-          <line x1={nx * (thickness / 2)} y1={ny * (thickness / 2)} x2={d1.x + nx * ex} y2={d1.y + ny * ex} stroke="#1a73e8" strokeWidth={0.8} />
-          <line x1={x2 + nx * (thickness / 2)} y1={y2 + ny * (thickness / 2)} x2={d2.x + nx * ex} y2={d2.y + ny * ex} stroke="#1a73e8" strokeWidth={0.8} />
-          <path d={arrow1} stroke="#1a73e8" strokeWidth={0.8} fill="none" />
-          <path d={arrow2} stroke="#1a73e8" strokeWidth={0.8} fill="none" />
+          <line x1={d1.x} y1={d1.y} x2={d2.x} y2={d2.y} stroke="#1a73e8" strokeWidth={0.8} style={{ strokeWidth: screenStrokeWidth(0.8) }} />
+          <line x1={nx * (thickness / 2)} y1={ny * (thickness / 2)} x2={d1.x + nx * ex} y2={d1.y + ny * ex} stroke="#1a73e8" strokeWidth={0.8} style={{ strokeWidth: screenStrokeWidth(0.8) }} />
+          <line x1={x2 + nx * (thickness / 2)} y1={y2 + ny * (thickness / 2)} x2={d2.x + nx * ex} y2={d2.y + ny * ex} stroke="#1a73e8" strokeWidth={0.8} style={{ strokeWidth: screenStrokeWidth(0.8) }} />
+          <path d={arrow1} stroke="#1a73e8" strokeWidth={0.8} fill="none" style={{ strokeWidth: screenStrokeWidth(0.8) }} />
+          <path d={arrow2} stroke="#1a73e8" strokeWidth={0.8} fill="none" style={{ strokeWidth: screenStrokeWidth(0.8) }} />
           <text
             x={mid.x}
             y={mid.y}
