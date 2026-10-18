@@ -16,6 +16,16 @@ import { loadDocument } from '../lib/bimoveDocStore'
 /** 캔버스 배경. 엔진이 이 색을 보고 묻히는 잉크를 끌어낸다. */
 const BG = 0xFFFFFF
 
+/**
+ * 상태줄에 띄울 개수.
+ *
+ * 해치 수를 **일부러 늘 띄운다.** 0 이면 "해치가 없는 도면" 이라는 뜻인데,
+ * 안 띄우면 "해치를 못 그린 것" 과 구분이 안 된다.
+ */
+const counts = (doc: CadDoc) =>
+  `선 ${doc.lineCount().toLocaleString()}개 / 글자 ${doc.textCount().toLocaleString()}개` +
+  ` / 해치 ${doc.hatchCount().toLocaleString()}개`
+
 export function CadCraftViewer({ onClose }: { onClose: () => void }) {
   const cvRef = useRef<HTMLCanvasElement | null>(null)
   const docRef = useRef<CadDoc | null>(null)
@@ -157,8 +167,8 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
       adopt(doc)
       setOpened({ id: projectId, name })
       setStatus(
-        `${name} · 선 ${doc.lineCount().toLocaleString()}개 / 글자 ${doc.textCount().toLocaleString()}개` +
-        ` · 페이지 ${doc.pageIds().length}개 (${r.from === 'cache' ? '캐시' : '변환'})`,
+        `${name} · ${counts(doc)} · 페이지 ${doc.pageIds().length}개` +
+        ` (${r.from === 'cache' ? '캐시' : '변환'})`,
       )
     } catch (e) {
       setStatus(`실패: ${e instanceof Error ? e.message : String(e)}`)
@@ -176,7 +186,7 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
       if (r.kind === 'fail') { setStatus(`못 읽었다: ${r.reason}`); return }
       const doc = await openBimoveDoc(r.doc, pageId)
       adopt(doc)
-      setStatus(`${name} · 선 ${doc.lineCount().toLocaleString()}개 / 글자 ${doc.textCount().toLocaleString()}개`)
+      setStatus(`${name} · ${counts(doc)}`)
     } finally {
       setBusy(false)
     }

@@ -29,6 +29,7 @@ export interface CadDoc {
   notes(): string[]
   lineCount(): number
   textCount(): number
+  hatchCount(): number
   revision(): number
   exec(id: string, paramsJson: string): string
   buildFrame(layout: string, tolerance: number): CadFrame
