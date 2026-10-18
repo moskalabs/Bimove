@@ -1,11 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2/capability.json",
   "identifier": "default",
-  "description": "Default permissions for bimova desktop app",
+  "description": "bimova 데스크톱 기본 권한. dialog:allow-open / dialog:allow-save 를 뺐다 — 다이얼로그를 Rust 쪽(open_project_file / save_project_file)으로 옮겨서 렌더러가 직접 열 일이 없다. 권한을 남겨두면 주입된 스크립트가 다이얼로그를 띄울 수 있고, 플러그인의 Rust API 는 이 권한과 무관하게 돈다.",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "dialog:allow-open",
-    "dialog:allow-save"
+    "core:default"
   ]
 }

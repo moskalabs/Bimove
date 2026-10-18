@@ -1,5 +1,5 @@
 import { AssetRecordType, createShapeId, type Editor } from 'tldraw'
-import { isDesktop, openFileDialog, saveFileDialog, readTextFile, writeTextFile } from './tauri'
+import { isDesktop, openProjectFile, saveProjectFile } from './tauri'
 import { checkImageSize } from './importLimits'
 
 // ---- project file save / load ----
@@ -9,9 +9,9 @@ export async function saveProject(editor: Editor, filename = 'untitled') {
   const json = JSON.stringify(snapshot, null, 2)
 
   if (isDesktop()) {
-    const path = await saveFileDialog(`${filename}.bimova`)
-    if (!path) return
-    await writeTextFile(path, json)
+    // 경로는 Rust 쪽 다이얼로그가 고르고 거기서 바로 쓴다 — 우리가 경로를
+    // 넘기지 않는다 (tauri.ts 주석 참고).
+    await saveProjectFile(`${filename}.bimova`, json)
   } else {
     const blob = new Blob([json], { type: 'application/json' })
     const a = document.createElement('a')
@@ -24,12 +24,10 @@ export async function saveProject(editor: Editor, filename = 'untitled') {
 
 export async function openProject(editor: Editor) {
   if (isDesktop()) {
-    const path = await openFileDialog([{ name: 'bimova 도면', extensions: ['bimova', 'json'] }])
-    if (!path) return
     try {
-      const text = await readTextFile(path)
-      const snapshot = JSON.parse(text)
-      editor.loadSnapshot(snapshot)
+      const opened = await openProjectFile()
+      if (!opened) return          // 취소는 에러가 아니다
+      editor.loadSnapshot(JSON.parse(opened.content))
     } catch {
       alert('파일을 읽을 수 없습니다.')
     }
