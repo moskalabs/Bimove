@@ -609,12 +609,23 @@ function SpecEditModal({ item, initialVariant = 0, onSave, onClose }: {
 // ── 자재 상세 뷰 ──
 
 function MaterialDetail({
-  item, onUpdate,
+  item, onUpdate, activeTab, setActiveTab,
 }: {
   item: FinishingItem
   onUpdate: (item: FinishingItem) => void
+  /**
+   * 보고 있는 종류. **부모가 들고 있다.**
+   *
+   * 전엔 이 컴포넌트 안의 state 였다. 그런데 자재를 바꿔도 컴포넌트가 재사용돼서
+   * 인덱스가 남았다 — 종류 4개짜리에서 3번을 보다가 종류 1개짜리 자재로 가면
+   * 화면은 첫 종류를 보여주는데 activeTab 은 3이고, 그 상태로 물량을 적으면
+   * `updateZones` 가 **없는 인덱스**를 고쳐서 입력이 조용히 사라진다.
+   *
+   * 올려 둔 덕에 "재질 적용" 이벤트도 같은 값을 본다 (전엔 늘 0번에 넣었다).
+   */
+  activeTab: number
+  setActiveTab: (i: number) => void
 }) {
-  const [activeTab, setActiveTab] = useState(0)
   const [showSpecEdit, setShowSpecEdit] = useState(false)
   const variant = item.variants[activeTab] ?? item.variants[0]
   if (!variant) return null
@@ -704,6 +715,16 @@ export function FinishingTab() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(
     data.categories[0]?.items[0]?.id ?? null
   )
+  /**
+   * 보고 있는 종류(variant) 번호.
+   *
+   * 상세 뷰 안이 아니라 **여기** 둔다. 상세 뷰 안의 state 로 두면
+   * - 자재를 바꿔도 React 가 컴포넌트를 재사용해서 번호가 남고,
+   * - 캔버스의 "재질 적용" 핸들러는 그 번호를 볼 수 없어 늘 0번에 넣었다.
+   */
+  const [activeVariant, setActiveVariant] = useState(0)
+  // 자재를 바꾸면 첫 종류부터 본다
+  useEffect(() => { setActiveVariant(0) }, [selectedItemId])
 
   // 자동 저장
   useEffect(() => {
@@ -745,9 +766,11 @@ export function FinishingTab() {
           ...cat,
           items: cat.items.map(item => {
             if (item.id !== selectedItemId) return item
-            // 첫 번째 variant의 zones에 추가
+            // **보고 있는 종류**에 넣는다. 전엔 늘 0번이라, 방수 탭을 보며
+            // 재질을 적용해도 일반 쪽에 쌓였다.
+            const at = Math.min(activeVariant, Math.max(item.variants.length - 1, 0))
             const variants = item.variants.map((v, i) =>
-              i === 0 ? { ...v, zones: [...v.zones, ...newZones] } : v
+              i === at ? { ...v, zones: [...v.zones, ...newZones] } : v
             )
             return { ...item, variants }
           }),
@@ -756,7 +779,7 @@ export function FinishingTab() {
     }
     window.addEventListener('bimova:material-applied', handler)
     return () => window.removeEventListener('bimova:material-applied', handler)
-  }, [editor, selectedItemId])
+  }, [editor, selectedItemId, activeVariant])
 
   const toggleCategory = useCallback((catKey: string) => {
     setData(prev => ({
@@ -815,7 +838,12 @@ export function FinishingTab() {
 
       <div className="ft-detail-wrap">
         {selectedItem ? (
-          <MaterialDetail item={selectedItem} onUpdate={updateItem} />
+          <MaterialDetail
+            item={selectedItem}
+            onUpdate={updateItem}
+            activeTab={Math.min(activeVariant, Math.max(selectedItem.variants.length - 1, 0))}
+            setActiveTab={setActiveVariant}
+          />
         ) : (
           <div className="ft-empty">좌측에서 마감재를 선택하세요</div>
         )}
