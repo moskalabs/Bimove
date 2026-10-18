@@ -9,7 +9,32 @@ type PageThumb = {
   name: string
   index: number
   svgHtml: string | null
+  /**
+   * 그림이 없을 때 **왜 없는지.**
+   *
+   * 전엔 무조건 "빈 페이지" 라고 썼다. 그런데 못 만든 이유가 넷이다 —
+   * 정말 비었거나, 도형이 한도를 넘었거나, SVG 가 너무 커서 버렸거나,
+   * 그리다 터졌거나. 넷을 같은 말로 덮으면 **내용이 있는 페이지가 빈 것처럼
+   * 보인다** (한이 "배치 2번 그림 안 나옴" 으로 집어낸 게 이거다).
+   */
+  why: string | null
 }
+
+/** 썸네일 하나를 만든 결과. 실패해도 **이유를 들고 온다.** */
+export type ThumbResult = { svg: string | null; why: string | null }
+
+/**
+ * 썸네일을 만들어 볼 도형 수 한도.
+ *
+ * 2000 이었다. 왜 2000 인지는 아무도 모르고, 넘으면 조용히 "빈 페이지" 가
+ * 됐다. 진짜 비용은 **개수가 아니라 만들어진 SVG 의 크기**다 — dxfgroup 은
+ * 하나가 수십 KB 짜리 path 를 들고 있고, 그게 그대로 DOM 에 들어간다.
+ * 그래서 개수는 넉넉히 두고 **바이트로 막는다.**
+ */
+const THUMB_MAX_SHAPES = 20000
+
+/** 만들어진 SVG 가 이보다 크면 버린다. DOM 에 넣으면 패널이 죽는다. */
+const THUMB_MAX_BYTES = 2_000_000
 
 /** SVG를 썸네일용으로 축소: width/height → 100%, viewBox 보장, foreignObject 제거 */
 export function prepareSvgForThumb(svgStr: string): string {
@@ -54,29 +79,43 @@ export function prepareSvgForThumb(svgStr: string): string {
  * 현재 페이지만 그려서, 임포트가 만든 레이아웃이 한 번 열어보기 전까지
  * 배치 패널에 "빈 페이지" 로 남아 있었다.
  */
-async function generateThumbForPage(
+export async function generateThumbForPage(
   editor: ReturnType<typeof useEditor>,
   pageId: TLPageId,
-): Promise<string | null> {
-  if (!editor) return null
+): Promise<ThumbResult> {
+  if (!editor) return { svg: null, why: null }
   const ids = [...editor.getPageShapeIds(pageId)]
-  if (ids.length === 0 || ids.length > 2000) return null
+  if (ids.length === 0) return { svg: null, why: null }   // 진짜 빈 페이지
+  if (ids.length > THUMB_MAX_SHAPES) {
+    return { svg: null, why: `도형 ${ids.length.toLocaleString()}개 · 미리보기 생략` }
+  }
   try {
     const result = await editor.getSvgString(ids, {
       padding: 16,
       background: true,
     })
-    if (result?.svg) {
-      return prepareSvgForThumb(result.svg)
+    if (!result?.svg) {
+      return { svg: null, why: `미리보기 실패 · 도형 ${ids.length.toLocaleString()}개` }
     }
+    if (result.svg.length > THUMB_MAX_BYTES) {
+      // 만들긴 했는데 DOM 에 넣을 수가 없다. 넣으면 패널이 멈춘다.
+      return {
+        svg: null,
+        why: `미리보기가 ${Math.round(result.svg.length / 1048576)}MB · 생략`,
+      }
+    }
+    return { svg: prepareSvgForThumb(result.svg), why: null }
   } catch (e) {
     console.warn('[thumb] fail:', e)
+    return {
+      svg: null,
+      why: `미리보기 실패 · ${e instanceof Error ? e.message : String(e)}`,
+    }
   }
-  return null
 }
 
-async function generateThumb(editor: ReturnType<typeof useEditor>): Promise<string | null> {
-  if (!editor) return null
+async function generateThumb(editor: ReturnType<typeof useEditor>): Promise<ThumbResult> {
+  if (!editor) return { svg: null, why: null }
   return generateThumbForPage(editor, editor.getCurrentPageId())
 }
 
@@ -84,7 +123,8 @@ export function LayoutPanel() {
   const editor = useEditor()
   const [pages, setPages] = useState<PageThumb[]>([])
   const [currentPageId, setCurrentPageId] = useState('')
-  const thumbCache = useRef<Map<string, string | null>>(new Map())
+  /** 페이지별 썸네일. 못 만들었으면 **이유**가 같이 들어 있다. */
+  const thumbCache = useRef<Map<string, ThumbResult>>(new Map())
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 재시도는 자기 자신을 다시 부른다. useCallback 안에서 refreshCurrentThumb 를
@@ -114,10 +154,14 @@ export function LayoutPanel() {
     if (!editor) return
     let changed = false
     for (const page of editor.getPages()) {
-      if (thumbCache.current.get(page.id)) continue
-      const svg = await generateThumbForPage(editor, page.id)
-      if (!svg) continue
-      thumbCache.current.set(page.id, svg)
+      // 그림이 있으면 넘어간다. **이유만 있는 것도 넘어간다** — 못 만드는
+      // 이유(도형 수·크기)는 다음에 불러도 그대로라, 다시 시도해봐야 같은
+      // 비용만 또 든다.
+      const had = thumbCache.current.get(page.id)
+      if (had?.svg || had?.why) continue
+      const r = await generateThumbForPage(editor, page.id)
+      if (!r.svg && !r.why) continue
+      thumbCache.current.set(page.id, r)
       changed = true
     }
     if (!changed) return
@@ -125,7 +169,8 @@ export function LayoutPanel() {
       id: p.id,
       name: p.name,
       index: i + 1,
-      svgHtml: thumbCache.current.get(p.id) ?? null,
+      svgHtml: thumbCache.current.get(p.id)?.svg ?? null,
+      why: thumbCache.current.get(p.id)?.why ?? null,
     })))
   }, [editor])
 
@@ -133,7 +178,7 @@ export function LayoutPanel() {
   const refreshCurrentThumb = useCallback(async () => {
     if (!editor) return
     const pageId = editor.getCurrentPageId()
-    const svgHtml = await generateThumb(editor)
+    const result = await generateThumb(editor)
 
     // generateThumb 는 await 를 탄다. 그 사이에 현재 페이지가 바뀌었으면 지금
     // 만든 그림은 pageId 의 것이 아니다 — 남의 그림을 그 페이지 칸에 넣는 꼴이다.
@@ -141,19 +186,23 @@ export function LayoutPanel() {
     // 썸네일이 엉뚱하거나 거의 빈 그림으로 남았다.
     if (editor.getCurrentPageId() !== pageId) return
 
-    thumbCache.current.set(pageId, svgHtml)
+    thumbCache.current.set(pageId, result)
 
     const allPages = editor.getPages()
     setPages(allPages.map((p, i) => ({
       id: p.id,
       name: p.name,
       index: i + 1,
-      svgHtml: thumbCache.current.get(p.id) ?? null,
+      svgHtml: thumbCache.current.get(p.id)?.svg ?? null,
+      why: thumbCache.current.get(p.id)?.why ?? null,
     })))
     setCurrentPageId(pageId)
 
-    // 썸네일 생성 실패 시 재시도
-    if (!svgHtml && editor.getCurrentPageShapes().length > 0) {
+    // 썸네일 생성 실패 시 재시도.
+    //
+    // **이유가 붙은 실패는 다시 안 한다.** 도형이 한도를 넘었거나 SVG 가 너무
+    // 큰 건 2초 뒤에도 그대로다 — 2초마다 수 MB 를 만들었다 버리게 된다.
+    if (!result.svg && !result.why && editor.getCurrentPageShapes().length > 0) {
       if (retryRef.current) clearTimeout(retryRef.current)
       retryRef.current = setTimeout(() => refreshRef.current(), 2000)
     }
@@ -173,7 +222,8 @@ export function LayoutPanel() {
       id: p.id,
       name: p.name,
       index: i + 1,
-      svgHtml: thumbCache.current.get(p.id) ?? null,
+      svgHtml: thumbCache.current.get(p.id)?.svg ?? null,
+      why: thumbCache.current.get(p.id)?.why ?? null,
     })))
   }, [editor])
 
@@ -229,8 +279,8 @@ export function LayoutPanel() {
 
   const switchPage = (pageId: string) => {
     if (!editor || pageId === currentPageId) return
-    generateThumb(editor).then(svg => {
-      thumbCache.current.set(currentPageId, svg)
+    generateThumb(editor).then(r => {
+      thumbCache.current.set(currentPageId, r)
       editor.setCurrentPage(pageId as never)
       focusPage(pageId)
     })
@@ -240,8 +290,8 @@ export function LayoutPanel() {
     if (!editor) return
     const num = editor.getPages().length + 1
     const newPageId = PageRecordType.createId()
-    generateThumb(editor).then(svg => {
-      thumbCache.current.set(editor.getCurrentPageId(), svg)
+    generateThumb(editor).then(r => {
+      thumbCache.current.set(editor.getCurrentPageId(), r)
       editor.createPage({ name: `Drawing ${num}`, id: newPageId })
       editor.setCurrentPage(newPageId)
     })
@@ -279,7 +329,10 @@ export function LayoutPanel() {
                   }}
                 />
               ) : (
-                <div className="layout-page-empty">빈 페이지</div>
+                // **"빈 페이지" 는 정말 빈 페이지일 때만.** 못 만든 거면
+                // 그렇다고 쓴다 — 안 그러면 내용이 있는 페이지가 빈 것처럼
+                // 보이고, 쓰는 사람은 도면이 날아간 줄 안다.
+                <div className="layout-page-empty">{p.why ?? '빈 페이지'}</div>
               )}
             </div>
             <div className="layout-page-label">{p.index} - {p.name}</div>
