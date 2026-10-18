@@ -7,9 +7,11 @@
 // 주소에 `#cadcraft` 를 붙이면 열린다. 그 밖에는 아무 데서도 안 불린다.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { openDxf, type CadDoc } from '../lib/cadcraft'
+import { openDxf, openBimoveDoc, type CadDoc } from '../lib/cadcraft'
 import { pickCadFile, dwgToDxfBytes } from '../lib/dxf'
 import { checkCadSize } from '../lib/importLimits'
+import { getProjects } from '../lib/projectStore'
+import { loadDocument } from '../lib/bimoveDocStore'
 
 /** 캔버스 배경. 엔진이 이 색을 보고 묻히는 잉크를 끌어낸다. */
 const BG = 0xFFFFFF
@@ -23,8 +25,27 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
 
   const [layouts, setLayouts] = useState<string[]>([])
   const [layout, setLayout] = useState('')
-  const [status, setStatus] = useState('도면 파일을 열어주세요')
+  const [status, setStatus] = useState('도면 파일을 열거나, 저장된 프로젝트를 골라주세요')
+  /**
+   * 프레임 시간/줌. **status 와 따로 둔다** — 한 칸에 같이 쓰면 팬 한 번에
+   * "선 12만개 / 글자 3천개" 가 지워져서, 정작 보려던 숫자가 안 보인다.
+   */
+  const [perf, setPerf] = useState('')
   const [busy, setBusy] = useState(false)
+  /**
+   * 엔진이 **안 그린 것**. 반드시 눈에 보이게 둔다 — 안 띄우면 "해치가 없는
+   * 도면" 과 "해치를 못 그린 도면" 이 구분되지 않는다.
+   */
+  const [notes, setNotes] = useState<string[]>([])
+  /** 이 기기에 저장된 프로젝트 목록 (저장본을 엔진으로 열어보는 용도) */
+  const [projects] = useState(() => {
+    try { return getProjects() } catch { return [] }
+  })
+  /** 저장본으로 열었을 때의 페이지들. DXF 로 열면 빈 배열이라 선택기가 안 뜬다. */
+  const [pages, setPages] = useState<Array<{ id: string; name: string }>>([])
+  const [pageId, setPageId] = useState('')
+  /** 지금 보고 있는 저장본. 페이지를 갈아탈 때 다시 읽어야 해서 들고 있는다. */
+  const [opened, setOpened] = useState<{ id: string; name: string } | null>(null)
 
   /** 한 장 그린다. WASM 이 픽셀을 주고 우리는 붙이기만 한다. */
   const render = useCallback(() => {
@@ -47,7 +68,7 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
     const clamped = new Uint8ClampedArray(px.buffer as ArrayBuffer, px.byteOffset, px.length)
     ctx?.putImageData(new ImageData(clamped, r.width(), r.height()), 0, 0)
     r.free()
-    setStatus(`${(performance.now() - t0).toFixed(0)}ms · 줌 ${cam.scale.toExponential(2)}`)
+    setPerf(`${(performance.now() - t0).toFixed(0)}ms · 줌 ${cam.scale.toExponential(2)}`)
   }, [layout])
 
   /** 도면 전체가 보이게 맞춘다. */
@@ -70,6 +91,68 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
     render()
   }, [render])
 
+  /**
+   * 새로 연 문서를 받아 화면에 앉힌다.
+   *
+   * **새 문서를 연 뒤에** 옛 것을 놓는다. 먼저 놓으면 여는 데 실패했을 때
+   * docRef 에 이미 해제된 WASM 객체가 남고, 그 다음 휠·리사이즈가 그걸
+   * 불러서 터진다.
+   */
+  const adopt = useCallback((doc: CadDoc): string[] => {
+    docRef.current?.free()
+    docRef.current = doc
+    const names = doc.layoutNames()
+    setLayouts(names)
+    setLayout('')
+    setNotes(doc.notes())
+    const ids = doc.pageIds(), pnames = doc.pageNames()
+    setPages(ids.map((id, i) => ({ id, name: pnames[i] ?? '' })))
+    setPageId(doc.pageId())
+    fit('')
+    return names
+  }, [fit])
+
+  /**
+   * 저장된 프로젝트를 엔진으로 연다.
+   *
+   * tldraw 를 걷어내는 길에서 "같은 도면을 더 잘 그리는가" 를 눈으로 보는
+   * 자리다. 기존 에디터는 그대로 두고 여기서 나란히 비교한다.
+   */
+  const openProject = useCallback(async (projectId: string, name: string) => {
+    setBusy(true)
+    setStatus(`${name} 읽는 중…`)
+    try {
+      const r = await loadDocument(projectId)
+      if (r.kind === 'fail') { setStatus(`못 읽었다: ${r.reason}`); return }
+      const doc = await openBimoveDoc(r.doc)
+      adopt(doc)
+      setOpened({ id: projectId, name })
+      setStatus(
+        `${name} · 선 ${doc.lineCount().toLocaleString()}개 / 글자 ${doc.textCount().toLocaleString()}개` +
+        ` · 페이지 ${doc.pageIds().length}개 (${r.from === 'cache' ? '캐시' : '변환'})`,
+      )
+    } catch (e) {
+      setStatus(`실패: ${e instanceof Error ? e.message : String(e)}`)
+      console.error('[cadcraft]', e)
+    } finally {
+      setBusy(false)
+    }
+  }, [adopt])
+
+  /** 같은 문서의 다른 페이지로 넘어간다 (모형/배치1/…). */
+  const switchPage = useCallback(async (projectId: string, name: string, pageId: string) => {
+    setBusy(true)
+    try {
+      const r = await loadDocument(projectId)
+      if (r.kind === 'fail') { setStatus(`못 읽었다: ${r.reason}`); return }
+      const doc = await openBimoveDoc(r.doc, pageId)
+      adopt(doc)
+      setStatus(`${name} · 선 ${doc.lineCount().toLocaleString()}개 / 글자 ${doc.textCount().toLocaleString()}개`)
+    } finally {
+      setBusy(false)
+    }
+  }, [adopt])
+
   const openFile = useCallback(async () => {
     const file = await pickCadFile()
     if (!file) return
@@ -88,12 +171,8 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
       // docRef 에 **이미 해제된** WASM 객체가 남고, 그 다음 휠·리사이즈가
       // 그걸 불러서 터진다.
       const doc = await openDxf(bytes)
-      docRef.current?.free()
-      docRef.current = doc
-      const names = doc.layoutNames()
-      setLayouts(names)
-      setLayout('')
-      fit('')
+      const names = adopt(doc)
+      setOpened(null)
       setStatus(`${file.name} · 탭 ${1 + names.length}개`)
     } catch (e) {
       setStatus(`실패: ${e instanceof Error ? e.message : String(e)}`)
@@ -101,7 +180,7 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
     } finally {
       setBusy(false)
     }
-  }, [fit])
+  }, [adopt])
 
   // 파일 선택 다이얼로그는 자동화할 수 없어서, 바이트를 직접 넣는 문을 둔다.
   // 손으로 확인할 때도 쓴다 — 콘솔에서 fetch 한 DXF 를 바로 띄울 수 있다.
@@ -109,12 +188,7 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
     setBusy(true)
     try {
       const doc = await openDxf(bytes)   // 성공한 뒤에 옛 것을 놓는다
-      docRef.current?.free()
-      docRef.current = doc
-      const names = doc.layoutNames()
-      setLayouts(names)
-      setLayout('')
-      fit('')
+      const names = adopt(doc)
       setStatus(`${label} · 탭 ${1 + names.length}개`)
       return { layouts: names }
     } catch (e) {
@@ -124,7 +198,7 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
     } finally {
       setBusy(false)
     }
-  }, [fit])
+  }, [adopt])
 
   useEffect(() => {
     ;(window as unknown as Record<string, unknown>).__cadcraftLoad = loadBytes
@@ -163,6 +237,32 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
       }}>
         <strong>CADCraft 엔진 (실험)</strong>
         <button onClick={openFile} disabled={busy}>도면 열기</button>
+        {projects.length > 0 && (
+          <label>저장된 도면{' '}
+            <select
+              defaultValue=""
+              disabled={busy}
+              onChange={e => {
+                const p = projects.find(x => x.id === e.target.value)
+                if (p) void openProject(p.id, p.name)
+              }}
+            >
+              <option value="">— 고르기 —</option>
+              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </label>
+        )}
+        {pages.length > 0 && (
+          <label>페이지{' '}
+            <select
+              value={pageId}
+              disabled={busy}
+              onChange={e => { if (opened) void switchPage(opened.id, opened.name, e.target.value) }}
+            >
+              {pages.map((p, i) => <option key={p.id} value={p.id}>{p.name || `페이지 ${i + 1}`}</option>)}
+            </select>
+          </label>
+        )}
         {layouts.length > 0 && (
           <label>공간{' '}
             <select value={layout} onChange={e => { setLayout(e.target.value); fit(e.target.value) }}>
@@ -172,8 +272,20 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
           </label>
         )}
         <span style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12, color: '#555' }}>{status}</span>
+        <span style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12, color: '#999' }}>{perf}</span>
         <button onClick={onClose} style={{ marginLeft: 'auto' }}>닫기</button>
       </div>
+      {/* 안 그린 것. **숨기지 않는다** — 안 띄우면 "해치가 없는 도면" 과
+          "해치를 못 그린 도면" 이 구분되지 않는다. */}
+      {notes.length > 0 && (
+        <div style={{
+          padding: '6px 12px', borderBottom: '1px solid #f0d8a0', background: '#fffbe9',
+          fontSize: 12, color: '#7a5c00', display: 'flex', gap: 10, flexWrap: 'wrap',
+        }}>
+          <strong>아직 안 그리는 것:</strong>
+          {notes.map((n, i) => <span key={i}>{n}</span>)}
+        </div>
+      )}
       <canvas
         ref={cvRef}
         onWheel={onWheel}

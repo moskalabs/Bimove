@@ -39,11 +39,11 @@ const out = join(root, 'public', 'cadcraft')
  * 커밋은 그대로 남으므로 같은 Bimove 커밋은 언제 빌드해도 같은 엔진을 받는다.
  */
 const PIN = {
-  commit: '7dbdaf5eb795e009848fd3f9e6a5bb5b42165666',
+  commit: 'cdb15535ec2b6ffd917273e3f4ae2819a843d6b3',
   sha256: {
-    'bimove_wasm.js':      '11e4e1dd3e35345351e3111129073ae85ca4b60d7571055563c5ddcb624795b2',
-    'bimove_wasm_bg.wasm': '0877e5128890d19fb488aaa91aad7a2d1cb773811b6d5097d8a702cb541cfd91',
-    'bimove_wasm.d.ts':    '76eaa9e394e5f7be9fab8a47eafe68adaf01a30f3c0c8da339fe598e93a680a2',
+    'bimove_wasm.js':        '7292ec9381380591f2117fd9aeb4586633b64083b0dae35380abbe5118c1d6c3',
+    'bimove_wasm_bg.wasm':   '304a93695cbda8ed9f5321c373bbdd7984664527f28826ae642bc21707152d44',
+    'bimove_wasm.d.ts':      'c68d049d492658059d02d656f536e5c928e0229fafa2b7e3cab98de4b5e02794',
   },
 }
 
@@ -147,7 +147,8 @@ async function printPin(commit) {
   for (const name of FILES) {
     const res = await fetch(rawUrl(commit, name))
     if (!res.ok) throw new Error(`${name} 을 못 받았다 (HTTP ${res.status})`)
-    lines.push(`    ${JSON.stringify(name).padEnd(24)} '${sha256(Buffer.from(await res.arrayBuffer()))}',`)
+    // 그대로 붙여넣을 수 있어야 한다 — 콜론을 빼먹으면 손으로 고치게 된다
+    lines.push(`    ${`'${name}':`.padEnd(24)} '${sha256(Buffer.from(await res.arrayBuffer()))}',`)
   }
   console.log(`const PIN = {\n  commit: '${commit}',\n  sha256: {\n${lines.join('\n')}\n  },\n}`)
 }

@@ -14,6 +14,21 @@ import { detectDxfEncoding, reverseDoubleEncodingIfNeeded } from './dxf'
 export interface CadDoc {
   free(): void
   layoutNames(): string[]
+  /** Bimove 문서로 열었을 때의 페이지 id 들. DXF 로 열었으면 빈 배열. */
+  pageIds(): string[]
+  /** 같은 차례의 페이지 이름들. */
+  pageNames(): string[]
+  /** 지금 보고 있는 페이지 id. */
+  pageId(): string
+  /**
+   * 옮기면서 **그리지 않은 것**. 비어 있으면 다 그렸다는 뜻이다.
+   *
+   * 이걸 화면에 안 띄우면 "해치가 없는 도면" 과 "해치를 못 그린 도면" 이
+   * 구분되지 않는다. 지금은 해치와 Bimove 고유 도형이 여기로 올라온다.
+   */
+  notes(): string[]
+  lineCount(): number
+  textCount(): number
   revision(): number
   exec(id: string, paramsJson: string): string
   buildFrame(layout: string, tolerance: number): CadFrame
@@ -53,7 +68,10 @@ export interface CadRaster {
 
 interface CadModule {
   default: (init: { module_or_path: string }) => Promise<unknown>
-  BimoveDoc: { openDxf(bytes: Uint8Array): CadDoc }
+  BimoveDoc: {
+    openDxf(bytes: Uint8Array): CadDoc
+    fromBimove(json: string, pageId: string): CadDoc
+  }
   registerFont(name: string, bytes: Uint8Array): void
   setFallbackFonts(list: string): void
 }
@@ -308,6 +326,22 @@ export function normalizeDxfBytes(bytes: Uint8Array): Uint8Array {
 export async function openDxf(bytes: Uint8Array): Promise<CadDoc> {
   const mod = await loadModule()
   return mod.BimoveDoc.openDxf(normalizeDxfBytes(bytes))
+}
+
+/**
+ * **저장된 도면**을 엔진으로 연다 (DXF 를 거치지 않는다).
+ *
+ * tldraw 를 걷어내는 길의 핵심이다. 지금 저장된 건 DXF 가 아니라 이미
+ * 평평해진 선분이라, DXF 로 다시 써서 읽히는 왕복은 색·레이어·글자 맞춤을
+ * 한 번 더 뭉갤 뿐이고 되돌릴 원본도 없다. 엔진 엔티티로 바로 넣는다.
+ *
+ * `pageId` 가 빈 문자열이면 첫 페이지. 연 뒤에 `doc.notes()` 를 **반드시
+ * 보여줘야 한다** — 해치와 Bimove 고유 도형(벽체·공간·치수…)은 아직 안 나오고,
+ * 그걸 안 알리면 "해치가 없는 도면" 과 구분이 안 된다.
+ */
+export async function openBimoveDoc(doc: unknown, pageId = ''): Promise<CadDoc> {
+  const mod = await loadModule()
+  return mod.BimoveDoc.fromBimove(JSON.stringify(doc), pageId)
 }
 
 /** 엔진이 떠 있는지 (테스트·진단용). */
