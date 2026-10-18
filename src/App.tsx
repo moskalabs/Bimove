@@ -43,7 +43,7 @@ import { CommentTool } from './tools/CommentTool'
 import { DimensionTool } from './tools/DimensionTool'
 import { EditorContext } from './context/EditorContext'
 import { ProjectContext, ProjectNameContext } from './context/ProjectContext'
-import { loadSnapshot, dropLegacySnapshot, saveThumbnail, touchProject, resolveSnapshot, renameProject, ensureProjectEntry, snapshotCandidates } from './lib/projectStore'
+import { loadSnapshot, dropLegacySnapshot, saveThumbnail, touchProject, resolveSnapshot, renameProject, ensureProjectEntry, snapshotCandidates, isLocalNewer } from './lib/projectStore'
 import { readRecordSnapshot, writeFullRecords, writeRecordDiff, type SnapshotLike } from './lib/snapshotRecords'
 import { createDebouncedSaver } from './lib/debouncedSave'
 import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, saveProjectVersion, renameProject as renameProjectOnServer, fetchProject } from './lib/supabaseSync'
@@ -200,6 +200,14 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
 
   // Supabase에서 로드 시 받아온 서버 타임스탬프 (충돌 방지용)
   const serverUpdatedAtRef = useRef<string | undefined>(undefined)
+  /**
+   * 열 때 서버를 **못 읽었나** (네트워크/권한/500).
+   *
+   * "서버가 비었다" 와 다르다. 못 읽었으면 기준 시각이 없는 채로 저장
+   * 루프가 돌고, 그러면 optimistic lock 없이 서버를 덮는다. 저장 루프가
+   * 이 깃발을 보고 첫 쓰기 전에 서버를 한 번 더 읽는다.
+   */
+  const serverReadFailedRef = useRef(false)
 
   /**
    * handleMount 가 window 에 건 'bimova:settings' 리스너.
@@ -239,13 +247,25 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
     // Supabase와 localStorage 중 더 최근 쪽을 쓴다 (resolveSnapshot 참고)
     ;(async () => {
       let server: { snapshot: object; updatedAt?: string } | null = null
+      serverReadFailedRef.current = false
       try {
         const result = await loadSnapshotFromSupabase(projectId)
         if (result) {
           server = { snapshot: result.snapshot as object, updatedAt: result.updatedAt }
           serverUpdatedAtRef.current = result.updatedAt
         }
-      } catch { /* Supabase 실패 */ }
+      } catch (err) {
+        // 전엔 통째로 삼켰다. 그러면 "서버에 아무것도 없다" 와 **"서버에
+        // 못 물어봤다"** 가 구분되지 않는다. 뒤쪽이면 이 기기 저장본으로
+        // 띄우게 되는데, 그 상태로 자동 저장이 돌면 기준 시각이 없어서
+        // optimistic lock 없이 **못 본 서버 내용을 그대로 덮는다.**
+        //
+        // 그래서 "못 물어봤다" 를 기억해 둔다 — 저장 루프가 첫 쓰기 전에
+        // 서버를 한 번 더 읽고, 서버가 더 최신이면 백업부터 뜬다.
+        serverReadFailedRef.current = true
+        console.warn('[load] 서버 도면을 읽지 못했다 — 이 기기 저장본으로 연다', err)
+        toast('서버에서 도면을 불러오지 못해 이 기기에 저장된 내용으로 열었습니다. 최신이 아닐 수 있습니다.', 'error')
+      }
       // 로컬 목록에 이 프로젝트를 등록한다. 프로젝트는 대시보드(서버)에서만
       // 만들어지므로 여기서 넣지 않으면 로컬 목록에 영영 안 들어가고,
       // touchProject()/isLocalNewer() 가 통째로 무력해진다.
@@ -540,6 +560,15 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
     let syncPaused = false                      // 충돌 백업 실패 → 서버 쓰기 중단
     let backedUpServerAt: string | undefined    // 같은 서버 버전을 반복 백업하지 않기
     /**
+     * 서버를 **못 읽고** 열었나 — 그러면 첫 쓰기 전에 한 번 더 읽어야 한다.
+     *
+     * 못 읽었으면 `lastServerUpdatedAt` 이 없다. 그 상태로 쓰면
+     * `saveProjectSnapshot` 이 `.eq('updated_at', …)` 조건 없이 UPDATE 를
+     * 날려서, 그 사이 다른 기기가 저장한 내용을 **충돌 감지도 백업도 없이**
+     * 덮는다. 사용자는 이 기기 저장본을 보고 있었으니 눈치챌 방법도 없다.
+     */
+    let needServerRead = serverUpdatedAtRef.current === undefined && serverReadFailedRef.current
+    /**
      * 지난 회차가 아직 안 끝났는지.
      *
      * setInterval 은 콜백이 async 여도 기다려주지 않는다. 큰 도면은 압축 +
@@ -569,6 +598,33 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
       let settle!: () => void
       syncInFlight = new Promise<void>(res => { settle = res })
       try {
+        if (needServerRead) {
+          // 열 때 서버를 못 읽었다. 기준 시각 없이 쓰면 조건 없는 UPDATE 가
+          // 되므로, 먼저 서버가 무엇을 들고 있는지 본다. 여기서 또 실패하면
+          // 쓰지 않고 물러난다 — 다음 틱에 다시 온다 (로컬 저장은 계속 돈다).
+          const late = await loadSnapshotFromSupabase(projectId)
+          needServerRead = false
+          lastServerUpdatedAt = late?.updatedAt
+          // 서버 쪽이 우리 로컬보다 최신이면, 지금 쓰는 건 **사용자가 본 적
+          // 없는 내용**을 덮는 일이다. 충돌과 같은 처리를 한다 — 버전으로
+          // 백업하고 알린다.
+          if (late && !isLocalNewer(projectId, late.updatedAt)) {
+            console.warn('[supabase-sync] 늦게 읽은 서버 쪽이 더 최신 — 백업 후 덮어쓴다')
+            const backup = await backupServerSnapshot(
+              projectId, late.updatedAt, backedUpServerAt,
+              { loadRemote: loadSnapshotFromSupabase, saveVersion: saveVersionSynced, getVersion },
+            )
+            if (backup === 'saved') {
+              backedUpServerAt = late.updatedAt
+              toast('서버에 더 최신 내용이 있어 이 화면 내용으로 덮어썼습니다. 서버에 있던 내용은 버전 기록에 백업했습니다.', 'error')
+            }
+            if (backup === 'failed') {
+              syncPaused = true
+              toast('서버에 더 최신 내용이 있지만 백업에 실패해 서버 저장을 멈췄습니다. 작업은 이 기기에 저장됩니다 — 새로고침해서 확인해주세요.', 'error')
+              return
+            }
+          }
+        }
         const result = await saveSnapshotToSupabase(projectId, snap, thumb, lastServerUpdatedAt)
         if (result.conflict) {
           // 다른 세션이 먼저 저장했다. 예전엔 경고 로그만 찍고 조용히 덮어썼다 —
@@ -587,7 +643,20 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
             toast('다른 기기의 변경과 충돌했지만 백업에 실패해 서버 저장을 멈췄습니다. 작업은 이 기기에 저장됩니다 — 새로고침해서 확인해주세요.', 'error')
             return
           }
-          const retry = await saveSnapshotToSupabase(projectId, snap, thumb)
+          // 다시 쓸 때도 **기준값을 들고 간다.** 전엔 기준 없이 보냈다 —
+          // 백업을 뜨는 사이(스냅샷 하나를 받고 버전으로 올리는 시간이다)에
+          // 세 번째 기기가 저장하면 그걸 백업 없이 덮어썼다. 조건을 달면
+          // 그 경우엔 0행이 되어 다시 충돌로 돌아온다.
+          const retry = await saveSnapshotToSupabase(projectId, snap, thumb, result.serverUpdatedAt)
+          if (retry.conflict) {
+            // 백업하는 사이에 또 누가 저장했다. 여기서 덮지 않고 물러난다 —
+            // serverDirty 를 다시 세워 두면 다음 틱이 **새 서버 버전을 백업한
+            // 뒤에** 같은 과정을 되풀이한다. 한 바퀴 늦어질 뿐 잃는 건 없다.
+            console.warn('[supabase-sync] 백업 중에 또 충돌 — 다음 틱에 다시 처리한다')
+            lastServerUpdatedAt = retry.serverUpdatedAt
+            serverDirty = true
+            return
+          }
           lastServerUpdatedAt = retry.serverUpdatedAt
           if (thumb) { sentThumbnail = thumb; if (pendingThumbnail === thumb) pendingThumbnail = undefined }
           if (backup === 'saved') {
@@ -641,7 +710,10 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
       // 어디에도 저장되지 않았고, 다시 들어오면 사라져 있었다.
       saver.flush()
 
-      const snap = serverDirty && !syncPaused ? buildFullSnapshot() : null
+      // `needServerRead` 면 기준 시각을 모른다 — 여기서 보내면 조건 없는
+      // UPDATE 가 되어 남의 저장을 백업도 없이 덮는다. 보내지 않는다.
+      // 로컬에는 남아 있고, 다음에 들어올 때 서버를 읽고 제대로 가린다.
+      const snap = serverDirty && !syncPaused && !needServerRead ? buildFullSnapshot() : null
       serverDirty = false
       if (snap) {
         const thumb = pendingThumbnail
@@ -953,6 +1025,30 @@ function AppContent() {
       initDarkAttr()
     }
   }, [user])
+
+  /**
+   * 계정이 바뀌면 **열려 있던 도면을 닫는다.**
+   *
+   * 전엔 `currentProject` 를 그대로 뒀다. 그러면 로그아웃하고 다른 계정으로
+   * 들어왔을 때 남의 도면이 화면에 남아 있고, 더 나쁘게는 그 에디터의 자동
+   * 저장 루프가 계속 돌아서 **새 계정의 로컬 저장 칸(u:<userId>:…)에 남의
+   * 도면을 쓴다.** 사무실에서 계정을 돌려 쓰는 데라면 금방 겹친다.
+   *
+   * 닫고 나서 주소의 `#project=` 는 다시 집어 든다 — 같은 기기에서 같은
+   * 도면을 보던 사람이 다시 로그인한 경우가 많고, 되살리는 길에 이미
+   * "이게 내 것인가" 를 서버에 물어보는 확인이 들어 있다. 남의 것이면
+   * 거기서 걸러져 주소까지 치워진다.
+   */
+  const lastUserIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    const id = user?.id ?? null
+    if (lastUserIdRef.current === id) return
+    const switched = lastUserIdRef.current !== null
+    lastUserIdRef.current = id
+    if (!switched) return      // 첫 로그인 — 닫을 게 없다
+    setCurrentProject(null)
+    setRestoreId(readProjectHash())
+  }, [user?.id])
 
   // 프로젝트 열기/닫기 시 브라우저 히스토리 동기화
   const openProject = (id: string, name: string) => {
