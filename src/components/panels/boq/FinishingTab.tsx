@@ -355,14 +355,25 @@ function TotalSection({ item, variant, onSpecEdit }: {
  * 않은 규격이면 장수를 건드리지 않는다** — 포장 수량은 제조사가 정하는 값이라
  * 비슷한 크기로 넘겨짚으면 수량이 조용히 틀어진다.
  */
-function SpecEditModal({ item, onSave, onClose }: {
+function SpecEditModal({ item, initialVariant = 0, onSave, onClose }: {
   item: FinishingItem
+  /** 패널에서 보고 있던 종류. 그걸 열어야 "지금 이걸 고친다" 가 맞는다. */
+  initialVariant?: number
   onSave: (patch: Partial<FinishingItem>) => void
   onClose: () => void
 }) {
   // 변형 여러 개를 연속으로 고치고 한 번에 적용할 수 있게 사본을 들고 있는다.
   const [variants, setVariants] = useState<MaterialVariant[]>(() => structuredClone(item.variants))
-  const [sel, setSel] = useState(0)
+  /**
+   * 어느 종류를 고치고 있나.
+   *
+   * 늘 0 으로 시작했다. 그래서 "방수 석고보드" 탭을 보다가 규격 수정을 열면
+   * **"일반 석고보드" 가 열렸고**, 거기서 고친 값이 엉뚱한 종류에 들어갔다.
+   * 화면은 그대로니 사용자는 "고쳐도 안 바뀐다" 로 본다 — 실제로는 안 보는
+   * 종류가 조용히 바뀌고 있었다. 규격이 틀리면 발주 수량이 틀린다.
+   */
+  const [sel, setSel] = useState(() =>
+    Math.min(Math.max(initialVariant, 0), Math.max(item.variants.length - 1, 0)))
   const [listOpen, setListOpen] = useState(false)
   const [lossRate, setLossRate] = useState(Math.round(item.lossRate * 100))
   const [unit, setUnit] = useState(item.unit)
@@ -677,6 +688,7 @@ function MaterialDetail({
       {showSpecEdit && (
         <SpecEditModal
           item={item}
+          initialVariant={activeTab}
           onSave={patch => onUpdate({ ...item, ...patch })}
           onClose={() => setShowSpecEdit(false)}
         />
