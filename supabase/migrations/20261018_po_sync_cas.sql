@@ -1,0 +1,162 @@
+-- ============================================================
+-- sync_purchase_order: 낙관적 잠금(CAS)을 **함수 안으로** 넣는다
+--
+-- 적용 방법: Supabase Dashboard > SQL Editor 에서 실행
+--
+-- ── 왜 ──
+--
+-- 클라이언트가 "권리를 집고(updated_at 을 앞으로 찍고) 그 다음 RPC 를 부르는"
+-- 식으로 낙관적 잠금을 했다. 두 번의 왕복이라 **원자적이지 않다.**
+--
+--   claim(UPDATE updated_at) → [여기서 끊기면] → sync_purchase_order(...)
+--
+-- 가운데서 끊기면 **내용은 그대로인데 시각만 전진한** 상태가 남는다. 그러면
+--   1. 다음 시도가 제 claim 을 "다른 기기 충돌" 로 오인해 영영 멈추고,
+--   2. 그 사이 새로고침하면 안 바뀐 서버가 더 최신으로 보여 로컬을 덮는다.
+--
+-- 클라이언트에 되돌리기(보상 동작)를 넣어 창을 좁혀 뒀지만, 그건 되돌리기
+-- 자체가 또 실패할 수 있다. 검사와 쓰기가 **한 트랜잭션** 안에 있어야 끝난다.
+--
+-- ── 무엇이 달라지나 ──
+--
+-- 인자 셋짜리를 **새로 만든다** (기존 둘짜리는 그대로 둔다). 배포 전 클라이언트가
+-- 돌고 있을 수 있어서, 있던 함수를 바꾸면 그쪽이 깨진다.
+--
+--   p_expected_updated_at NULL  → 검사 없이 쓴다 (발주서가 처음 올라갈 때)
+--   값이 있고 서버와 같다       → 쓴다
+--   값이 있고 서버와 다르다     → **아무것도 안 쓰고** P0409 로 올린다
+--
+-- 행을 FOR UPDATE 로 잡고 비교하므로, 같은 순간에 들어온 두 요청 중 하나는
+-- 반드시 기다렸다가 달라진 시각을 보고 충돌로 떨어진다.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.sync_purchase_order(
+  p_project_id uuid,
+  p_tables jsonb,
+  p_expected_updated_at timestamptz
+) RETURNS uuid AS $$
+DECLARE
+  v_po_id uuid;
+  v_cur timestamptz;
+  v_table jsonb;
+  v_item jsonb;
+  v_ex jsonb;
+  v_table_id uuid;
+  v_item_id uuid;
+BEGIN
+  -- 0. 소유권 검사. RLS 를 우회하는 함수이므로 여기서 직접 봐야 한다.
+  --    42501 = insufficient_privilege (PostgREST 가 403 으로 바꿔 보낸다)
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'sync_purchase_order: 로그인이 필요합니다'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.projects
+    WHERE id = p_project_id AND user_id = auth.uid()
+  ) THEN
+    RAISE EXCEPTION 'sync_purchase_order: 이 프로젝트에 대한 권한이 없습니다'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- 1. 낙관적 잠금. **쓰기 전에** 본다.
+  --
+  --    FOR UPDATE 로 행을 잡는다. 안 잡으면 두 요청이 같은 값을 읽고 둘 다
+  --    통과한 뒤 나중 것이 먼저 것을 덮는다 — 검사가 있으나 마나다.
+  --    행이 없으면(아직 발주서가 없으면) 검사할 것도 없다.
+  SELECT updated_at INTO v_cur
+  FROM purchase_orders
+  WHERE project_id = p_project_id
+  FOR UPDATE;
+
+  IF FOUND AND p_expected_updated_at IS NOT NULL
+     AND v_cur IS DISTINCT FROM p_expected_updated_at THEN
+    -- 아무것도 안 썼다. 예외를 내면 트랜잭션이 통째로 되돌아가므로
+    -- "반쯤 쓰인" 상태가 남을 수 없다.
+    RAISE EXCEPTION 'sync_purchase_order: 다른 기기가 먼저 저장했습니다 (서버 %, 기대 %)',
+      v_cur, p_expected_updated_at
+      USING ERRCODE = 'P0409';
+  END IF;
+
+  -- 2. purchase_order upsert
+  INSERT INTO purchase_orders (project_id, updated_at)
+  VALUES (p_project_id, now())
+  ON CONFLICT (project_id)
+  DO UPDATE SET updated_at = now()
+  RETURNING id INTO v_po_id;
+
+  -- 3. 기존 데이터 삭제 (CASCADE로 items/exclusions도 삭제)
+  DELETE FROM boq_tables WHERE purchase_order_id = v_po_id;
+
+  -- 4. 새 데이터 삽입
+  FOR v_table IN SELECT * FROM jsonb_array_elements(p_tables)
+  LOOP
+    INSERT INTO boq_tables (id, purchase_order_id, template_id, label, sort_order)
+    VALUES (
+      (v_table->>'id')::uuid,
+      v_po_id,
+      v_table->>'template_id',
+      v_table->>'label',
+      (v_table->>'sort_order')::int
+    )
+    RETURNING id INTO v_table_id;
+
+    FOR v_item IN SELECT * FROM jsonb_array_elements(COALESCE(v_table->'items', '[]'::jsonb))
+    LOOP
+      INSERT INTO boq_items (
+        id, boq_table_id, name, material,
+        width_mm, height_mm, item_width_mm, item_length_mm,
+        loss_rate, unit_price, unit,
+        calc_method, length_m, manual_qty,
+        sort_order
+      ) VALUES (
+        (v_item->>'id')::uuid,
+        v_table_id,
+        v_item->>'name',
+        v_item->>'material',
+        COALESCE((v_item->>'width_mm')::numeric, 0),
+        COALESCE((v_item->>'height_mm')::numeric, 0),
+        COALESCE((v_item->>'item_width_mm')::numeric, 0),
+        COALESCE((v_item->>'item_length_mm')::numeric, 0),
+        COALESCE((v_item->>'loss_rate')::numeric, 0),
+        COALESCE((v_item->>'unit_price')::numeric, 0),
+        COALESCE(v_item->>'unit', 'm²'),
+        COALESCE(v_item->>'calc_method', 'area'),
+        COALESCE((v_item->>'length_m')::numeric, 0),
+        COALESCE((v_item->>'manual_qty')::numeric, 0),
+        COALESCE((v_item->>'sort_order')::int, 0)
+      )
+      RETURNING id INTO v_item_id;
+
+      FOR v_ex IN SELECT * FROM jsonb_array_elements(COALESCE(v_item->'exclusions', '[]'::jsonb))
+      LOOP
+        INSERT INTO boq_exclusions (id, boq_item_id, type, label, shape_id, width_mm, height_mm)
+        VALUES (
+          (v_ex->>'id')::uuid,
+          v_item_id,
+          v_ex->>'type',
+          v_ex->>'label',
+          v_ex->>'shape_id',
+          COALESCE((v_ex->>'width_mm')::numeric, 0),
+          COALESCE((v_ex->>'height_mm')::numeric, 0)
+        );
+      END LOOP;
+    END LOOP;
+  END LOOP;
+
+  RETURN v_po_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- 둘짜리와 같은 권한. PUBLIC/anon 에 남아 있으면 auth.uid() 검사까지 가기 전에
+-- 이미 공격면이 열린다.
+REVOKE ALL ON FUNCTION public.sync_purchase_order(uuid, jsonb, timestamptz) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_purchase_order(uuid, jsonb, timestamptz) FROM anon;
+GRANT EXECUTE ON FUNCTION public.sync_purchase_order(uuid, jsonb, timestamptz) TO authenticated;
+
+-- ── 적용한 뒤 ──
+--
+-- 클라이언트(lib/supabaseSync.ts)는 셋짜리를 먼저 부르고, 없으면(PGRST202)
+-- 예전 길인 "집고 → 둘짜리" 로 떨어진다. 그래서 이 마이그레이션을 안 돌려도
+-- 동작은 하고, 돌리면 비원자성 창이 사라진다. 돌린 뒤에 클라이언트를 바꿀
+-- 필요는 없다.

@@ -142,6 +142,30 @@ async function syncViaRpc(po: PurchaseOrder): Promise<boolean> {
   throw new Error(`발주서 동기화 실패 (RPC): ${error.message}`)
 }
 
+/** CAS 가 걸린 함수가 "다른 기기가 먼저 썼다" 로 올리는 코드 (마이그레이션 참고). */
+const PO_CONFLICT_SQLSTATE = 'P0409'
+
+/**
+ * 낙관적 잠금을 **함수 안에서** 보는 RPC (인자 셋짜리).
+ *
+ * 검사와 쓰기가 한 트랜잭션이라, 클라이언트에서 "집고 → 쓰고" 하던 길의
+ * 비원자성이 사라진다. 아직 배포 안 된 환경이 있으므로 `null` 을 돌려
+ * 옛 길로 내려보낸다.
+ */
+async function syncViaCasRpc(
+  po: PurchaseOrder, expected: string,
+): Promise<'ok' | 'conflict' | null> {
+  const { error } = await supabase.rpc('sync_purchase_order', {
+    p_project_id: po.projectId,
+    p_tables: toRpcTables(po),
+    p_expected_updated_at: expected,
+  })
+  if (!error) return 'ok'
+  if (error.code === PO_CONFLICT_SQLSTATE) return 'conflict'
+  if (isMissingFunction(error)) return null       // 아직 안 돌린 환경
+  throw new Error(`발주서 동기화 실패 (RPC/CAS): ${error.message}`)
+}
+
 /**
  * "함수가 없다" 인지. PostgREST 는 스키마 캐시에 없는 함수를 PGRST202 로,
  * Postgres 는 undefined_function 을 42883 으로 보고한다.
@@ -339,6 +363,21 @@ export async function syncPurchaseOrder(
   po: PurchaseOrder,
   expectedUpdatedAt?: string,
 ): Promise<POSyncResult> {
+  // ── 먼저 **원자적인 길**을 본다 ──
+  //
+  // 검사와 쓰기가 한 트랜잭션 안에 있으면 아래의 "집고 → 쓰고" 가 가진
+  // 비원자성이 통째로 사라진다. 아직 마이그레이션을 안 돌린 환경에서는
+  // null 이 돌아오고, 그때만 옛 길로 간다.
+  if (expectedUpdatedAt) {
+    const cas = await syncViaCasRpc(po, expectedUpdatedAt)
+    if (cas === 'conflict') {
+      return { kind: 'conflict', serverUpdatedAt: await readPoUpdatedAt(po.projectId) }
+    }
+    if (cas === 'ok') {
+      return { kind: 'ok', serverUpdatedAt: await readPoUpdatedAt(po.projectId) }
+    }
+  }
+
   let claimed: string | undefined
   if (expectedUpdatedAt) {
     const claim = await claimPurchaseOrder(po.projectId, expectedUpdatedAt)

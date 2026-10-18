@@ -27,6 +27,13 @@ let server: { updatedAt: string; tables: ServerTable[] } | null = null
 let rpcCalls = 0
 /** true 면 RPC 가 터진다 (네트워크 끊김 흉내). */
 let rpcFails = false
+/**
+ * CAS 가 걸린 **인자 셋짜리** 함수가 배포돼 있나.
+ *
+ * false 면 PostgREST 가 PGRST202 로 "그런 함수 없다" 고 답한다 — 아직
+ * 마이그레이션을 안 돌린 환경이다. 그때만 옛 길(집고 → 둘짜리)로 간다.
+ */
+let casDeployed = true
 
 vi.mock('../../lib/supabase', () => {
   const makeBuilder = () => {
@@ -85,10 +92,30 @@ vi.mock('../../lib/supabase', () => {
   return {
     supabase: {
       from: () => makeBuilder(),
-      rpc: async (_fn: string, args: { p_project_id: string; p_tables: Array<{ id: string; label: string }> }) => {
+      rpc: async (
+        _fn: string,
+        args: {
+          p_project_id: string
+          p_tables: Array<{ id: string; label: string }>
+          p_expected_updated_at?: string
+        },
+      ) => {
+        const cas = 'p_expected_updated_at' in args
+        if (cas && !casDeployed) {
+          return { error: { code: 'PGRST202', message: 'could not find the function' } }
+        }
         rpcCalls++
         if (rpcFails) return { error: { code: 'XX000', message: '네트워크' } }
-        // RPC 는 목록을 그대로 반영하고 updated_at 을 다시 찍는다
+        // CAS: 기대값과 다르면 **아무것도 안 쓰고** P0409 로 올린다.
+        // (마이그레이션의 RAISE EXCEPTION … ERRCODE = 'P0409' 와 같은 동작)
+        if (
+          cas && server &&
+          args.p_expected_updated_at != null &&
+          Date.parse(server.updatedAt) !== Date.parse(args.p_expected_updated_at)
+        ) {
+          return { error: { code: 'P0409', message: '다른 기기가 먼저 저장했습니다' } }
+        }
+        // 목록을 그대로 반영하고 updated_at 을 다시 찍는다
         server = {
           updatedAt: toPg(new Date(Date.parse(server?.updatedAt ?? '2026-10-09T09:00:00.000Z') + 60_000).toISOString()),
           tables: args.p_tables.map(t => ({ id: t.id, label: t.label })),
@@ -114,6 +141,7 @@ beforeEach(() => {
   server = { updatedAt: toPg('2026-10-09T09:00:00.000Z'), tables: [{ id: 't0', label: '벽체' }] }
   rpcCalls = 0
   rpcFails = false
+  casDeployed = true
 })
 
 describe('syncPurchaseOrder — optimistic lock', () => {
@@ -145,11 +173,12 @@ describe('syncPurchaseOrder — optimistic lock', () => {
 
     // 우리는 아직 낡은 기준값을 들고 있다. 전엔 이 쓰기가 통과하면서
     // prune 이 '다른기기가만든표' 를 지웠다.
-    const callsBefore = rpcCalls
     const r = await syncPurchaseOrder(po('벽체'), stale)
     expect(r.kind).toBe('conflict')
-    expect(rpcCalls).toBe(callsBefore)                       // RPC 가 안 나갔다
-    expect(server!.tables.map(t => t.label)).toEqual(afterOther)   // 서버 그대로
+    // **서버가 그대로인가** 가 전부다. CAS 가 걸린 뒤로는 RPC 자체는 나가고
+    // 함수 안에서 거절하므로, 호출 횟수로 재면 안 된다 (한 번 그렇게 재다가
+    // CAS 를 붙이고 나서 이 테스트가 깨졌다 — 재는 자리가 틀렸던 것이다).
+    expect(server!.tables.map(t => t.label)).toEqual(afterOther)
     // 호출부가 다시 맞출 수 있게 지금 서버 값을 알려준다
     expect(r.serverUpdatedAt).toBe(server!.updatedAt)
   })
@@ -162,6 +191,7 @@ describe('syncPurchaseOrder — optimistic lock', () => {
     const base = server!.updatedAt
     const tablesBefore = server!.tables.map(t => t.label)
 
+    casDeployed = false   // 옛 길(집고 → 쓰고)에서만 되돌리기가 돈다
     rpcFails = true
     await expect(syncPurchaseOrder(po('벽체', '천장'), base)).rejects.toThrow()
 
@@ -172,6 +202,7 @@ describe('syncPurchaseOrder — optimistic lock', () => {
   it('되돌린 뒤 같은 기준값으로 다시 쓰면 통과한다', async () => {
     // 되돌리기가 제대로 안 되면 여기서 conflict 가 나면서 영구 정지한다.
     const base = server!.updatedAt
+    casDeployed = false
     rpcFails = true
     await expect(syncPurchaseOrder(po('벽체'), base)).rejects.toThrow()
 
@@ -179,6 +210,25 @@ describe('syncPurchaseOrder — optimistic lock', () => {
     const r = await syncPurchaseOrder(po('벽체', '천장'), base)
     expect(r.kind).toBe('ok')
     expect(server!.tables.map(t => t.label)).toEqual(['벽체', '천장'])
+  })
+
+  it('CAS 가 배포돼 있으면 집는 단계 없이 한 번에 쓴다', async () => {
+    // 검사와 쓰기가 한 트랜잭션이라 "집고 → 끊김" 이 생길 수 없다.
+    const base = server!.updatedAt
+    const r = await syncPurchaseOrder(po('벽체', '천장'), base)
+    expect(r.kind).toBe('ok')
+    expect(server!.tables.map(t => t.label)).toEqual(['벽체', '천장'])
+  })
+
+  it('CAS 가 없는 환경에서도 똑같이 동작한다', async () => {
+    // 마이그레이션을 안 돌려도 돌아가야 한다 — 안 그러면 배포 순서가 묶인다.
+    casDeployed = false
+    const base = server!.updatedAt
+    expect((await syncPurchaseOrder(po('벽체', '천장'), base)).kind).toBe('ok')
+    expect(server!.tables.map(t => t.label)).toEqual(['벽체', '천장'])
+
+    // 낡은 기준값이면 여기서도 막힌다
+    expect((await syncPurchaseOrder(po('벽체'), base)).kind).toBe('conflict')
   })
 
   it('기준값을 안 주면 옛 동작 — 조건 없이 쓴다', async () => {
