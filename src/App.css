@@ -4068,6 +4068,12 @@ html[data-dark="true"] .dash-empty-sub { color: #555; }
 .ft-detail-wrap {
   flex: 1;
   min-width: 0;
+  /* flex 자식은 기본이 min-height:auto 라 **내용보다 작아지지 않는다.** 그래서
+     마감재 내용이 길어지면 이 박스가 .ft-container 밖으로 자라고, 거기 걸린
+     overflow:hidden 이 바닥을 잘라낸다 — 아래 고정해 둔 "캔버스에 산출표 넣기"
+     버튼이 그렇게 사라져서 아예 누를 수가 없었다.
+     안쪽 .ft-tables-scroll 이 스크롤을 맡으려면 조상이 먼저 높이를 지켜야 한다. */
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
