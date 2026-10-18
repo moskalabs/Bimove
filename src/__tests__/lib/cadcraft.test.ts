@@ -61,6 +61,46 @@ describe('normalizeDxfBytes', () => {
   it('빈 입력', () => {
     expect(normalizeDxfBytes(new Uint8Array(0)).length).toBe(0)
   })
+
+  // ── 큰 파일에서 사본을 만들지 않는다 ──
+  //
+  // 150MB DXF 를 디코딩하면 문자열만 300MB(한글 2바이트/자) 고, replace 와
+  // 인코딩이 또 하나씩이다. 그런데 고칠 게 없는 파일이 대부분이다.
+  // "내용이 같다" 로는 이걸 못 지킨다 — 같은 바이트를 **그대로** 돌려주는지
+  // 신원(===)으로 본다.
+
+  it('멀쩡한 파일은 원본 배열을 그대로 돌려준다 — 사본 0', () => {
+    const src = bytes('  9\n$DWGCODEPAGE\n  3\nUTF8\n  1\n거실 바닥\n  0\nEOF\n')
+    expect(normalizeDxfBytes(src)).toBe(src)
+  })
+
+  it('코드페이지 줄이 없고 UTF-8 이면 그대로 돌려준다', () => {
+    const src = bytes('  0\nSECTION\n  2\nENTITIES\n  1\n현장 도면\n  0\nEOF\n')
+    expect(normalizeDxfBytes(src)).toBe(src)
+  })
+
+  it('UTF-8 인데 헤더만 거짓말이면 헤더만 갈아끼운다 — 본문은 건드리지 않는다', () => {
+    const body = '  1\n거실 바닥 마감\n  0\nEOF\n'
+    const src = bytes('  9\n$DWGCODEPAGE\n  3\nANSI_1252\n', body)
+    const out = normalizeDxfBytes(src)
+    expect(out).not.toBe(src)
+    expect(decode(out)).toBe('  9\n$DWGCODEPAGE\n  3\nUTF8\n' + body)
+    // 'ANSI_1252'(9) → 'UTF8'(4) 만큼만 줄어든다
+    expect(out.length).toBe(src.length - 5)
+  })
+
+  it('CRLF 파일도 헤더만 갈아끼운다', () => {
+    const src = bytes('  9\r\n$DWGCODEPAGE\r\n  3\r\nANSI_1252\r\n  1\r\n현장\r\n  0\r\nEOF\r\n')
+    const out = decode(normalizeDxfBytes(src))
+    expect(out).toBe('  9\r\n$DWGCODEPAGE\r\n  3\r\nUTF8\r\n  1\r\n현장\r\n  0\r\nEOF\r\n')
+  })
+
+  it('UTF-8 이 아니면 옛 경로로 간다 — 깨진 바이트를 그냥 넘기지 않는다', () => {
+    const src = bytes('  9\n$DWGCODEPAGE\n  3\nANSI_949\n  1\n', HANGUL_EUCKR, '\n  0\nEOF\n')
+    const out = normalizeDxfBytes(src)
+    expect(out).not.toBe(src)
+    expect(decode(out)).toContain('현장')
+  })
 })
 
 describe('OSNAP 비트', () => {

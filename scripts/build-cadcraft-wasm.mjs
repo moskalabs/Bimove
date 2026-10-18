@@ -9,10 +9,21 @@
 // (crates/bimove-wasm/pkg/) 여기서 받아간다. Bimove 레포에 12MB 를 매번
 // 쌓지 않으려는 것이다.
 //
-// 엔진을 고쳤으면 **포크의 pkg 도 다시 만들어 커밋**해야 배포에 반영된다.
+// ── 받아오는 건 **커밋에 못 박고 해시로 확인한다** ──
+//
+// 전엔 `.../cadcraft/bimove/...` 를 받았다. 브랜치는 움직이는 이름이라 같은
+// Bimove 커밋이 **어제와 다른 엔진**으로 배포된다. 디버깅할 때 "그 배포에
+// 무슨 엔진이 들어갔나" 를 되짚을 수가 없고, 포크에 사고가 나면 그게 그대로
+// 배포로 흘러간다. 그래서 커밋 SHA 로 박고, 받은 바이트의 SHA-256 까지 본다.
+//
+// 엔진을 고쳤으면 **포크의 pkg 를 다시 만들어 커밋하고, 아래 PIN 을 그 커밋과
+// 해시로 갱신**해야 배포에 반영된다. 해시는 이렇게 뽑는다:
+//
+//   node scripts/build-cadcraft-wasm.mjs --print-pin <commit-sha>
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync, readFileSync, statSync, rmSync, renameSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { resolve, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -21,12 +32,29 @@ const root = resolve(here, '..')
 const fork = process.env.CADCRAFT_DIR ?? resolve(root, '..', 'cadcraft')
 const out = join(root, 'public', 'cadcraft')
 
-/** 받아올 곳. 포크의 브랜치를 바꾸면 여기도 바꾼다. */
-const RAW = 'https://raw.githubusercontent.com/moskalabs/cadcraft/bimove/crates/bimove-wasm/pkg'
-const FILES = ['bimove_wasm.js', 'bimove_wasm_bg.wasm', 'bimove_wasm.d.ts']
+/**
+ * 받아올 산출물 — **움직이지 않는 커밋**과 각 파일의 SHA-256.
+ *
+ * moskalabs/cadcraft 의 bimove 브랜치에 있던 커밋이다. 브랜치가 더 가도 이
+ * 커밋은 그대로 남으므로 같은 Bimove 커밋은 언제 빌드해도 같은 엔진을 받는다.
+ */
+const PIN = {
+  commit: '7dbdaf5eb795e009848fd3f9e6a5bb5b42165666',
+  sha256: {
+    'bimove_wasm.js':      '11e4e1dd3e35345351e3111129073ae85ca4b60d7571055563c5ddcb624795b2',
+    'bimove_wasm_bg.wasm': '0877e5128890d19fb488aaa91aad7a2d1cb773811b6d5097d8a702cb541cfd91',
+    'bimove_wasm.d.ts':    '76eaa9e394e5f7be9fab8a47eafe68adaf01a30f3c0c8da339fe598e93a680a2',
+  },
+}
+
+const FILES = Object.keys(PIN.sha256)
+const rawUrl = (commit, name) =>
+  `https://raw.githubusercontent.com/moskalabs/cadcraft/${commit}/crates/bimove-wasm/pkg/${name}`
 
 /** 이보다 작으면 받다 만 것이다 (12MB 짜리다). */
 const MIN_WASM_BYTES = 1_000_000
+
+const sha256 = buf => createHash('sha256').update(buf).digest('hex')
 
 function have(cmd) {
   try {
@@ -61,43 +89,99 @@ function buildFromSource() {
   ])
 }
 
+/**
+ * 받아서 **임시 칸에 모으고, 다 맞은 뒤에 한 번에 갈아끼운다.**
+ *
+ * 곧바로 public/cadcraft/ 에 쓰면 중간에 끊겼을 때 멀쩡했던 엔진이 반쪽
+ * 파일로 덮인다 — 다음 빌드는 "이미 있다" 며 그 반쪽을 쓰고, 화면에서만
+ * 터진다. 임시 칸이면 실패해도 옛것이 그대로 남는다.
+ */
 async function download() {
-  console.log(`[cadcraft] 포크 산출물을 받는다: ${RAW}`)
-  mkdirSync(out, { recursive: true })
-  for (const name of FILES) {
-    const res = await fetch(`${RAW}/${name}`)
-    if (!res.ok) throw new Error(`${name} 을 못 받았다 (HTTP ${res.status})`)
-    const buf = Buffer.from(await res.arrayBuffer())
-    writeFileSync(join(out, name), buf)
-    console.log(`[cadcraft]   ${name} ${(buf.length / 1048576).toFixed(1)}MB`)
+  const tmp = `${out}.tmp`
+  console.log(`[cadcraft] 포크 산출물을 받는다: ${PIN.commit.slice(0, 7)}`)
+  rmSync(tmp, { recursive: true, force: true })
+  mkdirSync(tmp, { recursive: true })
+  try {
+    for (const name of FILES) {
+      const res = await fetch(rawUrl(PIN.commit, name))
+      if (!res.ok) throw new Error(`${name} 을 못 받았다 (HTTP ${res.status})`)
+      const buf = Buffer.from(await res.arrayBuffer())
+      const got = sha256(buf)
+      if (got !== PIN.sha256[name]) {
+        // 같은 커밋이 다른 바이트를 줄 수는 없다. 그러면 받다 만 것이거나
+        // 중간에서 누가 바꿔치웠다 — 어느 쪽이든 쓰면 안 된다.
+        throw new Error(`${name} 해시가 다르다\n  바란 것 ${PIN.sha256[name]}\n  받은 것 ${got}`)
+      }
+      writeFileSync(join(tmp, name), buf)
+      console.log(`[cadcraft]   ${name} ${(buf.length / 1048576).toFixed(1)}MB ✓`)
+    }
+
+    // 다 맞았다 — 갈아끼운다. 윈도우는 디렉터리 위로 rename 이 안 되므로
+    // 옛것을 먼저 옆으로 밀어 둔다.
+    const old = `${out}.old`
+    rmSync(old, { recursive: true, force: true })
+    if (existsSync(out)) renameSync(out, old)
+    renameSync(tmp, out)
+    rmSync(old, { recursive: true, force: true })
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
   }
 }
 
-/** 이미 쓸 만한 게 놓여 있나 (받다 만 것은 쳐낸다). */
-function alreadyThere() {
+/**
+ * 이미 **못 박은 그것이** 놓여 있나.
+ *
+ * 전엔 파일이 있는지만 봤다. 그러면 옛 커밋 산출물이 남아 있어도 "있다" 며
+ * 그냥 쓴다 — PIN 을 올려도 내 기계에서만 옛 엔진이 돈다. 해시까지 본다.
+ */
+function pinnedAlreadyThere() {
   const wasm = join(out, 'bimove_wasm_bg.wasm')
-  return (
-    FILES.every(f => existsSync(join(out, f))) &&
-    statSync(wasm).size >= MIN_WASM_BYTES
-  )
+  if (!FILES.every(f => existsSync(join(out, f)))) return false
+  if (statSync(wasm).size < MIN_WASM_BYTES) return false
+  return FILES.every(f => sha256(readFileSync(join(out, f))) === PIN.sha256[f])
 }
 
-const canBuild = existsSync(join(fork, 'Cargo.toml')) && have('cargo') && have('wasm-bindgen')
-
-try {
-  if (canBuild) {
-    buildFromSource()
-  } else if (alreadyThere()) {
-    // 포크도 없고 이미 받아 둔 게 있으면 그냥 쓴다. 매 빌드마다 12MB 를
-    // 다시 받을 이유가 없다.
-    console.log('[cadcraft] 이미 있어서 건너뛴다')
-  } else {
-    await download()
+/** PIN 블록을 새로 뽑아 준다 — 엔진 고친 뒤 여기에 붙여넣는다. */
+async function printPin(commit) {
+  const lines = []
+  for (const name of FILES) {
+    const res = await fetch(rawUrl(commit, name))
+    if (!res.ok) throw new Error(`${name} 을 못 받았다 (HTTP ${res.status})`)
+    lines.push(`    ${JSON.stringify(name).padEnd(24)} '${sha256(Buffer.from(await res.arrayBuffer()))}',`)
   }
-  console.log('[cadcraft] public/cadcraft/ 준비됨')
-} catch (e) {
-  // **빌드를 세우지 않는다.** 이건 `#cadcraft` 실험 화면에서만 쓰는 것이라,
-  // 없다고 앱 전체를 못 띄울 이유가 없다. 그 화면에서 "엔진을 못 불러왔다"
-  // 가 뜰 뿐이다.
-  console.warn(`[cadcraft] 준비 실패 — #cadcraft 화면만 안 된다: ${e.message}`)
+  console.log(`const PIN = {\n  commit: '${commit}',\n  sha256: {\n${lines.join('\n')}\n  },\n}`)
+}
+
+const pinFlag = process.argv.indexOf('--print-pin')
+if (pinFlag >= 0) {
+  const commit = process.argv[pinFlag + 1]
+  if (!/^[0-9a-f]{40}$/.test(commit ?? '')) {
+    console.error('사용법: node scripts/build-cadcraft-wasm.mjs --print-pin <40자 커밋 SHA>')
+    process.exit(1)
+  }
+  await printPin(commit)
+} else {
+  const canBuild = existsSync(join(fork, 'Cargo.toml')) && have('cargo') && have('wasm-bindgen')
+  try {
+    if (canBuild) {
+      buildFromSource()
+    } else if (pinnedAlreadyThere()) {
+      // 못 박은 그대로 놓여 있다. 매 빌드마다 12MB 를 다시 받을 이유가 없다.
+      console.log(`[cadcraft] 이미 있어서 건너뛴다 (${PIN.commit.slice(0, 7)})`)
+    } else {
+      await download()
+    }
+    console.log('[cadcraft] public/cadcraft/ 준비됨')
+  } catch (e) {
+    // **빌드를 세우지 않는다.** 이건 `#cadcraft` 실험 화면에서만 쓰는 것이라,
+    // 없다고 앱 전체를 못 띄울 이유가 없다. 그 화면에서 "엔진을 못 불러왔다"
+    // 가 뜰 뿐이다.
+    //
+    // 다만 **조용히 넘기지는 않는다.** 실패했는데 옛 산출물이 남아 있으면
+    // 그걸로 돈다는 뜻이고, 그건 배포 로그에서 읽혀야 한다.
+    console.warn(`[cadcraft] 준비 실패 — #cadcraft 화면만 안 된다: ${e.message}`)
+    if (existsSync(join(out, 'bimove_wasm_bg.wasm'))) {
+      console.warn('[cadcraft] 옛 산출물이 남아 있어 그걸로 돈다 — 못 박은 그것이 아닐 수 있다')
+    }
+  }
 }

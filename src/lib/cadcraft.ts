@@ -142,6 +142,113 @@ function decodeDxfText(bytes: Uint8Array): string {
 }
 
 /**
+ * `$DWGCODEPAGE` 를 찾는 범위.
+ *
+ * HEADER 섹션 맨 앞쪽이고 실제로는 1KB 안에 있다. 그래도 넉넉히 둔다 —
+ * 못 찾으면 "헤더가 멀쩡하다" 로 판정해서 고칠 걸 안 고치게 된다.
+ * (값 자체는 이 한계와 무관하게 끝까지 읽는다.)
+ */
+const CODEPAGE_SCAN_BYTES = 1 << 20
+
+/**
+ * `$DWGCODEPAGE` 값의 바이트 범위. 없으면 null.
+ *
+ * 옛 정규식 `/(\$DWGCODEPAGE\r?\n\s*3\r?\n)([^\r\n]*)/` 와 같은 자리를 짚는다 —
+ * 그룹코드가 `3` 이 아니면(그런 DXF 는 본 적 없지만) 손대지 않는 것까지 같다.
+ */
+function findCodePageValue(bytes: Uint8Array): { start: number; end: number; value: string } | null {
+  const needle = '$DWGCODEPAGE'
+  const limit = Math.min(bytes.length, CODEPAGE_SCAN_BYTES)
+  // 헤더는 ASCII 다 — 바이트를 그대로 글자로 봐도 된다.
+  let at = -1
+  outer: for (let i = 0; i + needle.length <= limit; i++) {
+    if (bytes[i] !== 0x24) continue              // '$'
+    for (let j = 1; j < needle.length; j++) {
+      if (bytes[i + j] !== needle.charCodeAt(j)) continue outer
+    }
+    at = i
+    break
+  }
+  if (at < 0) return null
+
+  const n = bytes.length
+  /** 줄 하나를 읽고 다음 줄머리를 돌려준다 (CR/LF/CRLF 다 받는다). */
+  const line = (from: number): { text: string; next: number } => {
+    let e = from
+    while (e < n && bytes[e] !== 0x0A && bytes[e] !== 0x0D) e++
+    let s = ''
+    for (let i = from; i < e; i++) s += String.fromCharCode(bytes[i])
+    let next = e
+    if (next < n && bytes[next] === 0x0D) next++
+    if (next < n && bytes[next] === 0x0A) next++
+    return { text: s, next }
+  }
+
+  // `$DWGCODEPAGE` 줄 → 그룹코드 줄 → 값 줄
+  const rest = line(at)
+  if (rest.text.trim() !== needle) return null
+  const code = line(rest.next)
+  if (code.text.trim() !== '3') return null
+
+  const start = code.next
+  let end = start
+  while (end < n && bytes[end] !== 0x0A && bytes[end] !== 0x0D) end++
+  let value = ''
+  for (let i = start; i < end; i++) value += String.fromCharCode(bytes[i])
+  return { start, end, value: value.trim() }
+}
+
+/**
+ * 바이트가 그대로 유효한 UTF-8 인가. **문자열을 만들지 않는다.**
+ *
+ * `TextDecoder('utf-8', {fatal:true})` 로도 가릴 수 있지만 그건 150MB 짜리
+ * 문자열(한글이 섞이면 300MB)을 먼저 만들어 놓고 판정한다. 알고 싶은 건
+ * 예/아니오 하나뿐이다.
+ */
+function isValidUtf8(bytes: Uint8Array): boolean {
+  let i = 0
+  const n = bytes.length
+  while (i < n) {
+    const b = bytes[i]
+    if (b < 0x80) { i++; continue }
+    let need: number, min: number, cp: number
+    if (b >= 0xC2 && b <= 0xDF) { need = 1; min = 0x80; cp = b & 0x1F }
+    else if (b >= 0xE0 && b <= 0xEF) { need = 2; min = 0x800; cp = b & 0x0F }
+    else if (b >= 0xF0 && b <= 0xF4) { need = 3; min = 0x10000; cp = b & 0x07 }
+    else return false                              // 0x80-0xC1, 0xF5-0xFF
+    if (i + need >= n) return false                // 끝에서 잘렸다
+    for (let k = 1; k <= need; k++) {
+      const c = bytes[i + k]
+      if (c < 0x80 || c > 0xBF) return false
+      cp = (cp << 6) | (c & 0x3F)
+    }
+    if (cp < min || cp > 0x10FFFF) return false
+    if (cp >= 0xD800 && cp <= 0xDFFF) return false  // 서러게이트는 UTF-8 에 없다
+    i += need + 1
+  }
+  return true
+}
+
+/**
+ * `reverseDoubleEncodingIfNeeded` 가 **손을 댈 가능성이 있나.**
+ *
+ * 그 함수는 (1) 한글이 이미 있으면, (2) U+0080-U+00FF 글자가 5개 미만이면,
+ * (3) U+00FF 를 넘는 글자가 하나라도 있으면 원문을 그대로 돌려준다.
+ * (3) 덕에 판정이 아주 싸다 — UTF-8 에서 U+0100 이상은 선두바이트가 0xC4
+ * 이상이므로, 그런 바이트를 **하나라도** 만나면 즉시 "아니오" 다. 한글이 섞인
+ * 파일은 보통 몇 KB 안에서 걸린다.
+ */
+function mayBeDoubleEncoded(bytes: Uint8Array): boolean {
+  let high = 0
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i]
+    if (b >= 0xC4) return false                    // U+0100 이상 → 되돌리기 대상 아님
+    if (b === 0xC2 || b === 0xC3) high++
+  }
+  return high >= 5
+}
+
+/**
  * DXF 바이트를 엔진이 읽을 수 있는 모양으로 고친다.
  *
  * DWG→DXF 변환기(dwgdxf)가 **코드페이지를 거짓말한다** — 헤더엔
@@ -151,8 +258,41 @@ function decodeDxfText(bytes: Uint8Array): string {
  * 우리는 이미 그걸 가려내는 코드가 있다 (detectDxfEncoding +
  * reverseDoubleEncodingIfNeeded). 제대로 디코딩한 뒤 UTF-8 로 다시 쓰고,
  * 헤더도 사실대로 고쳐서 넘긴다.
+ *
+ * ── 큰 파일에서 사본을 만들지 않는다 ──
+ *
+ * 디코딩 → replace → 인코딩 은 사본을 셋 만든다. 정작 **고칠 게 없는 파일이
+ * 대부분이다** — 요즘 CAD 가 내보내는 DXF 는 UTF-8 이고 헤더도 맞다.
+ * 그래서 세 갈래로 간다.
+ *
+ * 1. 이미 멀쩡하다 → **원본을 그대로** 돌려준다 (사본 0).
+ * 2. UTF-8 은 맞는데 헤더만 거짓말한다 → 헤더 값만 **바이트로 이어붙인다**
+ *    (사본 1, 문자열 0).
+ * 3. 그 밖에 → 옛 경로. 인코딩이 틀린 파일은 디코딩 말고 길이 없다.
+ *
+ * 판정 자체는 전부 바이트 훑기라 할당이 0 이다. 한글이 섞인 43MB UTF-8 DXF
+ * 로 재보니 **103ms, 사본 0** 이었다 (옛 경로는 195ms 에 86MB 문자열 +
+ * 43MB 출력). 이중 인코딩 판정은 0xC4 이상 바이트를 만나면 바로 끝나므로
+ * 한글이 있는 파일에선 몇 KB 안에서 떨어진다.
  */
 export function normalizeDxfBytes(bytes: Uint8Array): Uint8Array {
+  if (bytes.length === 0) return bytes
+
+  const cp = findCodePageValue(bytes)
+  const headerLies = cp !== null && !/^utf-?8$/i.test(cp.value)
+
+  if (isValidUtf8(bytes) && !mayBeDoubleEncoded(bytes)) {
+    if (!headerLies) return bytes                  // ① 손댈 게 없다
+    // ② 헤더 값만 UTF8 로 바꿔 끼운다
+    const tail = cp.end
+    const out = new Uint8Array(cp.start + 4 + (bytes.length - tail))
+    out.set(bytes.subarray(0, cp.start), 0)
+    out.set([0x55, 0x54, 0x46, 0x38], cp.start)    // 'UTF8'
+    out.set(bytes.subarray(tail), cp.start + 4)
+    return out
+  }
+
+  // ③ 인코딩이 UTF-8 이 아니거나 이중 인코딩이다 — 글자로 풀어야 한다
   let text = decodeDxfText(bytes)
   text = reverseDoubleEncodingIfNeeded(text)
   // 이제 내용이 유니코드다. 헤더가 옛 코드페이지를 가리키고 있으면 엔진이

@@ -84,8 +84,11 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
       const bytes = file.name.toLowerCase().endsWith('.dwg')
         ? await dwgToDxfBytes(buf)
         : new Uint8Array(buf)
-      docRef.current?.free()
+      // **새 문서를 연 뒤에** 옛 것을 놓는다. 먼저 놓으면 여는 데 실패했을 때
+      // docRef 에 **이미 해제된** WASM 객체가 남고, 그 다음 휠·리사이즈가
+      // 그걸 불러서 터진다.
       const doc = await openDxf(bytes)
+      docRef.current?.free()
       docRef.current = doc
       const names = doc.layoutNames()
       setLayouts(names)
@@ -105,8 +108,8 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
   const loadBytes = useCallback(async (bytes: Uint8Array, label: string) => {
     setBusy(true)
     try {
+      const doc = await openDxf(bytes)   // 성공한 뒤에 옛 것을 놓는다
       docRef.current?.free()
-      const doc = await openDxf(bytes)
       docRef.current = doc
       const names = doc.layoutNames()
       setLayouts(names)
