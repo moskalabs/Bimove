@@ -2809,20 +2809,7 @@ html[data-dark="true"] .cad-viewer-sidebar { background: #1e1e1e; }
   color: #222;
 }
 
-.ft-detail-actions {
-  display: flex;
-  gap: 4px;
-}
 
-.ft-icon-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  color: #666;
-}
-.ft-icon-btn:hover { background: #f0f0f0; }
 
 /* ── 변형 탭 ── */
 

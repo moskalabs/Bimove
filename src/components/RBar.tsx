@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { type TLShapeId, createShapeId } from 'tldraw'
 import {
   Lock, Unlock, FlipHorizontal2, RotateCw, Check, Wand2,
-  History, Play, User,
+  History,
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
   AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
@@ -98,7 +98,7 @@ export function RBar() {
   )
 }
 
-/* ── 상단 액션바: 사용자 아이콘 · 히스토리 · 미리보기 · 공유하기 ── */
+/* ── 상단 액션바: 히스토리 · 공유하기 ── */
 function TopActionBar() {
   const editor = useEditor()
   const { toast } = useToast()
@@ -109,11 +109,9 @@ function TopActionBar() {
     <>
       {/* 탭 네비게이션 */}
       <div className="rbar-tabs">
-        <button className="rbar-tab" title="사용자"><User size={14} strokeWidth={1.75} /></button>
         <button className="rbar-tab" title="히스토리" onClick={() => setShowHistory(true)}>
           <History size={14} strokeWidth={1.75} />
         </button>
-        <button className="rbar-tab" title="미리보기"><Play size={14} strokeWidth={1.75} /></button>
         <button className="rbar-tab" title="공유하기" onClick={async () => {
           if (!editor) return
           try {
@@ -132,9 +130,6 @@ function TopActionBar() {
         <div className="rbar-avatar">B</div>
         <button className="rbar-action-btn" title="새로고침" onClick={() => window.location.reload()}>
           <RotateCw size={16} strokeWidth={1.75} />
-        </button>
-        <button className="rbar-action-btn" title="미리보기">
-          <Play size={16} strokeWidth={1.75} />
         </button>
         <button className="rbar-share-btn" onClick={async () => {
           if (!editor) return

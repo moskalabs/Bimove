@@ -1,6 +1,6 @@
 // 마감재 Tables 탭 — 카테고리 트리 + 자재별 상세 물량표
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronRight, ChevronDown, Plus, Upload, MoreHorizontal, Trash2, Pencil, MapPin, Table2 } from 'lucide-react'
+import { ChevronRight, ChevronDown, Plus, Trash2, Pencil, MapPin, Table2 } from 'lucide-react'
 import { startAreaMeasure } from '../../../lib/drawingState'
 import { useProjectId } from '../../../context/ProjectContext'
 import { useEditor } from '../../../context/EditorContext'
@@ -646,10 +646,6 @@ function MaterialDetail({
     <div className="ft-detail">
       <div className="ft-detail-header">
         <span className="ft-detail-title">마감재</span>
-        <div className="ft-detail-actions">
-          <button className="ft-icon-btn" title="내보내기"><Upload size={14} /></button>
-          <button className="ft-icon-btn" title="더보기"><MoreHorizontal size={14} /></button>
-        </div>
       </div>
 
       {/* 변형 탭 */}
