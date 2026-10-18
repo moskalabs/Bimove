@@ -15,6 +15,7 @@
 import { idbGet, idbSet } from './idb'
 import { loadSnapshot } from './projectStore'
 import { readRecordSnapshot } from './snapshotRecords'
+import { getCurrentUserId } from './scopedStorage'
 import { fromTldrawSnapshot, countByType, type BimoveDocument } from './bimoveDoc'
 
 const STORE = 'bimovedocs' as const
@@ -50,6 +51,8 @@ export async function migrateProject(
   projectId: string,
   snapshot?: unknown,
 ): Promise<MigrationResult> {
+  // 시작한 시점의 주인. **쓰기 직전에 다시 본다** — 아래 주석 참고.
+  const owner = getCurrentUserId()
   try {
     const snap = snapshot ?? (await readRecordSnapshot(projectId)) ?? (await loadSnapshot(projectId))
     if (!snap) return { ok: false, reason: '저장된 도면이 없다' }
@@ -64,6 +67,17 @@ export async function migrateProject(
       // 빈 도면일 수도 있지만, 스냅샷을 잘못 읽었을 수도 있다. 구분이 안 되니
       // 남기지 않는다 — 빈 걸 남겨 두면 "옮겼다" 로 보인다.
       return { ok: false, reason: '옮길 내용이 없다 (빈 도면이거나 못 읽었다)' }
+    }
+
+    // 이전은 **기다리지 않는 배경 작업**이다. 그 사이에 로그아웃이나 계정
+    // 전환이 일어날 수 있고, 그러면 IndexedDB 키의 사용자 스코프가 바뀐다 —
+    // A 가 시작한 이전이 B 의 칸에 A 의 도면을 쓴다. idb 쪽에서 키를 부를 때
+    // 굳히긴 하지만, 그 호출 자체가 이 await 들 **뒤에** 온다.
+    //
+    // 그래서 쓰기 직전에 주인을 다시 본다. 바뀌었으면 쓰지 않는다 — 새 주인이
+    // 그 도면을 열면 그때 다시 옮기면 된다.
+    if (getCurrentUserId() !== owner) {
+      return { ok: false, reason: '옮기는 중에 계정이 바뀌었다 — 쓰지 않는다' }
     }
 
     const saved = await idbSet(STORE, migratedKey(projectId), doc)

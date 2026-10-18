@@ -94,10 +94,25 @@ function withStore<T>(
   }))
 }
 
+/**
+ * 키의 사용자 스코프를 **지금** 굳힌다.
+ *
+ * `scopedKey()` 를 트랜잭션 콜백 안에서 부르면 `openDb()` 를 기다린 **뒤에**
+ * 계산된다. 그 사이에 로그아웃·계정 전환이 일어나면 A 가 시작한 쓰기가 B 의
+ * 스코프로 들어간다. 배경 이전처럼 기다리지 않는 작업이 생기면서 실제로
+ * 일어날 수 있는 일이 됐다.
+ *
+ * 그래서 await 하기 **전에** 키를 확정한다. 시작한 시점의 주인에게 쓴다.
+ */
+function keyNow(key: string): string {
+  return scopedKey(key)
+}
+
 /** 값 읽기. 없거나 실패하면 undefined. */
 export async function idbGet<T>(store: IdbStore, key: string): Promise<T | undefined> {
+  const k = keyNow(key)
   try {
-    return await withStore<T | undefined>(store, 'readonly', os => os.get(scopedKey(key)))
+    return await withStore<T | undefined>(store, 'readonly', os => os.get(k))
   } catch (err) {
     console.warn('[idb] 읽기 실패', store, key, err)
     return undefined
@@ -109,8 +124,9 @@ export async function idbGet<T>(store: IdbStore, key: string): Promise<T | undef
  *  JSON 문자열이 아니라 객체를 그대로 넘겨도 된다 — structured clone 이라
  *  직렬화 왕복이 없다. 다만 함수/Symbol/DOM 노드는 못 넣는다 (DataCloneError). */
 export async function idbSet(store: IdbStore, key: string, value: unknown): Promise<boolean> {
+  const k = keyNow(key)
   try {
-    await withStore(store, 'readwrite', os => os.put(value, scopedKey(key)))
+    await withStore(store, 'readwrite', os => os.put(value, k))
     return true
   } catch (err) {
     console.warn('[idb] 쓰기 실패 (용량 초과?)', store, key, err)
@@ -120,8 +136,9 @@ export async function idbSet(store: IdbStore, key: string, value: unknown): Prom
 
 /** 값 삭제. 없는 키를 지워도 성공으로 친다. */
 export async function idbDelete(store: IdbStore, key: string): Promise<boolean> {
+  const k = keyNow(key)
   try {
-    await withStore(store, 'readwrite', os => os.delete(scopedKey(key)))
+    await withStore(store, 'readwrite', os => os.delete(k))
     return true
   } catch (err) {
     console.warn('[idb] 삭제 실패', store, key, err)
@@ -153,16 +170,20 @@ export type IdbOp =
  *  실패 시 통째로 롤백된다. */
 export async function idbBatch(store: IdbStore, ops: IdbOp[]): Promise<boolean> {
   if (ops.length === 0) return true
+  // 키를 **await 전에** 굳힌다 — keyNow 주석 참고.
+  const keys = ops.map(op => (op.type === 'deleteRange' ? '' : keyNow(op.key)))
+  const ranges = ops.map(op => (op.type === 'deleteRange' ? prefixRange(op.prefix) : null))
   try {
     const db = await openDb()
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(store, 'readwrite')
       const os = tx.objectStore(store)
       try {
-        for (const op of ops) {
-          if (op.type === 'put') os.put(op.value, scopedKey(op.key))
-          else if (op.type === 'delete') os.delete(scopedKey(op.key))
-          else os.delete(prefixRange(op.prefix))
+        for (let i = 0; i < ops.length; i++) {
+          const op = ops[i]
+          if (op.type === 'put') os.put(op.value, keys[i])
+          else if (op.type === 'delete') os.delete(keys[i])
+          else os.delete(ranges[i]!)
         }
       } catch (err) {
         // put() 은 복제 불가한 값을 만나면 **그 자리에서** 던진다. 그냥 빠져나오면
@@ -188,17 +209,19 @@ export async function idbBatch(store: IdbStore, ops: IdbOp[]): Promise<boolean> 
  *  실패하면 null 이다 — 빈 Map 과 구분해야 한다. "아직 저장된 게 없다" 와
  *  "읽다가 터졌다" 를 섞으면, 멀쩡한 캐시가 있는데 빈 도면을 띄울 수 있다. */
 export async function idbGetRange<T>(store: IdbStore, prefix: string): Promise<Map<string, T> | null> {
+  // 범위도 await 전에 굳힌다 — keyNow 주석 참고.
+  const range = prefixRange(prefix)
+  const skipLen = scopedKey(prefix).length
   try {
     const db = await openDb()
-    const skip = scopedKey(prefix).length
     const out = new Map<string, T>()
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(store, 'readonly')
-      const req = tx.objectStore(store).openCursor(prefixRange(prefix))
+      const req = tx.objectStore(store).openCursor(range)
       req.onsuccess = () => {
         const cur = req.result
         if (!cur) return
-        out.set(String(cur.key).slice(skip), cur.value as T)
+        out.set(String(cur.key).slice(skipLen), cur.value as T)
         cur.continue()
       }
       tx.oncomplete = () => resolve()
@@ -214,6 +237,7 @@ export async function idbGetRange<T>(store: IdbStore, prefix: string): Promise<M
 
 /** 접두사로 시작하는 레코드 전부 삭제. */
 export async function idbDeleteRange(store: IdbStore, prefix: string): Promise<boolean> {
+  // 범위는 idbBatch 가 await 전에 굳힌다.
   return idbBatch(store, [{ type: 'deleteRange', prefix }])
 }
 

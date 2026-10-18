@@ -27,8 +27,13 @@ export interface BimoveShape {
   rotation: number
   /** 쌓임 순서 (tldraw 의 분수 인덱스). 사전순으로 비교한다. */
   index: string
-  /** 어느 페이지에 있는지. */
-  pageId: string
+  /**
+   * 부모 레코드 id — **페이지일 수도, 다른 도형(그룹·프레임)일 수도 있다.**
+   *
+   * 전엔 `pageId` 라 부르고 페이지로만 취급했다. 그러면 그룹 안에 든 도형의
+   * 부모 관계가 통째로 사라진다. 이름을 사실대로 바꾼다.
+   */
+  parentId: string
   opacity?: number
   isLocked?: boolean
   /** 도형 고유 값 **그대로**. 해석하지 않는다. */
@@ -46,8 +51,27 @@ export interface BimoveDocument {
   version: number
   pages: BimovePage[]
   shapes: BimoveShape[]
-  /** 어디서 왔는지. 뭔가 이상할 때 되짚을 단서다. */
-  source: { from: string; at: number }
+  /**
+   * 도형·페이지가 아닌 레코드 **원형 그대로**.
+   *
+   * 처음엔 "도면이 아니다" 며 버렸다. 그게 틀렸다 —
+   * - `asset` 에 **이미지·PDF 본문**이 들어 있다. image 도형은 `assetId` 만
+   *   들고 있어서, asset 을 버리면 그림이 통째로 사라진다. 한의 도면에서
+   *   실제로 스캔 이미지 하나가 그렇게 날아갔다.
+   * - `binding` 에 화살표가 무엇에 붙었는지가 들어 있다. 버리면 연결이 끊긴다.
+   *
+   * 무엇이 중요한지 **미리 알 수 없으므로** 모르는 건 버리지 말고 들고 간다.
+   * 읽는 쪽이 나중에 해석하면 된다. 그게 유실을 막는 유일한 방법이다.
+   */
+  records: Record<string, unknown>
+  /**
+   * 어디서 왔는지.
+   *
+   * `at` 만으로는 **이 이전본이 최신인지 알 수 없다.** 옮긴 뒤에 사용자가
+   * 더 편집했으면 낡은 것이다. 그래서 원본의 지문(`sourceHash`)과 도형 수를
+   * 같이 남긴다 — 읽는 쪽이 지금 스냅샷과 견줘 "다시 옮겨야 하나" 를 판단한다.
+   */
+  source: { from: string; at: number; sourceHash: string; shapeCount: number }
   /**
    * 옮기다 **못 읽은 레코드** 수. 0 이 아니면 유실이다.
    *
@@ -76,6 +100,45 @@ function str(v: unknown, fallback = ''): string {
 }
 
 /**
+ * 레코드 맵의 지문.
+ *
+ * 암호학적일 필요가 없다 — "같은가 달라졌나" 만 가리면 된다. 전체를
+ * JSON 으로 만들면 수십 MB 를 훑으므로, **키와 각 레코드의 바뀜 표시**만
+ * 본다 (tldraw 는 레코드를 고칠 때마다 새 객체를 만들지만 그걸 믿을 수는
+ * 없어서, 도형은 좌표·인덱스까지 섞는다).
+ */
+function fingerprint(store: Record<string, unknown>): string {
+  let h = 2166136261 >>> 0
+  const push = (sv: string) => {
+    for (let i = 0; i < sv.length; i++) {
+      h ^= sv.charCodeAt(i)
+      h = Math.imul(h, 16777619) >>> 0
+    }
+  }
+  for (const key of Object.keys(store).sort()) {
+    push(key)
+    const r = store[key]
+    if (isRecord(r)) {
+      // 바뀌면 달라지는 것들만 — 전체 직렬화는 큰 도면에서 너무 비싸다
+      push(String(r.x) + ',' + String(r.y) + ',' + String(r.rotation) + ',' + String(r.index))
+      if (isRecord(r.props)) push(String(Object.keys(r.props).length))
+    }
+  }
+  return h.toString(16)
+}
+
+/** 스냅샷의 지문 — 이전본이 낡았는지 견주는 데 쓴다. */
+export function snapshotFingerprint(snapshot: unknown): string {
+  const store = storeOf(snapshot)
+  return store ? fingerprint(store) : ''
+}
+
+/** 이 이전본이 지금 스냅샷과 맞나. 다르면 다시 옮겨야 한다. */
+export function isUpToDate(doc: BimoveDocument, snapshot: unknown): boolean {
+  return !!doc.source.sourceHash && doc.source.sourceHash === snapshotFingerprint(snapshot)
+}
+
+/**
  * 스냅샷에서 레코드 맵을 꺼낸다.
  *
  * 저장된 모양이 두 가지다 — `getSnapshot()` 이 준 `{document:{store}}` 와,
@@ -100,10 +163,14 @@ export function fromTldrawSnapshot(snapshot: unknown): BimoveDocument {
   const store = storeOf(snapshot)
   const pages: BimovePage[] = []
   const shapes: BimoveShape[] = []
+  const records: Record<string, unknown> = {}
   let skipped = 0
 
   if (!store) {
-    return { version: BIMOVE_DOC_VERSION, pages, shapes, source: { from: 'tldraw', at: Date.now() }, skipped: 0 }
+    return {
+      version: BIMOVE_DOC_VERSION, pages, shapes, records,
+      source: { from: 'tldraw', at: Date.now(), sourceHash: '', shapeCount: 0 }, skipped: 0,
+    }
   }
 
   for (const [key, rec] of Object.entries(store)) {
@@ -120,7 +187,14 @@ export function fromTldrawSnapshot(snapshot: unknown): BimoveDocument {
       })
       continue
     }
-    if (typeName !== 'shape') continue   // camera, instance, asset … 은 도면이 아니다
+    if (typeName !== 'shape') {
+      // **버리지 않는다.** asset 에 이미지 본문이, binding 에 화살표 연결이
+      // 들어 있다. 무엇이 중요한지 미리 알 수 없으니 원형 그대로 들고 간다.
+      // (camera·instance 처럼 안 쓸 것도 같이 오지만, 그 비용은 작고 유실은
+      //  되돌릴 수 없다.)
+      records[key] = rec
+      continue
+    }
 
     const type = str(rec.type)
     if (!type) { skipped++; continue }
@@ -132,7 +206,7 @@ export function fromTldrawSnapshot(snapshot: unknown): BimoveDocument {
       y: num(rec.y),
       rotation: num(rec.rotation),
       index: str(rec.index, 'a1'),
-      pageId: str(rec.parentId),
+      parentId: str(rec.parentId),
       ...(typeof rec.opacity === 'number' ? { opacity: rec.opacity } : {}),
       ...(rec.isLocked === true ? { isLocked: true } : {}),
       props: isRecord(rec.props) ? rec.props : {},
@@ -142,23 +216,38 @@ export function fromTldrawSnapshot(snapshot: unknown): BimoveDocument {
 
   // 쌓임 순서를 고정해 둔다. 분수 인덱스는 **사전순**으로 비교한다 —
   // 숫자로 보면 'a2' 와 'a10' 이 뒤집힌다.
-  shapes.sort((a, b) => (a.pageId === b.pageId
+  shapes.sort((a, b) => (a.parentId === b.parentId
     ? (a.index < b.index ? -1 : a.index > b.index ? 1 : 0)
-    : (a.pageId < b.pageId ? -1 : 1)))
+    : (a.parentId < b.parentId ? -1 : 1)))
   pages.sort((a, b) => (a.index < b.index ? -1 : a.index > b.index ? 1 : 0))
 
   return {
     version: BIMOVE_DOC_VERSION,
     pages,
     shapes,
-    source: { from: 'tldraw', at: Date.now() },
+    records,
+    source: {
+      from: 'tldraw',
+      at: Date.now(),
+      sourceHash: fingerprint(store),
+      shapeCount: shapes.length,
+    },
     skipped,
   }
 }
 
-/** 한 페이지의 도형만. */
+/** 한 페이지의 도형만 (그룹 안에 든 것은 부모가 도형이라 여기 안 걸린다). */
 export function shapesOfPage(doc: BimoveDocument, pageId: string): BimoveShape[] {
-  return doc.shapes.filter(s => s.pageId === pageId)
+  return doc.shapes.filter(s => s.parentId === pageId)
+}
+
+/** 이 도면이 참조하는 asset 들 (이미지·PDF 본문). */
+export function assetsOf(doc: BimoveDocument): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(doc.records)) {
+    if (k.startsWith('asset:')) out[k] = v
+  }
+  return out
 }
 
 /** 타입별 개수 — 옮긴 뒤 "맞게 왔나" 를 눈으로 보는 용도. */

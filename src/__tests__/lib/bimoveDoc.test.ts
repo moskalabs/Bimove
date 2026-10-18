@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import {
-  fromTldrawSnapshot, countByType, shapesOfPage, BIMOVE_DOC_VERSION,
+  fromTldrawSnapshot, countByType, shapesOfPage, assetsOf, BIMOVE_DOC_VERSION,
 } from '../../lib/bimoveDoc'
 
 const page = (id: string, name: string, index = 'a1') => ({
@@ -62,18 +62,50 @@ describe('fromTldrawSnapshot', () => {
     expect(countByType(d)).toEqual({ geo: 1, arrow: 1, 아직없는타입: 1 })
   })
 
-  it('도형이 아닌 레코드는 옮기지 않되 버린 걸로 세지도 않는다', () => {
-    // camera/instance/asset 은 도면이 아니다. 이걸 skipped 로 세면 멀쩡한
-    // 이전이 "유실 있음" 으로 보여서 쓸데없이 막힌다.
+  it('도형·페이지가 아닌 레코드를 **원형 그대로** 들고 간다', () => {
+    // 전엔 "도면이 아니다" 며 버렸다. 그게 틀렸다 — asset 에 이미지 본문이,
+    // binding 에 화살표 연결이 들어 있다. 무엇이 중요한지 미리 알 수 없다.
+    const assetRec = { id: 'asset:img', typeName: 'asset', type: 'image',
+      props: { src: 'data:image/png;base64,AAA', w: 100, h: 50 } }
     const d = fromTldrawSnapshot(snap([
       page('page:main', 'p'),
       { id: 'camera:x', typeName: 'camera', x: 0, y: 0, z: 1 },
       { id: 'instance:x', typeName: 'instance' },
-      { id: 'asset:x', typeName: 'asset' },
+      assetRec,
+      { id: 'binding:b', typeName: 'binding', fromId: 'shape:a', toId: 'shape:w' },
       shape('shape:w', 'wall', { thickness: 20 }),
     ]))
     expect(d.shapes).toHaveLength(1)
     expect(d.skipped).toBe(0)
+    expect(d.records['asset:img']).toEqual(assetRec)
+    expect(d.records['binding:b']).toBeTruthy()
+    expect(d.records['camera:x']).toBeTruthy()
+  })
+
+  it('이미지 본문(asset)이 살아서 온다', () => {
+    // image 도형은 assetId 만 들고 있다. asset 을 버리면 그림이 통째로
+    // 사라진다 — 한의 도면에서 실제로 스캔 이미지 하나가 그렇게 날아갔다.
+    const src = 'data:image/png;base64,iVBORw0KGgo='
+    const d = fromTldrawSnapshot(snap([
+      page('page:main', 'p'),
+      { id: 'asset:scan', typeName: 'asset', type: 'image', props: { src, w: 1723, h: 1147 } },
+      shape('shape:img', 'image', { assetId: 'asset:scan', w: 1723, h: 1147 }),
+    ]))
+    expect(d.shapes[0].props.assetId).toBe('asset:scan')
+    const asset = assetsOf(d)['asset:scan'] as { props: { src: string } }
+    expect(asset.props.src).toBe(src)
+  })
+
+  it('그룹 안 도형의 부모가 보존된다', () => {
+    // parentId 를 pageId 라 부르며 페이지로만 취급하면 그룹 관계가 사라진다.
+    const d = fromTldrawSnapshot(snap([
+      page('page:main', 'p'),
+      shape('shape:g', 'group', {}, { parentId: 'page:main' }),
+      shape('shape:in', 'wall', {}, { parentId: 'shape:g' }),
+    ]))
+    expect(d.shapes.find(s => s.id === 'shape:in')?.parentId).toBe('shape:g')
+    // 페이지 직속만 세는 자리에 그룹 자식이 섞이면 안 된다
+    expect(shapesOfPage(d, 'page:main').map(s => s.id)).toEqual(['shape:g'])
   })
 
   it('못 읽은 레코드를 **센다**', () => {

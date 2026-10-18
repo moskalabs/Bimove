@@ -4,9 +4,11 @@
  * 여기서 보는 건 **안 잃는가** 와 **반쪽을 남기지 않는가** 다. 반쪽을 남기면
  * 나중에 그걸 "옮겨진 것" 으로 믿고 원본을 지우게 되고, 그때 진짜로 잃는다.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { migrateProject, loadBimoveDoc } from '../../lib/docMigration'
 import { _resetIdbForTest } from '../../lib/idb'
+import { setCurrentUserId } from '../../lib/scopedStorage'
+import { writeFullRecords, type SnapshotLike } from '../../lib/snapshotRecords'
 
 const page = (id: string, name: string) => ({ id, typeName: 'page', name, index: 'a1' })
 const shape = (id: string, type: string, props: Record<string, unknown> = {}) => ({
@@ -28,9 +30,13 @@ const good = snap([
 
 beforeEach(async () => {
   await _resetIdbForTest()
+  setCurrentUserId(null)
   vi.spyOn(console, 'warn').mockImplementation(() => {})
   vi.spyOn(console, 'log').mockImplementation(() => {})
 })
+
+// 스코프는 모듈 전역이다 — 남겨 두면 다음 파일의 테스트가 남의 칸을 본다
+afterEach(() => { setCurrentUserId(null) })
 
 describe('migrateProject', () => {
   it('옮기고 다시 읽을 수 있다', async () => {
@@ -98,5 +104,38 @@ describe('migrateProject', () => {
     await migrateProject('B', snap([page('page:main', 'p'), shape('shape:z', 'zone')]))
     expect((await loadBimoveDoc('A'))?.shapes).toHaveLength(2)
     expect((await loadBimoveDoc('B'))?.shapes).toHaveLength(1)
+  })
+
+  it('옮기는 중에 계정이 바뀌면 **쓰지 않는다**', async () => {
+    // 이전은 기다리지 않는 배경 작업이다. 그 사이에 로그아웃·계정 전환이
+    // 일어나면 IndexedDB 키의 사용자 스코프가 바뀌고, A 가 시작한 이전이
+    // B 의 칸에 A 의 도면을 쓴다. 사무실에서 계정을 돌려 쓰는 데라면
+    // 금방 겹친다 — 그리고 겹친 뒤엔 누구 것인지 가릴 길이 없다.
+    setCurrentUserId('userA')
+    await writeFullRecords('p6', good as SnapshotLike)
+
+    // **await 하지 않고** 시작해서, 저장소를 읽는 사이에 계정을 바꾼다.
+    // migrateProject 는 첫 await 까지 동기로 달리므로 owner 는 userA 로
+    // 잡히고, 그 뒤 재개될 때는 이미 userB 다.
+    const pending = migrateProject('p6')
+    setCurrentUserId('userB')
+    const r = await pending
+
+    expect(r.ok).toBe(false)
+    expect(r.reason).toContain('계정')
+
+    // B 의 칸에도, A 의 칸에도 남지 않았다
+    expect(await loadBimoveDoc('p6')).toBeNull()
+    setCurrentUserId('userA')
+    expect(await loadBimoveDoc('p6')).toBeNull()
+  })
+
+  it('계정이 그대로면 멀쩡히 쓴다', async () => {
+    setCurrentUserId('userA')
+    expect((await migrateProject('p7', good)).ok).toBe(true)
+    expect((await loadBimoveDoc('p7'))?.shapes).toHaveLength(2)
+    // 다른 계정에서는 보이지 않는다
+    setCurrentUserId('userB')
+    expect(await loadBimoveDoc('p7')).toBeNull()
   })
 })
