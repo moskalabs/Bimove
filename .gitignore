@@ -31,3 +31,7 @@ public/dwgdxf/
 
 # CADCraft 엔진 — scripts/build-cadcraft-wasm.mjs 가 만든다 (12MB)
 /public/cadcraft/
+
+# Rust 빌드 산출물 — 2888개가 커밋돼 있었다 (676MB). cargo 가 만드는 것이고
+# 기계마다 다르다. `--cached` 로 추적만 끊었으니 디스크의 파일은 그대로다.
+/src-tauri/target/
