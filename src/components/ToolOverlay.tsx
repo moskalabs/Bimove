@@ -18,9 +18,16 @@ type OverlayState = {
   mid: Pt | null
   angleDeg: number | null
   distLabel: string | null
+  /**
+   * 앞 구간과 이루는 각(도). 이어 그릴 때만 찬다.
+   *
+   * Rayon 이 코너에 띄우는 "90.0°" 와 같은 것이다. 이게 없으면 직각으로
+   * 꺾였는지 눈으로 재야 한다.
+   */
+  turnDeg: number | null
 }
 
-const EMPTY: OverlayState = { start: null, snap: null, snapType: null, end: null, mid: null, angleDeg: null, distLabel: null }
+const EMPTY: OverlayState = { start: null, snap: null, snapType: null, end: null, mid: null, angleDeg: null, distLabel: null, turnDeg: null }
 
 /** 스냅 타입별 색상 */
 const SNAP_COLORS: Record<SnapType, string> = {
@@ -31,6 +38,7 @@ const SNAP_COLORS: Record<SnapType, string> = {
   perpendicular: '#e84335',
   extension: '#9c27b0',
   angle: '#607d8b',
+  turn: '#1a73e8',
 }
 
 /** 스냅 타입별 레이블 */
@@ -42,6 +50,7 @@ const SNAP_LABELS: Record<SnapType, string> = {
   perpendicular: '수직',
   extension: '연장',
   angle: '',
+  turn: '',
 }
 
 export function ToolOverlay() {
@@ -66,6 +75,7 @@ export function ToolOverlay() {
       let mid: Pt | null = null
       let angleDeg: number | null = null
       let distLabel: string | null = null
+      let turnDeg: number | null = null
 
       if (drawingId) {
         const shape = editor.getShape(drawingId as TLShapeId)
@@ -80,6 +90,16 @@ export function ToolOverlay() {
             angleDeg = Math.atan2(p.y2, p.x2) * 180 / Math.PI
             const scale = getScaleConfig(editor)
             distLabel = formatLength(lenPx, scale)
+
+            // 앞 구간과 이루는 각. (-180, 180] 로 접은 뒤 **크기**만 띄운다 —
+            // 평면도에서는 "몇 도로 꺾였나" 만 알면 되고, 부호(좌/우)는
+            // 화면에서 바로 보인다.
+            const prev = drawingState.prevDir
+            if (prev && Math.hypot(prev.x, prev.y) > 1) {
+              const rel =
+                (Math.atan2(p.y2, p.x2) - Math.atan2(prev.y, prev.x)) * 180 / Math.PI
+              turnDeg = Math.abs(((rel % 360) + 540) % 360 - 180)
+            }
           }
         }
       }
@@ -119,7 +139,7 @@ export function ToolOverlay() {
         }
       }
 
-      setState({ start, snap, snapType, end, mid, angleDeg, distLabel })
+      setState({ start, snap, snapType, end, mid, angleDeg, distLabel, turnDeg })
     }
 
     let raf = 0
@@ -135,6 +155,20 @@ export function ToolOverlay() {
 
   return (
     <>
+      {/* 코너의 꺾임 각. 직각이면 또렷하게(진한 파랑), 아니면 옅게 —
+          "쫙 90도로 붙었다" 가 한눈에 보여야 한다. */}
+      {state.start && state.turnDeg !== null && (
+        <div style={{
+          position: 'absolute', left: state.start.x + 10, top: state.start.y - 26,
+          padding: '2px 7px', borderRadius: 10,
+          background: Math.abs(state.turnDeg - 90) < 0.05 ? '#1a73e8' : '#1a73e899',
+          color: '#fff', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
+          pointerEvents: 'none', zIndex: 103,
+          fontFamily: 'ui-monospace, Consolas, monospace',
+        }}>
+          {state.turnDeg.toFixed(1)}°
+        </div>
+      )}
       {state.start && (
         <div style={{
           position: 'absolute', left: state.start.x - 5, top: state.start.y - 5,

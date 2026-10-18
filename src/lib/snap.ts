@@ -2,7 +2,7 @@ import type { Editor } from 'tldraw'
 import { getSnapEnabled, getSnapMode } from './settings'
 
 /** 스냅 타입: 어떤 종류의 스냅이 발생했는지 구분 */
-export type SnapType = 'endpoint' | 'midpoint' | 'edge' | 'intersection' | 'perpendicular' | 'extension' | 'angle'
+export type SnapType = 'endpoint' | 'midpoint' | 'edge' | 'intersection' | 'perpendicular' | 'extension' | 'angle' | 'turn'
 
 export type SnapPoint = { x: number; y: number; sourceId?: string; snapType?: SnapType }
 
@@ -402,6 +402,57 @@ export function snapAngle(dx: number, dy: number, stepDeg = 15): { x: number; y:
   const step = (stepDeg * Math.PI) / 180
   const angle = Math.round(Math.atan2(dy, dx) / step) * step
   return { x: Math.cos(angle) * len, y: Math.sin(angle) * len }
+}
+
+/**
+ * 꺾이는 각을 **앞 구간 기준 직각**으로 당긴다.
+ *
+ * 15° 직교 스냅(`snapAngle`)은 **화면 축**을 기준으로 돈다. 앞 벽이 축에
+ * 나란하면 90° 가 15 의 배수라 저절로 맞지만, 앞 벽이 37° 로 비스듬하면
+ * 아무리 조심해도 직각이 안 나온다. 평면도에서 벽은 거의 다 직각으로
+ * 꺾이므로 그게 그대로 손해다.
+ *
+ * 그래서 앞 구간과 이루는 각을 보고 90 의 배수에 가까우면 **정확히** 그
+ * 각으로 맞춘다. 길이는 커서가 간 만큼 그대로 둔다 — 각만 바로잡는다.
+ *
+ * 끝점·교차점 같은 **진짜 geometry** 스냅이 이겼을 때는 부르면 안 된다.
+ * 거기서 각을 맞추겠다고 점을 옮기면 벽이 안 붙는다.
+ *
+ * @param prevDir 앞 구간의 방향 (길이는 안 본다)
+ */
+export function snapToTurn(
+  startPoint: { x: number; y: number },
+  point: { x: number; y: number },
+  prevDir: { x: number; y: number },
+  toleranceDeg = 10,
+): SnapPoint | null {
+  const dx = point.x - startPoint.x
+  const dy = point.y - startPoint.y
+  const len = Math.hypot(dx, dy)
+  const prevLen = Math.hypot(prevDir.x, prevDir.y)
+  // 길이가 없으면 방향이 없다 — 0 으로 나누면 NaN 이 번진다.
+  if (len < 1 || prevLen < 1e-9) return null
+
+  const prevAngle = Math.atan2(prevDir.y, prevDir.x)
+  const cur = Math.atan2(dy, dx)
+  // 앞 구간 기준 상대각을 (-180, 180] 로 접는다.
+  //
+  // **맞고 틀리고를 가르는 줄은 아니다** — atan2 가 둘 다 (-180,180] 를 주므로
+  // 차는 (-360,360) 이고, 접지 않아도 가장 가까운 90 의 배수(±270 까지)가 같은
+  // 방향을 가리킨다. 빼고 돌려봐서 확인했다. `rel` 을 사람이 읽을 수 있게
+  // 두려고 접는다.
+  let rel = ((cur - prevAngle) * 180) / Math.PI
+  rel = ((rel % 360) + 540) % 360 - 180
+
+  const nearest = Math.round(rel / 90) * 90
+  if (Math.abs(rel - nearest) > toleranceDeg) return null
+
+  const snapped = prevAngle + (nearest * Math.PI) / 180
+  return {
+    x: startPoint.x + Math.cos(snapped) * len,
+    y: startPoint.y + Math.sin(snapped) * len,
+    snapType: 'turn',
+  }
 }
 
 /**

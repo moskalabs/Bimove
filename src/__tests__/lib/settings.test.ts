@@ -13,7 +13,15 @@ import {
 import { scopedSet } from '../../lib/scopedStorage'
 
 describe('wall thickness', () => {
-  it('returns 200 as default', () => {
+  it('returns 100 as default', () => {
+    // 200 이었는데 평면도에서 벽이 너무 굵게 나왔다. 경쟁 제품(Rayon)도
+    // 0.10m 을 기본으로 쓴다. 저장된 값이 있으면 그게 이긴다 (아래 테스트).
+    expect(getDefaultWallThicknessMm()).toBe(100)
+  })
+
+  it('이미 고른 값이 있으면 기본값이 안 이긴다', () => {
+    // 기본값을 바꿨다고 **쓰던 사람의 설정이 달라지면 안 된다.**
+    scopedSet('bimova_wall_thickness_mm', '200')
     expect(getDefaultWallThicknessMm()).toBe(200)
   })
 

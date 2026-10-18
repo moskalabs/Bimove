@@ -5,9 +5,15 @@ const WALL_HEIGHT_KEY = 'bimova_wall_height_mm'
 const SHOW_WALL_LENGTHS_KEY = 'bimova_show_wall_lengths'
 const SHOW_ROOM_AREAS_KEY = 'bimova_show_room_areas'
 
-/** Default wall thickness in mm (physical units, scale-independent). */
+/**
+ * Default wall thickness in mm (physical units, scale-independent).
+ *
+ * 100mm. 200 이었는데 평면도에서 벽이 너무 굵게 나왔다 — 경쟁 제품(Rayon)도
+ * 0.10m 을 기본으로 쓴다. **이미 고른 값이 있으면 그걸 쓴다** (설정에 저장돼
+ * 있으면 건드리지 않는다).
+ */
 export function getDefaultWallThicknessMm(): number {
-  return Number(scopedGet(THICKNESS_MM_KEY) ?? 200)
+  return Number(scopedGet(THICKNESS_MM_KEY) ?? 100)
 }
 
 export function setDefaultWallThicknessMm(mm: number) {

@@ -8,6 +8,13 @@ export type PickResult =
 
 export const drawingState = {
   drawingId: null as string | null,
+  /**
+   * 지금 그리는 벽 **앞 구간**의 방향 (page 좌표, 길이는 안 본다).
+   *
+   * 벽을 이어 그릴 때 꺾이는 각을 앞 구간 기준 직각으로 당기고(ToolOverlay 는
+   * 그 각을 코너에 띄운다), 첫 구간이면 null 이다.
+   */
+  prevDir: null as { x: number; y: number } | null,
   pickTarget: null as PickTarget,
   pickCallback: null as ((result: PickResult) => void) | null,
   pickItemId: null as string | null,
