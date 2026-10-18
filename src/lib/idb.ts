@@ -18,14 +18,16 @@ import { scopedKey } from './scopedStorage'
 const DB_NAME = 'bimova'
 
 /** 스키마 버전. 스토어를 추가하면 올린다 (STORES 도 같이). */
-const DB_VERSION = 3
+const DB_VERSION = 4
 
 /** 이 DB 가 가진 오브젝트 스토어 전부. onupgradeneeded 가 없는 것만 만든다.
  *
  *  versions   — 버전 히스토리 (메타 목록 + 스냅샷 본문)
  *  snapshots  — 프로젝트 현재 도면 통짜 스냅샷 (레거시 + 마이그레이션 경로)
- *  docrecords — 프로젝트 현재 도면을 **레코드 단위**로 쪼갠 것 (snapshotRecords.ts) */
-const STORES = ['versions', 'snapshots', 'docrecords'] as const
+ *  docrecords — 프로젝트 현재 도면을 **레코드 단위**로 쪼갠 것 (snapshotRecords.ts)
+ *  bimovedocs — 우리 포맷으로 옮긴 도면 (bimoveDoc.ts). tldraw 를 걷어내기
+ *               위한 것이고, 당분간 **쓰기만** 한다 — 원본은 그대로 둔다. */
+const STORES = ['versions', 'snapshots', 'docrecords', 'bimovedocs'] as const
 export type IdbStore = (typeof STORES)[number]
 
 export function idbAvailable(): boolean {
