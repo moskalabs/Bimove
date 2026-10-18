@@ -25,6 +25,21 @@ export class WallTool extends StateNode {
    * 그때는 **날것 커서**로 각을 재야 한다 — 이미 15° 로 꺾인 점으로 재면
    * 직각 근처였어도 못 맞춘다.
    */
+  /**
+   * 도구에 들어올 때마다 **앞 구간을 잊는다.**
+   *
+   * `prevDir` 은 StateNode 에 남아서 도구를 껐다 켜도 살아 있었다. 그러면
+   * 새로 긋는 **첫 구간**이 지난번에 그리던 벽의 방향을 기준으로 직각에
+   * 당겨진다 — 사용자는 왜 삐뚤어지는지 알 길이 없다.
+   *
+   * (Escape 로 나가는 길은 onCancel 이 이미 지운다. 툴바로 다른 도구를
+   *  고르고 돌아오는 길이 안 지워졌다.)
+   */
+  override onEnter = () => {
+    this.prevDir = null
+    drawingState.prevDir = null
+  }
+
   private resolvePoint(): { x: number; y: number } {
     const p = resolveDrawPoint(this.editor, this.startPoint, this.previewId ?? undefined)
     if (p.snapType && p.snapType !== 'angle') return p

@@ -194,6 +194,11 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
       const doc = await openBimoveDoc(r.doc, pageId)
       adopt(doc)
       setStatus(`${name} · ${counts(doc)}`)
+    } catch (e) {
+      // 여기가 비어 있으면 실패가 **unhandled rejection** 으로만 남는다 —
+      // 화면은 옛 페이지를 그대로 보여주고 아무 말도 안 한다.
+      setStatus(`실패: ${e instanceof Error ? e.message : String(e)}`)
+      console.error('[cadcraft]', e)
     } finally {
       setBusy(false)
     }

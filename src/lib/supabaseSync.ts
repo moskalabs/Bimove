@@ -489,6 +489,24 @@ export async function saveProjectSnapshot(
   return { conflict: true, serverUpdatedAt: current.updated_at }
 }
 
+/**
+ * 프로젝트 행의 서버 수정 시각만 읽는다. 스냅샷(수 MB)은 건드리지 않는다.
+ *
+ * `loadProjectSnapshot` 은 **본문이 없으면 null** 을 주면서 시각까지 버린다.
+ * 그러면 호출부에 기준값이 없는 채로 남고, 그 상태의 저장은 조건 없는
+ * UPDATE 가 된다 — 그 사이 다른 기기가 쓴 걸 충돌 감지 없이 덮는다.
+ * 본문이 비어 있어도 **행은 있고 시각도 있다.**
+ */
+export async function fetchProjectUpdatedAt(projectId: string): Promise<string | undefined> {
+  const { data, error } = await supabase
+    .from('projects')
+    .select('updated_at')
+    .eq('id', projectId)
+    .maybeSingle()
+  if (error) throw error
+  return data?.updated_at ?? undefined
+}
+
 export async function loadProjectSnapshot(projectId: string): Promise<{ snapshot: unknown; updatedAt?: string } | null> {
   const { data, error } = await supabase
     .from('projects')

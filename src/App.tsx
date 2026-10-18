@@ -46,7 +46,7 @@ import { ProjectContext, ProjectNameContext } from './context/ProjectContext'
 import { loadSnapshot, dropLegacySnapshot, saveThumbnail, touchProject, resolveSnapshot, renameProject, ensureProjectEntry, snapshotCandidates } from './lib/projectStore'
 import { readRecordSnapshot, writeFullRecords, writeRecordDiff, type SnapshotLike } from './lib/snapshotRecords'
 import { createDebouncedSaver } from './lib/debouncedSave'
-import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, saveProjectVersion, renameProject as renameProjectOnServer, fetchProject } from './lib/supabaseSync'
+import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, fetchProjectUpdatedAt, saveProjectVersion, renameProject as renameProjectOnServer, fetchProject } from './lib/supabaseSync'
 import { readProjectHash, pushProjectHash, replaceProjectHash, clearProjectHash } from './lib/projectHash'
 const CadCraftViewer = lazyWithReload(() => import('./components/CadCraftViewer').then(m => ({ default: m.CadCraftViewer })))
 import { saveVersion, getVersion, type Version } from './lib/versions'
@@ -633,6 +633,12 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
               return
             }
           }
+        }
+        // 기준값이 없으면 **조건 없는 UPDATE** 가 된다 — 그 사이 다른 기기가
+        // 쓴 걸 충돌 감지도 백업도 없이 덮는다. 본문이 비어 있어도 행은
+        // 있으므로 시각만 따로 읽어 와서 조건을 건다. 한 번만 든다.
+        if (lastServerUpdatedAt === undefined) {
+          lastServerUpdatedAt = await fetchProjectUpdatedAt(projectId)
         }
         const result = await saveSnapshotToSupabase(projectId, snap, thumb, lastServerUpdatedAt)
         if (result.conflict) {
