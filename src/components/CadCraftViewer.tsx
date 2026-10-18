@@ -47,8 +47,16 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
   /** 지금 보고 있는 저장본. 페이지를 갈아탈 때 다시 읽어야 해서 들고 있는다. */
   const [opened, setOpened] = useState<{ id: string; name: string } | null>(null)
 
+  /**
+   * 손을 뗀 뒤 **제대로** 한 번 더 그릴 타이머.
+   *
+   * 휠·드래그 중에는 draft 로 그린다 (그릴 거리를 다시 안 만든다). 그 상태로
+   * 두면 글자 외곽선이 거칠 수 있으니, 멈추면 정식으로 한 장 더 찍는다.
+   */
+  const settleRef = useRef(0)
+
   /** 한 장 그린다. WASM 이 픽셀을 주고 우리는 붙이기만 한다. */
-  const render = useCallback(() => {
+  const render = useCallback((draft = false) => {
     const cv = cvRef.current, doc = docRef.current
     if (!cv || !doc) return
     const dpr = window.devicePixelRatio || 1
@@ -59,8 +67,14 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
     const cam = camRef.current
     const t0 = performance.now()
     // scale 은 CSS 픽셀 기준이고 래스터는 장치 픽셀로 그려야 선명하다.
-    const r = doc.renderPixels(layout, cam.cx, cam.cy, cam.scale * dpr, w, h, BG)
-    if (!r) return
+    const r = doc.renderPixels(layout, cam.cx, cam.cy, cam.scale * dpr, w, h, BG, draft)
+    if (!r) {
+      // 못 그렸으면 **직전 그림이 그대로 남는다.** 그게 "잔상" 으로 보이므로
+      // 조용히 넘기지 않는다.
+      console.warn('[cadcraft] 한 장을 못 그렸다 — 직전 그림이 남아 있다')
+      setPerf('그리기 실패')
+      return
+    }
     const px = r.rgba()
     const ctx = cv.getContext('2d')
     // WASM 메모리를 그대로 들여다보는 뷰다 — 복사하지 않는다. r.free() 전에만
@@ -68,8 +82,23 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
     const clamped = new Uint8ClampedArray(px.buffer as ArrayBuffer, px.byteOffset, px.length)
     ctx?.putImageData(new ImageData(clamped, r.width(), r.height()), 0, 0)
     r.free()
-    setPerf(`${(performance.now() - t0).toFixed(0)}ms · 줌 ${cam.scale.toExponential(2)}`)
+    setPerf(`${(performance.now() - t0).toFixed(0)}ms${draft ? ' (draft)' : ''} · 줌 ${cam.scale.toExponential(2)}`)
   }, [layout])
+
+  /**
+   * 조작 중 한 장 — 빠른 쪽으로 그리고, 멈추면 정식으로 한 번 더.
+   *
+   * 큰 도면은 그릴 거리를 다시 만드는 데만 프레임당 100ms 가 넘는다. 그동안
+   * JS 가 막혀 있어서 브라우저는 직전 그림을 계속 보여준다 — 한이 본
+   * "줌할 때 텍스트 잔상" 이 그거다.
+   */
+  const renderLive = useCallback(() => {
+    render(true)
+    clearTimeout(settleRef.current)
+    settleRef.current = window.setTimeout(() => render(false), 160)
+  }, [render])
+
+  useEffect(() => () => clearTimeout(settleRef.current), [])
 
   /** 도면 전체가 보이게 맞춘다. */
   const fit = useCallback((which: string) => {
@@ -205,9 +234,9 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
     return () => { delete (window as unknown as Record<string, unknown>).__cadcraftLoad }
   }, [loadBytes])
 
-  useEffect(() => { render() }, [render, layout])
+  useEffect(() => { render(false) }, [render, layout])
   useEffect(() => {
-    const onResize = () => render()
+    const onResize = () => render(false)
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [render])
@@ -226,7 +255,7 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
     cam.scale *= Math.exp(-e.deltaY * 0.0015)
     cam.cx = wx - dx / cam.scale
     cam.cy = wy + dy / cam.scale
-    render()
+    renderLive()
   }
 
   return (
@@ -299,7 +328,7 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
           const cam = camRef.current
           cam.cx = d.cx - (e.clientX - d.x) / cam.scale
           cam.cy = d.cy + (e.clientY - d.y) / cam.scale
-          render()
+          renderLive()
         }}
         onPointerUp={e => { dragRef.current = null; e.currentTarget.releasePointerCapture(e.pointerId) }}
         style={{ flex: 1, display: 'block', cursor: 'grab', touchAction: 'none' }}

@@ -38,8 +38,17 @@ export interface CadDoc {
     layout: string, x: number, y: number, aperture: number, osmode: number,
     baseX: number, baseY: number,
   ): CadSnap | undefined
+  /**
+   * 한 장 그린다.
+   *
+   * `draft` 면 **그릴 거리를 다시 만들지 않는다** — 쓰던 걸 그대로 쓴다.
+   * 휠·드래그 중에 켠다. 큰 도면에서 목록 재생성이 프레임당 100ms 를 넘어서,
+   * 그 프레임이 통째로 밀리면 브라우저가 직전 그림을 계속 보여준다
+   * (한이 본 "줌할 때 텍스트 잔상" 이 그거다). 손을 떼면 끄고 한 번 더 그린다.
+   */
   renderPixels(
     layout: string, cx: number, cy: number, scale: number, w: number, h: number, bg: number,
+    draft: boolean,
   ): CadRaster | undefined
 }
 
