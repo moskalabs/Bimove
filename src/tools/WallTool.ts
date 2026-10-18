@@ -1,5 +1,5 @@
 import { StateNode, createShapeId, type TLPointerEventInfo, type TLShapeId } from 'tldraw'
-import { resolveDrawPoint, snapToTurn } from '../lib/snap'
+import { resolveDrawPoint, snapToTurn, findAlignGuides, slideAlongTo } from '../lib/snap'
 import { drawingState } from '../lib/drawingState'
 import { getDefaultWallThicknessMm, getSnapEnabled } from '../lib/settings'
 import { getScaleConfig } from '../lib/scaleConfig'
@@ -38,15 +38,38 @@ export class WallTool extends StateNode {
   override onEnter = () => {
     this.prevDir = null
     drawingState.prevDir = null
+    drawingState.alignGuides = []
   }
 
   private resolvePoint(): { x: number; y: number } {
+    drawingState.alignGuides = []
     const p = resolveDrawPoint(this.editor, this.startPoint, this.previewId ?? undefined)
+    // 진짜 geometry 스냅이 이겼으면 그대로 둔다 — 거기서 더 움직이면 안 붙는다.
     if (p.snapType && p.snapType !== 'angle') return p
-    if (!this.startPoint || !this.prevDir) return p
+    if (!this.startPoint) return p
     // shift 는 직교 스냅과 같은 규칙으로 뒤집는다
     if (getSnapEnabled() === this.editor.inputs.shiftKey) return p
-    return snapToTurn(this.startPoint, this.editor.inputs.currentPagePoint, this.prevDir) ?? p
+
+    const raw = this.editor.inputs.currentPagePoint
+    const turned = this.prevDir ? snapToTurn(this.startPoint, raw, this.prevDir) : null
+    const fixed = turned ?? p
+
+    // ── 각도를 지킨 채 보조선까지 미끄러진다 ──
+    //
+    // 좌표 하나를 억지로 맞추면 방금 맞춘 각이 깨진다. 대신 **그 방향 위에서**
+    // 보조선과 만나는 점을 찾는다 — 각은 그대로고 길이만 달라진다.
+    const guides = findAlignGuides(this.editor, raw, this.previewId ?? undefined)
+    if (guides.length === 0) return fixed
+
+    const dir = { x: fixed.x - this.startPoint.x, y: fixed.y - this.startPoint.y }
+    const slid = slideAlongTo(this.startPoint, dir, guides)
+    if (!slid) {
+      // 못 미끄러져도 보조선은 보여준다 — "저기에 맞출 수 있다" 는 신호다.
+      drawingState.alignGuides = guides
+      return fixed
+    }
+    drawingState.alignGuides = [slid.used]
+    return slid.point
   }
 
   private startWallAt(point: { x: number; y: number }) {
@@ -106,6 +129,7 @@ export class WallTool extends StateNode {
     this.prevDir = null
     drawingState.drawingId = null
     drawingState.prevDir = null
+    drawingState.alignGuides = []
     this.editor.setCurrentTool('select')
   }
 

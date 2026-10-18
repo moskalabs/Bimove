@@ -25,9 +25,16 @@ type OverlayState = {
    * 꺾였는지 눈으로 재야 한다.
    */
   turnDeg: number | null
+  /**
+   * 그릴 **보조선** (뷰포트 좌표). 화면을 가로지르는 점선이다.
+   *
+   * 도구가 정해 준 것을 그대로 그린다 — 여기서 스냅을 다시 계산하면 둘이
+   * 어긋나서 "그려진 선과 실제로 맞춰진 자리가 다른" 최악이 된다.
+   */
+  guides: Array<{ axis: 'x' | 'y'; at: number }>
 }
 
-const EMPTY: OverlayState = { start: null, snap: null, snapType: null, end: null, mid: null, angleDeg: null, distLabel: null, turnDeg: null }
+const EMPTY: OverlayState = { start: null, snap: null, snapType: null, end: null, mid: null, angleDeg: null, distLabel: null, turnDeg: null, guides: [] }
 
 /** 스냅 타입별 색상 */
 const SNAP_COLORS: Record<SnapType, string> = {
@@ -139,7 +146,14 @@ export function ToolOverlay() {
         }
       }
 
-      setState({ start, snap, snapType, end, mid, angleDeg, distLabel, turnDeg })
+      // 보조선은 page 좌표로 들어오므로 뷰포트로 옮긴다. 세로선(x=at)은
+      // 그 x 에 해당하는 화면 x 만 있으면 되고, 가로선은 화면 y 만 있으면 된다.
+      const guides = drawingState.alignGuides.map(g => {
+        const v = editor.pageToViewport({ x: g.at, y: g.at })
+        return { axis: g.axis, at: g.axis === 'x' ? v.x : v.y }
+      })
+
+      setState({ start, snap, snapType, end, mid, angleDeg, distLabel, turnDeg, guides })
     }
 
     let raf = 0
@@ -155,6 +169,20 @@ export function ToolOverlay() {
 
   return (
     <>
+      {/* 보조선 — 화면을 가로지르는 점선. **왜 커서가 끌려갔는지**를
+          보여주는 게 전부다. 없으면 CAD 에서 제일 답답한 순간이 된다. */}
+      {state.guides.map((g, i) => (
+        <div
+          key={`${g.axis}${i}`}
+          style={g.axis === 'x' ? {
+            position: 'absolute', left: g.at, top: 0, width: 0, height: '100%',
+            borderLeft: '1px dashed #b0b8c4', pointerEvents: 'none', zIndex: 99,
+          } : {
+            position: 'absolute', left: 0, top: g.at, width: '100%', height: 0,
+            borderTop: '1px dashed #b0b8c4', pointerEvents: 'none', zIndex: 99,
+          }}
+        />
+      ))}
       {/* 코너의 꺾임 각. 직각이면 또렷하게(진한 파랑), 아니면 옅게 —
           "쫙 90도로 붙었다" 가 한눈에 보여야 한다. */}
       {state.start && state.turnDeg !== null && (

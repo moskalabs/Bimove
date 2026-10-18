@@ -15,6 +15,13 @@ export const drawingState = {
    * 그 각을 코너에 띄운다), 첫 구간이면 null 이다.
    */
   prevDir: null as { x: number; y: number } | null,
+  /**
+   * 지금 걸린 **보조선**. ToolOverlay 가 점선으로 그린다.
+   *
+   * 도구가 정해서 알려준다 — 오버레이가 스냅을 다시 계산하면 둘이 어긋날 수
+   * 있고, 그러면 "그려진 선과 실제로 맞춰진 자리가 다른" 최악이 된다.
+   */
+  alignGuides: [] as Array<{ axis: 'x' | 'y'; at: number; through: { x: number; y: number } }>,
   pickTarget: null as PickTarget,
   pickCallback: null as ((result: PickResult) => void) | null,
   pickItemId: null as string | null,

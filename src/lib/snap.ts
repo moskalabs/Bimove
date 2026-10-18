@@ -404,6 +404,84 @@ export function snapAngle(dx: number, dy: number, stepDeg = 15): { x: number; y:
   return { x: Math.cos(angle) * len, y: Math.sin(angle) * len }
 }
 
+/** 보조선 하나. 이 점을 지나는 **세로(x) 또는 가로(y)** 선이다. */
+export type AlignGuide = { axis: 'x' | 'y'; at: number; through: { x: number; y: number } }
+
+/** 맞출 자리를 찾는 범위 (화면 px). 스냅 반경과 같은 느낌이어야 손에 익는다. */
+const ALIGN_RADIUS_PX = 8
+
+/**
+ * 커서가 **기존 점과 가로/세로로 나란한지** 본다.
+ *
+ * 평면도에서 제일 많이 하는 일이 "위 벽이랑 끝을 맞추는 것" 이다. 끝점 스냅은
+ * 그 점에 **붙을 때**만 걸리는데, 맞추고 싶은 건 대개 멀리 떨어진 채로 x 나
+ * y 만 같은 자리다. 그래서 좌표 하나만 보고 당긴다.
+ *
+ * 돌려주는 건 **보조선**이다 — 어디에 맞춰졌는지 화면에 그려줘야 한다.
+ * 안 그리면 왜 커서가 끌려갔는지 알 수가 없다 (CAD 에서 제일 답답한 순간이다).
+ */
+export function findAlignGuides(
+  editor: Editor,
+  point: { x: number; y: number },
+  excludeId?: string,
+): AlignGuide[] {
+  const radius = ALIGN_RADIUS_PX / editor.getZoomLevel()
+  let bestX: AlignGuide | null = null
+  let bestY: AlignGuide | null = null
+  let dx = radius
+  let dy = radius
+
+  for (const ep of getWallEndpoints(editor)) {
+    if (ep.id === excludeId) continue
+    const ax = Math.abs(ep.x - point.x)
+    if (ax < dx) {
+      dx = ax
+      bestX = { axis: 'x', at: ep.x, through: { x: ep.x, y: ep.y } }
+    }
+    const ay = Math.abs(ep.y - point.y)
+    if (ay < dy) {
+      dy = ay
+      bestY = { axis: 'y', at: ep.y, through: { x: ep.x, y: ep.y } }
+    }
+  }
+  // 둘 다 걸리면 둘 다 준다 — 교차점이 "모서리 맞춤" 이다.
+  return [bestX, bestY].filter((g): g is AlignGuide => g !== null)
+}
+
+/**
+ * 방향은 그대로 두고 **보조선까지 미끄러뜨린다.**
+ *
+ * 각을 이미 직각(또는 15°)으로 맞춰 놓았으므로, 좌표 하나를 억지로 바꾸면
+ * 그 각이 깨진다. 대신 **그 방향 위에서** 보조선과 만나는 점을 찾는다 —
+ * 각도 유지한 채 길이만 달라진다. Rayon 이 하는 것도 이거다.
+ *
+ * 방향이 보조선과 나란하면(세로선인데 가로로 긋는 중) 만나는 점이 없다.
+ * 그때는 그냥 둔다.
+ */
+export function slideAlongTo(
+  start: { x: number; y: number },
+  dir: { x: number; y: number },
+  guides: AlignGuide[],
+): { point: { x: number; y: number }; used: AlignGuide } | null {
+  const len = Math.hypot(dir.x, dir.y)
+  if (len < 1e-9) return null
+  const ux = dir.x / len
+  const uy = dir.y / len
+
+  let best: { point: { x: number; y: number }; used: AlignGuide; t: number } | null = null
+  for (const g of guides) {
+    const denom = g.axis === 'x' ? ux : uy
+    // 방향이 보조선과 나란하다 — 아무리 가도 안 만난다
+    if (Math.abs(denom) < 1e-6) continue
+    const t = ((g.axis === 'x' ? g.at - start.x : g.at - start.y)) / denom
+    // 뒤로 가는 건 안 쓴다. 커서 반대편으로 벽이 뒤집힌다.
+    if (!(t > 0) || !Number.isFinite(t)) continue
+    const cand = { x: start.x + ux * t, y: start.y + uy * t }
+    if (!best || t < best.t) best = { point: cand, used: g, t }
+  }
+  return best ? { point: best.point, used: best.used } : null
+}
+
 /**
  * 꺾이는 각을 **앞 구간 기준 직각**으로 당긴다.
  *
