@@ -48,7 +48,7 @@ import { readRecordSnapshot, writeFullRecords, writeRecordDiff, type SnapshotLik
 import { createDebouncedSaver } from './lib/debouncedSave'
 import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, saveProjectVersion, renameProject as renameProjectOnServer, fetchProject } from './lib/supabaseSync'
 import { readProjectHash, pushProjectHash, replaceProjectHash, clearProjectHash } from './lib/projectHash'
-import { migrateInBackground } from './lib/docMigration'
+import { warmDocCache } from './lib/bimoveDocStore'
 const CadCraftViewer = lazyWithReload(() => import('./components/CadCraftViewer').then(m => ({ default: m.CadCraftViewer })))
 import { saveVersion, getVersion, type Version } from './lib/versions'
 import { pushVersion } from './lib/versionSync'
@@ -311,13 +311,14 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
           // "왜 아까 작업이 없지" 하고 그 위에 또 저장해 덮어쓴다.
           toast('최근 저장본이 손상돼 이전 저장본으로 열었습니다. 작업 내용을 확인해주세요.', 'error')
         }
-        // 연 김에 우리 포맷으로 **빼둔다** (tldraw 를 걷어내기 위한 준비).
-        // 지금은 쓰기만 하고 아무도 읽지 않는다 — 원본은 그대로 둔다.
+        // 연 김에 우리 포맷 캐시를 데워 둔다 (tldraw 를 걷어내기 위한 준비).
+        // **캐시일 뿐이다** — 원본이 진실이고, 읽을 때 지문이 안 맞으면
+        // 그 자리에서 다시 변환한다. 그래서 여기서 실패해도 아무것도 안 잃는다.
         // 기다리지 않는다. 사용자는 도면을 보러 온 것이다.
         //
         // 에디터가 **실제로 연 그 후보**를 넘긴다. 저장소를 다시 읽으면
-        // 화면에 있는 것과 다른 걸 옮길 수 있다 (예비본으로 열었을 때).
-        migrateInBackground(projectId, candidates[usedIndex])
+        // 화면에 있는 것과 다른 걸 캐시할 수 있다 (예비본으로 열었을 때).
+        warmDocCache(projectId, candidates[usedIndex])
       }
       // 빈 페이지 자동 정리: 셰이프가 없는 여분 페이지 삭제 (최소 1페이지 유지)
       const allPages = ed.getPages()
