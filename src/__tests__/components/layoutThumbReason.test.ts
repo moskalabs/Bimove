@@ -31,22 +31,33 @@ function fakeEditor(opts: {
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"><path d="M0 0L9 9"/></svg>'
 
+/**
+ * 굽는 흉내. jsdom 에는 canvas 가 없어서 진짜 `rasterizeSvg` 는 못 돈다.
+ *
+ * 실제 코드는 SVG 를 **작은 PNG 로 구워서** 넣는다 — 썸네일인데 원본 정밀도
+ * SVG 를 통째로 DOM 에 꽂고 있었고, 그래서 큰 페이지는 아예 포기했다.
+ */
+const bake = async (svg: string) => (svg ? 'data:image/png;base64,AAA' : null)
+/** 굽다 실패하는 경우 (SVG 를 이미지로 못 읽는다). */
+const bakeFails = async () => null
+
 describe('generateThumbForPage', () => {
   it('멀쩡하면 그림을 준다 — 이유는 없다', async () => {
-    const r = await generateThumbForPage(fakeEditor({ shapes: 10, svg: SVG }), PAGE)
-    expect(r.svg).toContain('width="100%"')
+    const r = await generateThumbForPage(fakeEditor({ shapes: 10, svg: SVG }), PAGE, bake)
+    // SVG 가 아니라 **구워진 PNG** 가 나와야 한다
+    expect(r.svg).toMatch(/^data:image\/png/)
     expect(r.why).toBeNull()
   })
 
   it('**정말 비었을 때만** 이유가 없다 (= "빈 페이지" 로 보인다)', async () => {
-    const r = await generateThumbForPage(fakeEditor({ shapes: 0 }), PAGE)
+    const r = await generateThumbForPage(fakeEditor({ shapes: 0 }), PAGE, bake)
     expect(r.svg).toBeNull()
     expect(r.why).toBeNull()
   })
 
   it('도형이 한도를 넘으면 **개수를 말한다**', async () => {
     // 여기가 "빈 페이지" 로 나오면 도면이 날아간 줄 안다.
-    const r = await generateThumbForPage(fakeEditor({ shapes: 20001, svg: SVG }), PAGE)
+    const r = await generateThumbForPage(fakeEditor({ shapes: 20001, svg: SVG }), PAGE, bake)
     expect(r.svg).toBeNull()
     expect(r.why).toContain('20,001')
     expect(r.why).not.toContain('빈')
@@ -54,34 +65,48 @@ describe('generateThumbForPage', () => {
 
   it('옛 한도(2000)는 이제 안 걸린다', async () => {
     // 2000 이 왜 2000 인지는 아무도 몰랐고, 넘으면 조용히 빈 페이지가 됐다.
-    const r = await generateThumbForPage(fakeEditor({ shapes: 2500, svg: SVG }), PAGE)
+    const r = await generateThumbForPage(fakeEditor({ shapes: 2500, svg: SVG }), PAGE, bake)
     expect(r.svg).not.toBeNull()
     expect(r.why).toBeNull()
   })
 
-  it('SVG 가 너무 크면 **버리고 크기를 말한다**', async () => {
-    // 수 MB 를 DOM 에 넣으면 패널이 멈춘다. 버리되 조용히 버리지 않는다.
-    const huge = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><path d="${'L1 1'.repeat(900_000)}"/></svg>`
-    const r = await generateThumbForPage(fakeEditor({ shapes: 10, svg: huge }), PAGE)
+  it('수 MB 짜리도 **이제는 구워서 낸다**', async () => {
+    // 전엔 2MB 넘으면 포기했다. SVG 를 그대로 DOM 에 넣었기 때문인데,
+    // 이제 작은 PNG 로 구우므로 그림이 복잡해도 결과 크기가 고정이다.
+    const big = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><path d="${'L1 1'.repeat(900_000)}"/></svg>`
+    const r = await generateThumbForPage(fakeEditor({ shapes: 10, svg: big }), PAGE, bake)
+    expect(r.svg).toMatch(/^data:image\/png/)
+    expect(r.why).toBeNull()
+  })
+
+  it('그래도 말이 안 되게 크면 버린다 (문자열 만드는 메모리)', async () => {
+    const absurd = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><path d="${'L1 1'.repeat(9_000_000)}"/></svg>`
+    const r = await generateThumbForPage(fakeEditor({ shapes: 10, svg: absurd }), PAGE, bake)
     expect(r.svg).toBeNull()
     expect(r.why).toContain('MB')
   })
 
+  it('굽다 실패하면 그렇다고 말한다', async () => {
+    const r = await generateThumbForPage(fakeEditor({ shapes: 10, svg: SVG }), PAGE, bakeFails)
+    expect(r.svg).toBeNull()
+    expect(r.why).toContain('못 구웠다')
+  })
+
   it('SVG 를 못 받으면 실패라고 말한다', async () => {
-    const r = await generateThumbForPage(fakeEditor({ shapes: 10, svg: null }), PAGE)
+    const r = await generateThumbForPage(fakeEditor({ shapes: 10, svg: null }), PAGE, bake)
     expect(r.svg).toBeNull()
     expect(r.why).toContain('실패')
   })
 
   it('그리다 터져도 이유가 남는다', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const r = await generateThumbForPage(fakeEditor({ shapes: 10, throws: true }), PAGE)
+    const r = await generateThumbForPage(fakeEditor({ shapes: 10, throws: true }), PAGE, bake)
     expect(r.svg).toBeNull()
     expect(r.why).toContain('캔버스가 없다')
   })
 
   it('에디터가 아직 없으면 조용히 넘어간다', async () => {
-    const r = await generateThumbForPage(null as never, PAGE)
+    const r = await generateThumbForPage(null as never, PAGE, bake)
     expect(r.svg).toBeNull()
     expect(r.why).toBeNull()
   })

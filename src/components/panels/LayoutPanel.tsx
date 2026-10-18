@@ -33,8 +33,67 @@ export type ThumbResult = { svg: string | null; why: string | null }
  */
 const THUMB_MAX_SHAPES = 20000
 
-/** 만들어진 SVG 가 이보다 크면 버린다. DOM 에 넣으면 패널이 죽는다. */
-const THUMB_MAX_BYTES = 2_000_000
+/**
+ * 만들어진 SVG 가 이보다 크면 버린다.
+ *
+ * 전엔 2MB 였다. SVG 를 **그대로 DOM 에 넣었기 때문**이다 — 수 MB 짜리
+ * path 가 들어가면 패널이 멈춘다. 이제는 작은 PNG 로 구워서 넣으므로
+ * (`rasterizeSvg`) DOM 비용이 그림 복잡도와 무관하다. 남은 위험은 **문자열을
+ * 만드는 메모리**뿐이라 한참 느슨하게 둔다.
+ */
+const THUMB_MAX_BYTES = 32_000_000
+
+/** 구워낼 크기. 카드가 4:3 이고, 2배로 떠야 고해상도 화면에서 안 흐리다. */
+const THUMB_W = 480
+const THUMB_H = 360
+
+/**
+ * SVG 를 **작은 PNG 로 굽는다.**
+ *
+ * 썸네일은 240px 짜리인데 원본 정밀도 SVG 를 통째로 DOM 에 넣고 있었다.
+ * dxfgroup 하나가 수십 KB path 라, 큰 페이지는 넣을 수가 없어서 "미리보기
+ * 생략" 으로 떨어졌다 — **해상도를 낮추면 그릴 수 있는 것**을 포기한 셈이다.
+ *
+ * 구워두면 결과가 `THUMB_W×THUMB_H` 로 **고정**이라, 도면이 아무리 복잡해도
+ * 카드 하나가 수십 KB 다. 곁들여 `dangerouslySetInnerHTML` 도 없어진다 —
+ * 도면 글자가 그대로 들어가던 자리였다.
+ */
+export async function rasterizeSvg(
+  svg: string, w = THUMB_W, h = THUMB_H,
+): Promise<string | null> {
+  // SVG 를 blob URL 로 띄운다. dataURL 로 하면 큰 그림에서 base64 가 한 번 더
+  // 불어난다 (수 MB 짜리에서 그게 그대로 메모리다).
+  const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }))
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image()
+      el.onload = () => resolve(el)
+      el.onerror = () => reject(new Error('SVG 를 이미지로 못 읽었다'))
+      el.src = url
+    })
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    // 카드 배경과 같은 흰색을 깔아둔다. 안 깔면 투명 PNG 가 되어 다크모드에서
+    // 선이 안 보인다.
+    ctx.fillStyle = '#fff'
+    ctx.fillRect(0, 0, w, h)
+    // 비율을 지켜 가운데 맞춤 (CSS 의 object-fit: contain 과 같은 계산)
+    const sx = w / img.width
+    const sy = h / img.height
+    const k = Math.min(sx, sy)
+    const dw = img.width * k
+    const dh = img.height * k
+    ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh)
+    return canvas.toDataURL('image/png')
+  } catch {
+    return null
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
 
 /** SVG를 썸네일용으로 축소: width/height → 100%, viewBox 보장, foreignObject 제거 */
 export function prepareSvgForThumb(svgStr: string): string {
@@ -82,6 +141,8 @@ export function prepareSvgForThumb(svgStr: string): string {
 export async function generateThumbForPage(
   editor: ReturnType<typeof useEditor>,
   pageId: TLPageId,
+  /** 굽는 함수. 테스트가 갈아끼운다 (jsdom 에는 canvas 가 없다). */
+  rasterize: (svg: string) => Promise<string | null> = rasterizeSvg,
 ): Promise<ThumbResult> {
   if (!editor) return { svg: null, why: null }
   const ids = [...editor.getPageShapeIds(pageId)]
@@ -98,13 +159,18 @@ export async function generateThumbForPage(
       return { svg: null, why: `미리보기 실패 · 도형 ${ids.length.toLocaleString()}개` }
     }
     if (result.svg.length > THUMB_MAX_BYTES) {
-      // 만들긴 했는데 DOM 에 넣을 수가 없다. 넣으면 패널이 멈춘다.
       return {
         svg: null,
         why: `미리보기가 ${Math.round(result.svg.length / 1048576)}MB · 생략`,
       }
     }
-    return { svg: prepareSvgForThumb(result.svg), why: null }
+    // **작은 PNG 로 구워서** 넣는다. 원본 SVG 를 그대로 DOM 에 넣으면 큰
+    // 페이지에서 패널이 멈춘다 (rasterizeSvg 주석 참고).
+    const png = await rasterize(prepareSvgForThumb(result.svg))
+    if (!png) {
+      return { svg: null, why: `미리보기를 못 구웠다 · 도형 ${ids.length.toLocaleString()}개` }
+    }
+    return { svg: png, why: null }
   } catch (e) {
     console.warn('[thumb] fail:', e)
     return {
@@ -319,12 +385,15 @@ export function LayoutPanel() {
           >
             <div className="layout-page-thumb">
               {p.svgHtml ? (
-                <div
-                  dangerouslySetInnerHTML={{ __html: p.svgHtml }}
+                // 구워진 PNG 다. 전엔 SVG 문자열을 dangerouslySetInnerHTML 로
+                // 꽂았는데, 거기엔 **도면 글자가 그대로** 들어간다.
+                <img
+                  src={p.svgHtml}
+                  alt=""
                   style={{
                     width: '100%',
                     height: '100%',
-                    overflow: 'hidden',
+                    objectFit: 'contain',
                     pointerEvents: 'none',
                   }}
                 />
