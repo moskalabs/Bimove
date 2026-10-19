@@ -208,6 +208,9 @@
   border-radius: 10px;
   box-shadow: 0 6px 24px rgba(0,0,0,0.14);
   min-width: 180px;
+  /* 프로젝트 이름이 길어도 메뉴가 화면을 가로지르지 않게. 넘치면 .active 의
+     말줄임이 받는다. */
+  max-width: 320px;
   z-index: 1100;
   padding: 4px 0;
   overflow: visible;
@@ -239,6 +242,10 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  /* 메뉴 글자는 **안 접는다.** "DXF / DWG 도면" 이 좁은 폭에서 "…도 / 면"
+     으로 쪼개졌다. 메뉴는 폭을 내용에 맞추는 게 맞지, 글씨를 줄여 억지로
+     밀어넣을 자리가 아니다 (줄이면 읽기만 나빠진다). */
+  white-space: nowrap;
 }
 
 .lbar-menu-item:hover {
@@ -248,6 +255,11 @@
 .lbar-menu-item.active {
   color: #1a73e8;
   font-weight: 600;
+  /* 프로젝트 이름만은 길이를 모른다. 안 접기로 했으니 대신 **잘라서** 보여준다 —
+     안 그러면 이름 하나가 메뉴 폭을 화면 끝까지 늘린다. */
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .lbar-menu-add {
@@ -275,6 +287,9 @@
   position: absolute;
   left: 100%;
   top: -4px;
+  /* 내용에 맞춰 늘어나게 둔다. 140px 로 묶여 있어서 "DXF / DWG 도면" 이
+     두 줄로 접혔다. */
+  width: max-content;
   min-width: 140px;
   background: #fff;
   border: 1px solid #e0e0e0;
