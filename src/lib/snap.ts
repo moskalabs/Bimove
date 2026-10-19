@@ -483,6 +483,41 @@ export function slideAlongTo(
 }
 
 /**
+ * 그리는 중인 구간 옆에 **라벨을 놓을 자리**. 화면(viewport) 좌표로 받고 준다.
+ *
+ * 전엔 길이를 구간 **한가운데 가로로** 얹었다. 선 위에 글자가 올라타서, 가로
+ * 벽에서는 벽을 가리고 세로 벽에서는 글자가 선을 가로지른다. 경쟁 제품(Rayon)
+ * 은 글자를 **벽을 따라 돌리고 옆으로 비켜** 놓는다 — 그래야 선도 글자도 다
+ * 보인다.
+ *
+ * 비키는 쪽은 **진행 방향 기준 왼쪽**으로 고정한다. 바깥/안쪽을 따지려면 앞
+ * 구간까지 봐야 하는데, 꺾임마다 라벨이 좌우로 튀면 그게 더 산만하다.
+ *
+ * @param at 라벨을 놓을 기준점 (대개 구간 중점이나 코너)
+ * @param offsetPx 선에서 떨어뜨릴 화면 px
+ * @returns `deg` 는 CSS `rotate()` 에 그대로 넣는 각. 글자가 뒤집히지 않게 접었다.
+ */
+export function labelPlacement(
+  at: { x: number; y: number },
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  offsetPx: number,
+): { x: number; y: number; deg: number } {
+  const dx = end.x - start.x, dy = end.y - start.y
+  const len = Math.hypot(dx, dy)
+  if (len < 1e-6) return { x: at.x, y: at.y, deg: 0 }
+  // 화면 좌표는 y 가 아래로 간다. 그 좌표계에서 진행 방향의 **왼쪽**은
+  // (dy, -dx) 다.
+  const nx = dy / len, ny = -dx / len
+  let deg = Math.atan2(dy, dx) * 180 / Math.PI
+  // 글자가 거꾸로 서지 않게 반 바퀴 돌린다. 180° 를 더해도 **놓는 자리는
+  // 그대로** 라 라벨이 선 반대쪽으로 넘어가지 않는다.
+  if (deg > 90) deg -= 180
+  else if (deg <= -90) deg += 180
+  return { x: at.x + nx * offsetPx, y: at.y + ny * offsetPx, deg }
+}
+
+/**
  * 앞 구간과 이루는 **꺾임 각의 크기**(도). 곧게 이어가면 0, 직각이면 90,
  * 왔던 길로 되돌아가면 180.
  *

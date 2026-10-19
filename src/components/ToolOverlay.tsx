@@ -3,13 +3,16 @@ import type { TLShapeId } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
 import {
   snapToWallEndpoint, snapToIntersection, snapToPerpendicular, snapToExtension,
-  turnMagnitudeDeg,
+  turnMagnitudeDeg, labelPlacement,
   type SnapType,
 } from '../lib/snap'
 import { drawingState } from '../lib/drawingState'
 import { getScaleConfig, formatLength } from '../lib/scaleConfig'
 
 type Pt = { x: number; y: number }
+
+/** 라벨을 선에서 떨어뜨릴 화면 px. 선도 글자도 다 보이는 최소치다. */
+const LABEL_OFFSET_PX = 18
 
 type OverlayState = {
   start: Pt | null
@@ -166,6 +169,12 @@ export function ToolOverlay() {
   const snapColor = state.snapType ? SNAP_COLORS[state.snapType] : '#00b341'
   const snapLabel = state.snapType ? SNAP_LABELS[state.snapType] : ''
 
+  // 라벨은 **선 옆으로 비켜서** 놓는다. 선 위에 얹으면 둘 다 안 보인다.
+  const line = state.start && state.end ? { s: state.start, e: state.end } : null
+  const distAt = line && state.mid ? labelPlacement(state.mid, line.s, line.e, LABEL_OFFSET_PX) : null
+  // 꺾임 각은 코너 옆에. 길이와 같은 쪽이라 둘이 한 줄로 읽힌다.
+  const turnAt = line ? labelPlacement(line.s, line.s, line.e, LABEL_OFFSET_PX) : null
+
   return (
     <>
       {/* 보조선 — 화면을 가로지르는 점선. **왜 커서가 끌려갔는지**를
@@ -184,9 +193,10 @@ export function ToolOverlay() {
       ))}
       {/* 코너의 꺾임 각. 직각이면 또렷하게(진한 파랑), 아니면 옅게 —
           "쫙 90도로 붙었다" 가 한눈에 보여야 한다. */}
-      {state.start && state.turnDeg !== null && (
+      {state.start && state.turnDeg !== null && turnAt && (
         <div style={{
-          position: 'absolute', left: state.start.x + 10, top: state.start.y - 26,
+          position: 'absolute', left: turnAt.x, top: turnAt.y,
+          transform: 'translate(-50%, -50%)',
           padding: '2px 7px', borderRadius: 10,
           background: Math.abs(state.turnDeg - 90) < 0.05 ? '#1a73e8' : '#1a73e899',
           color: '#fff', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
@@ -262,9 +272,13 @@ export function ToolOverlay() {
           {state.angleDeg.toFixed(1)}°
         </div>
       )}
-      {state.mid && state.distLabel && (
+      {/* 길이. **벽을 따라 돌리고 옆으로 비켜** 놓는다 (Rayon 과 같은 자리).
+          전엔 중점 바로 위에 가로로 얹어서, 세로 벽에서는 글자가 선을
+          가로지르고 가로 벽에서는 벽을 덮었다. */}
+      {distAt && state.distLabel && (
         <div className="tool-dist-label" style={{
-          left: state.mid.x, top: state.mid.y - 24,
+          left: distAt.x, top: distAt.y,
+          transform: `translate(-50%, -50%) rotate(${distAt.deg}deg)`,
         }}>
           {state.distLabel}
         </div>
