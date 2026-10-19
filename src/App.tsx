@@ -46,7 +46,7 @@ import { EditorContext } from './context/EditorContext'
 import { ProjectContext, ProjectNameContext } from './context/ProjectContext'
 import { loadSnapshot, dropLegacySnapshot, saveThumbnail, touchProject, resolveSnapshot, renameProject, ensureProjectEntry, snapshotCandidates } from './lib/projectStore'
 import { readRecordSnapshot, writeFullRecords, writeRecordDiff, type SnapshotLike } from './lib/snapshotRecords'
-import { createDebouncedSaver } from './lib/debouncedSave'
+import { createDebouncedSaver, type DebouncedSaver } from './lib/debouncedSave'
 import { saveProjectSnapshot as saveSnapshotToSupabase, loadProjectSnapshot as loadSnapshotFromSupabase, fetchProjectUpdatedAt, saveProjectVersion, renameProject as renameProjectOnServer, fetchProject } from './lib/supabaseSync'
 import { readProjectHash, pushProjectHash, replaceProjectHash, clearProjectHash } from './lib/projectHash'
 const CadCraftViewer = lazyWithReload(() => import('./components/CadCraftViewer').then(m => ({ default: m.CadCraftViewer })))
@@ -176,22 +176,33 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
   // 대시보드를 거치면서 언마운트된다). 그래서 saver 를 한 번만 만들어 둔다.
   const [projectName, setProjectNameState] = useState(initialProjectName ?? '')
   const projectNameRef = useRef(projectName)
-  const [nameSaver] = useState(() => createDebouncedSaver(() => {
-    const next = projectNameRef.current.trim()
-    if (!next) return  // 빈 이름은 저장하지 않는다 — 지우는 중일 뿐이다
-    renameProject(projectId, next)
-    void renameProjectOnServer(projectId, next).catch(err => {
-      console.warn('[project] 이름 저장 실패', err)
-    })
-  }, 800))
+  // **렌더 중에 만들지 않는다.** 처음 이름을 고칠 때(이벤트 핸들러 안)에
+  // 만든다 — 렌더 도중 ref 를 넘기면 리액트가 경고하고(react-hooks/refs),
+  // StrictMode 의 두 번 렌더에서 타이머가 두 개 생길 수도 있다.
+  // POTablesTab 의 senderRef 와 같은 관용구다.
+  const nameSaverRef = useRef<DebouncedSaver | null>(null)
+  const getNameSaver = useCallback(() => {
+    if (nameSaverRef.current === null) {
+      nameSaverRef.current = createDebouncedSaver(() => {
+        const next = projectNameRef.current.trim()
+        if (!next) return  // 빈 이름은 저장하지 않는다 — 지우는 중일 뿐이다
+        renameProject(projectId, next)
+        void renameProjectOnServer(projectId, next).catch(err => {
+          console.warn('[project] 이름 저장 실패', err)
+        })
+      }, 800)
+    }
+    return nameSaverRef.current
+  }, [projectId])
   // 이름 고치고 바로 대시보드로 나가도 사라지지 않게, 언마운트 때는 flush.
-  useEffect(() => () => nameSaver.flush(), [nameSaver])
+  // 한 번도 안 고쳤으면 saver 자체가 없다 — 그때는 할 일도 없다.
+  useEffect(() => () => nameSaverRef.current?.flush(), [])
 
   const setProjectName = useCallback((name: string) => {
     projectNameRef.current = name
     setProjectNameState(name)
-    nameSaver.schedule()
-  }, [nameSaver])
+    getNameSaver().schedule()
+  }, [getNameSaver])
 
   const projectNameValue = useMemo(
     () => ({ name: projectName, setName: setProjectName }),

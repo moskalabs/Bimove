@@ -129,6 +129,29 @@ export function readOleFrameRect(blob: Uint8Array): OleRect | null {
 const CFBF_SIG = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]
 const MAXREGSECT = 0xfffffffa
 
+/**
+ * 스트림 크기를 **문서 크기 안으로** 자른다.
+ *
+ * CFBF 디렉터리의 크기 필드는 32비트라 4GB 까지 적힌다. 그 숫자를 믿고
+ * `new Uint8Array(size)` 하면 헤더 하나로 탭이 죽는다. 스트림이 제 문서보다
+ * 클 수는 없으므로 거기가 자연스러운 상한이다 — 더 적혀 있으면 채울 바이트가
+ * 애초에 없다.
+ */
+export function clampStreamSize(size: number, docBytes: number): number {
+  if (!Number.isFinite(size) || size <= 0) return 0
+  return Math.min(size, Math.max(0, docBytes))
+}
+
+/**
+ * 비트맵 한 장이 차지해도 되는 **픽셀 수** 상한.
+ *
+ * 가로·세로를 각각 32768 로 막고 있었는데, 그 둘을 곱하면 10억 7천만 픽셀 =
+ * RGBA 로 **4GB** 다. 막은 게 아니었다. 실제로 DXF 에 박히는 래스터는 스캔한
+ * 도면이나 로고다 — A1 을 150dpi 로 떠도 1700만 화소쯤이다. 6400만이면
+ * 넉넉하고, 공격용으로 적어 넣은 숫자는 걸린다.
+ */
+const MAX_BITMAP_PIXELS = 64 * 1000 * 1000
+
 /** 복합문서 서명이 blob 안 어디서 시작하는지 (성수 파일은 128). 없으면 -1 */
 export function findCompoundDoc(blob: Uint8Array, searchLimit = 65536): number {
   const end = Math.min(blob.byteLength - CFBF_SIG.length, searchLimit)
@@ -218,7 +241,13 @@ export function openCompound(blob: Uint8Array, docOffset: number): Compound | nu
   }
 
   const readSectors = (start: number, size: number): { data: Uint8Array; validBytes: number } => {
-    const buf = new Uint8Array(size)
+    // **파일이 말하는 크기를 그대로 믿고 할당하지 않는다.**
+    //
+    // `size` 는 디렉터리 항목의 32비트 필드라 4GB 까지 적을 수 있는데, 그건
+    // 100바이트짜리 헤더 하나로 탭을 죽일 수 있다는 뜻이다. 스트림이 담긴
+    // 문서보다 클 수는 없으므로 거기서 자른다 — 넘게 적혀 있으면 어차피
+    // 채울 바이트가 없다.
+    const buf = new Uint8Array(clampStreamSize(size, doc.byteLength))
     let w = 0
     let valid = 0
     for (const s of chainOf(start, fat)) {
@@ -286,8 +315,10 @@ export function openCompound(blob: Uint8Array, docOffset: number): Compound | nu
   const read = (start: number, size: number): { data: Uint8Array; validBytes: number } => {
     if (size === 0) return { data: new Uint8Array(0), validBytes: 0 }
     if (size >= miniCutoff) return readSectors(start, size)
-    if (!loadMini() || !mini || !miniFat) return { data: new Uint8Array(size), validBytes: 0 }
-    const buf = new Uint8Array(size)
+    if (!loadMini() || !mini || !miniFat) {
+      return { data: new Uint8Array(clampStreamSize(size, doc.byteLength)), validBytes: 0 }
+    }
+    const buf = new Uint8Array(clampStreamSize(size, doc.byteLength))
     let w = 0
     let valid = 0
     for (const s of chainOf(start, miniFat)) {
@@ -338,6 +369,8 @@ function decodeDibAt(
   const bottomUp = rawHeight > 0
 
   if (width <= 0 || height <= 0 || width > 32768 || height > 32768) return null
+  // 가로·세로를 따로 막는 것만으로는 부족하다 — 곱이 상한이다 (위 주석).
+  if (width * height > MAX_BITMAP_PIXELS) return null
   if (comp !== BI_RGB && comp !== BI_BITFIELDS) return null
   if (![1, 4, 8, 16, 24, 32].includes(bpp)) return null
 
@@ -359,6 +392,11 @@ function decodeDibAt(
 
   const stride = ((width * bpp + 31) >> 5) << 2
   if (pixOff >= buf.byteLength) return null
+
+  // 한 줄도 못 채울 데이터면 **할당 전에** 돌아간다. 아래 `validRows === 0` 과
+  // 같은 결론인데, 거기까지 가면 선언 크기대로 이미 잡아 놓은 뒤다 — 헤더에
+  // 큰 숫자만 적어 넣는 공격이 노리는 게 정확히 그 사이다.
+  if (pixOff + stride > validBytes) return null
 
   const rgba = new Uint8Array(width * height * 4)
   let validRows = 0

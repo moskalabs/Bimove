@@ -23,8 +23,6 @@ type ServerTable = { id: string; label: string }
 
 /** 서버의 purchase_orders 한 행 + 딸린 물량표. null 이면 행이 아직 없다. */
 let server: { updatedAt: string; tables: ServerTable[] } | null = null
-/** RPC 가 몇 번 불렸나 — 충돌 때 **아무것도 안 썼는지** 보는 데 쓴다. */
-let rpcCalls = 0
 /** true 면 RPC 가 터진다 (네트워크 끊김 흉내). */
 let rpcFails = false
 /**
@@ -125,7 +123,6 @@ vi.mock('../../lib/supabase', () => {
         if (cas && !casDeployed) {
           return { error: { code: 'PGRST202', message: 'could not find the function' } }
         }
-        rpcCalls++
         if (rpcFails) return { error: { code: 'XX000', message: '네트워크' } }
         // CAS: 기대와 다르면 **아무것도 안 쓰고** P0409 로 올린다.
         // (마이그레이션의 RAISE EXCEPTION … ERRCODE = 'P0409' 와 같은 동작)
@@ -167,7 +164,6 @@ const po = (...labels: string[]): PurchaseOrder => ({
 
 beforeEach(() => {
   server = { updatedAt: toPg('2026-10-09T09:00:00.000Z'), tables: [{ id: 't0', label: '벽체' }] }
-  rpcCalls = 0
   rpcFails = false
   casDeployed = true
   poReads = 0
