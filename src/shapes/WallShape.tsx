@@ -69,6 +69,39 @@ export function miterExtension(
   return Math.min(h2 / Math.max(tanHalf, 0.05), h2 * 8) // cap extreme angles
 }
 
+/**
+ * 꺾인 자리에서 **옆면 하나**가 상대 벽의 옆면과 만나는 지점. 접점 기준 오프셋.
+ *
+ * `miterExtension` 은 스칼라 하나를 내놓고 그걸 **양쪽 옆면에 똑같이** 더한다.
+ * 바깥쪽은 그게 맞지만 안쪽은 반대로 **당겨야** 한다 — 안 당기면 90° 코너마다
+ * 두께만큼 삐져나온 꼬다리가 생기고, 흰 속으로 바꾼 뒤로는 그게 그대로 보인다.
+ * 경쟁 제품(Rayon)의 코너가 깔끔한 건 옆면을 각각 교차시키기 때문이다.
+ *
+ * @param ax,ay 접점에서 **바깥으로** 향하는 내 벽 방향 (단위)
+ * @param bx,by 접점에서 **바깥으로** 향하는 상대 벽 방향 (단위)
+ * @param side  +1 이면 perp(a) 쪽 옆면, -1 이면 반대쪽
+ * @returns 접점에서의 오프셋. 거의 나란하면 `null` (꺾인 게 아니다).
+ */
+export function miterOffset(
+  ax: number, ay: number,
+  bx: number, by: number,
+  hA: number, hB: number,
+  side: 1 | -1,
+): { x: number; y: number } | null {
+  const cross = ax * by - ay * bx
+  if (Math.abs(cross) < 0.05) return null
+  // 이어지는 외곽선이므로 내 +perp 쪽은 상대의 -perp 쪽과 한 줄이 된다.
+  const nAx = -ay * side, nAy = ax * side
+  const nBx = by * side, nBy = -bx * side
+  const dx = hB * nBx - hA * nAx
+  const dy = hB * nBy - hA * nAy
+  let t = (dx * by - dy * bx) / cross
+  // 아주 뾰족한 각에서 창처럼 뻗는 것만 막는다.
+  const cap = hA * 8
+  t = Math.max(-cap, Math.min(cap, t))
+  return { x: hA * nAx + t * ax, y: hA * nAy + t * ay }
+}
+
 const JOIN_SNAP_R = 8 // page-unit radius for endpoint matching
 
 // ── Wall snapshot cache: avoid calling getCurrentPageShapes() per-wall ──
@@ -88,16 +121,22 @@ function getWallsSnapshot(editor: Editor): WallSnapshot[] {
 }
 
 // ── Per-shape corner cache ──
-const _cornersCache = new Map<string, { key: string; corners: Vec[] }>()
+/**
+ * 벽 하나의 외곽선. `capStart`/`capEnd` 는 **그 끝을 막는 선을 그릴지**다.
+ * 다른 벽이 붙은 끝은 막으면 안 된다 — 코너를 가로지르는 선이 되어 보인다.
+ */
+export type WallOutline = { corners: Vec[]; capStart: boolean; capEnd: boolean }
+
+const _cornersCache = new Map<string, { key: string; outline: WallOutline }>()
 
 function shapeHashKey(shape: WallShape): string {
   return `${shape.x}|${shape.y}|${shape.props.x2}|${shape.props.y2}|${shape.props.thickness}`
 }
 
-function computeJoinedCorners(editor: Editor, shape: WallShape): Vec[] {
+function computeWallOutline(editor: Editor, shape: WallShape): WallOutline {
   const { x2, y2, thickness } = shape.props
   const len = Math.sqrt(x2 * x2 + y2 * y2)
-  if (len < 1) return getCorners(shape)
+  if (len < 1) return { corners: getCorners(shape), capStart: true, capEnd: true }
 
   // 캐시 확인: 자신의 geometry + 이웃 wall들의 hash가 같으면 재사용
   const walls = getWallsSnapshot(editor)
@@ -167,11 +206,17 @@ function computeJoinedCorners(editor: Editor, shape: WallShape): Vec[] {
     for (let i = 0; i < 500; i++) { const r = it.next(); if (r.done) break; _cornersCache.delete(r.value) }
   }
   const cached = _cornersCache.get(shape.id)
-  if (cached && cached.key === fullKey) return cached.corners
+  if (cached && cached.key === fullKey) return cached.outline
 
   // ── 실제 계산 (이웃만 순회) ──
   let startExt = 0
   let endExt = 0
+  // 끝점끼리 만난 상대. `[접점에서 바깥으로 향하는 방향 x, y, 반두께]`.
+  // 여기 걸리면 스칼라 ext 대신 옆면을 각각 교차시킨다.
+  let startPeer: [number, number, number] | null = null
+  let endPeer: [number, number, number] | null = null
+  let joinedStart = false
+  let joinedEnd = false
 
   for (const w of neighbors) {
     const wp = w.props
@@ -185,16 +230,21 @@ function computeJoinedCorners(editor: Editor, shape: WallShape): Vec[] {
     const dEE = Math.hypot(w.x + wp.x2 - ex, w.y + wp.y2 - ey)
 
     // Corner miter: connection at our START — extend backward (−dir)
-    if (dSS < snapR)
-      startExt = Math.max(startExt, miterExtension(ux, uy, wux, wuy, wh))
-    else if (dSE < snapR)
-      startExt = Math.max(startExt, miterExtension(ux, uy, -wux, -wuy, wh))
+    if (dSS < snapR || dSE < snapR) {
+      const [bx, by] = dSS < snapR ? [wux, wuy] : [-wux, -wuy]
+      startExt = Math.max(startExt, miterExtension(ux, uy, bx, by, wh))
+      joinedStart = true
+      // 상대가 여럿이면 제일 많이 벌어지는 쪽에 맞춘다 (옛 max 와 같은 뜻).
+      if (!startPeer || miterExtension(ux, uy, bx, by, wh) >= startExt) startPeer = [bx, by, wh]
+    }
 
     // Corner miter: connection at our END — extend forward (+dir)
-    if (dES < snapR)
-      endExt = Math.max(endExt, miterExtension(-ux, -uy, wux, wuy, wh))
-    else if (dEE < snapR)
-      endExt = Math.max(endExt, miterExtension(-ux, -uy, -wux, -wuy, wh))
+    if (dES < snapR || dEE < snapR) {
+      const [bx, by] = dES < snapR ? [wux, wuy] : [-wux, -wuy]
+      endExt = Math.max(endExt, miterExtension(-ux, -uy, bx, by, wh))
+      joinedEnd = true
+      if (!endPeer || miterExtension(-ux, -uy, bx, by, wh) >= endExt) endPeer = [bx, by, wh]
+    }
 
     // T-junction: our endpoint near their BODY (not their endpoint)
     const sinAngle = Math.abs(ux * wuy - uy * wux)
@@ -206,23 +256,47 @@ function computeJoinedCorners(editor: Editor, shape: WallShape): Vec[] {
         return { t, perpDist: Math.hypot(px - projX, py - projY), onBody: t > snapR && t < wlen - snapR }
       }
       const sp = projectOntoW(sx, sy)
-      if (sp.onBody && sp.perpDist < snapR && dSS >= snapR && dSE >= snapR)
+      if (sp.onBody && sp.perpDist < snapR && dSS >= snapR && dSE >= snapR) {
         startExt = Math.max(startExt, tExt)
+        joinedStart = true
+      }
       const ep = projectOntoW(ex, ey)
-      if (ep.onBody && ep.perpDist < snapR && dES >= snapR && dEE >= snapR)
+      if (ep.onBody && ep.perpDist < snapR && dES >= snapR && dEE >= snapR) {
         endExt = Math.max(endExt, tExt)
+        joinedEnd = true
+      }
     }
   }
 
+  // 끝점끼리 꺾여 만난 곳은 옆면을 각각 교차시킨다. 그래야 바깥은 뻗고 안쪽은
+  // 당겨져서 코너가 딱 맞물린다. 나란히 이어지는 경우(`miterOffset` 이 null)는
+  // 벌릴 것이 없으므로 스칼라 ext 로 돌아간다.
+  //
+  // 접점 기준 방향: 시작점에서 바깥은 +u, 끝점에서 바깥은 −u.
+  // 옆면 부호는 `getCorners` 의 차례(+n, +n, −n, −n)에 맞춘다.
+  const at = (px: number, py: number, o: { x: number; y: number } | null, sign: 1 | -1, edx: number, edy: number) =>
+    o ? new Vec(px + o.x, py + o.y)
+      : new Vec(px + nx * half * sign + edx, py + ny * half * sign + edy)
+
+  // 늘리는 방향은 옆면과 무관하다 — 시작은 −u, 끝은 +u.
+  const sdx = -ux * startExt, sdy = -uy * startExt
+  const edx = ux * endExt, edy = uy * endExt
+
+  const s0 = startPeer && miterOffset(ux, uy, startPeer[0], startPeer[1], half, startPeer[2], 1)
+  const s3 = startPeer && miterOffset(ux, uy, startPeer[0], startPeer[1], half, startPeer[2], -1)
+  const e1 = endPeer && miterOffset(-ux, -uy, endPeer[0], endPeer[1], half, endPeer[2], -1)
+  const e2 = endPeer && miterOffset(-ux, -uy, endPeer[0], endPeer[1], half, endPeer[2], 1)
+
   const corners = [
-    new Vec(nx * half - ux * startExt, ny * half - uy * startExt),
-    new Vec(x2 + nx * half + ux * endExt, y2 + ny * half + uy * endExt),
-    new Vec(x2 - nx * half + ux * endExt, y2 - ny * half + uy * endExt),
-    new Vec(-nx * half - ux * startExt, -ny * half - uy * startExt),
+    at(0, 0, s0 || null, 1, sdx, sdy),
+    at(x2, y2, e1 || null, 1, edx, edy),
+    at(x2, y2, e2 || null, -1, edx, edy),
+    at(0, 0, s3 || null, -1, sdx, sdy),
   ]
 
-  _cornersCache.set(shape.id, { key: fullKey, corners })
-  return corners
+  const outline: WallOutline = { corners, capStart: !joinedStart, capEnd: !joinedEnd }
+  _cornersCache.set(shape.id, { key: fullKey, outline })
+  return outline
 }
 
 // eslint-disable-next-line react-refresh/only-export-components
@@ -250,8 +324,19 @@ function WallComponent({ shape }: { shape: WallShape }) {
 
   // DXF 임포트 shapes는 miter join 불필요 → 비싼 이웃 탐색 스킵
   const isDxf = !!shape.meta?.dxfFingerprint
-  const corners = isDxf ? getCorners(shape) : computeJoinedCorners(editor, shape)
+  const outline: WallOutline = isDxf
+    ? { corners: getCorners(shape), capStart: true, capEnd: true }
+    : computeWallOutline(editor, shape)
+  const corners = outline.corners
   const d = `M${corners[0].x},${corners[0].y} L${corners[1].x},${corners[1].y} L${corners[2].x},${corners[2].y} L${corners[3].x},${corners[3].y} Z`
+  // 윤곽선은 **채움과 따로** 그린다. 다른 벽이 붙은 끝은 막는 선을 빼야 한다 —
+  // 그걸 그리면 코너를 가로지르는 선이 되고, 벽을 이어 그릴 때마다 눈에 띈다.
+  const dStroke = outline.capStart && outline.capEnd
+    ? d
+    : `M${corners[0].x},${corners[0].y} L${corners[1].x},${corners[1].y}`
+      + `${outline.capEnd ? ' L' : ' M'}${corners[2].x},${corners[2].y}`
+      + ` L${corners[3].x},${corners[3].y}`
+      + (outline.capStart ? ` L${corners[0].x},${corners[0].y}` : '')
 
   // DXF 임포트 shapes는 가는 선으로 표시 (CAD 도면 스타일)
   if (isDxf) {
@@ -303,7 +388,8 @@ function WallComponent({ shape }: { shape: WallShape }) {
     return (
       <SVGContainer>
         {patternDef}
-        <path d={d} fill={fillAttr} stroke={stroke} strokeWidth={strokeW}
+        <path d={d} fill={fillAttr} stroke="none" />
+        <path d={dStroke} fill="none" stroke={stroke} strokeWidth={strokeW} strokeLinecap="butt"
           style={{ strokeWidth: screenStrokeWidth(strokeW) }} />
       </SVGContainer>
     )
@@ -326,7 +412,8 @@ function WallComponent({ shape }: { shape: WallShape }) {
   return (
     <SVGContainer>
       {patternDef}
-      <path d={d} fill={fillAttr} stroke={stroke} strokeWidth={strokeW}
+      <path d={d} fill={fillAttr} stroke="none" />
+      <path d={dStroke} fill="none" stroke={stroke} strokeWidth={strokeW} strokeLinecap="butt"
         style={{ strokeWidth: screenStrokeWidth(strokeW) }} />
 
       {effectiveShowDim && (
