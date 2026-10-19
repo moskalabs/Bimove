@@ -483,6 +483,51 @@ export function slideAlongTo(
 }
 
 /**
+ * 이미 있는 벽 끝에서 새로 그리기 시작할 때, **그 벽이 들어온 방향**.
+ *
+ * 이어 그리기(클릭-클릭)로 꺾으면 앞 구간 방향을 도구가 들고 있지만, 한 번
+ * 끊었다가 기존 벽 끝에서 다시 시작하면 그게 없다. 그러면 직각 스냅도 안 걸리고
+ * 코너에 각도도 안 뜬다 — 사용자 눈에는 **같은 동작인데 어떤 때만 된다.**
+ *
+ * 돌려주는 방향은 이어 그리기와 같은 약속이다: 접점으로 **들어오는** 쪽.
+ *
+ * 거리 기준은 `WallShape` 가 "두 벽이 붙었다" 고 보는 값과 같게 둔다. 그래야
+ * 코너가 맞물려 보이는 것과 각이 뜨는 것이 늘 같이 간다.
+ *
+ * @param excludeId 지금 그리는 미리보기 — 자기 자신을 앞 구간으로 삼으면 안 된다
+ */
+export function wallDirIntoPoint(
+  editor: Editor,
+  point: { x: number; y: number },
+  excludeId?: string,
+  radius = 8,
+): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null
+  let bestDist = radius
+  for (const shape of editor.getCurrentPageShapes()) {
+    if (shape.type !== 'wall' || shape.id === excludeId) continue
+    const props = shape.props as { x2: number; y2: number }
+    const mat = editor.getShapePageTransform(shape)
+    const s = mat.applyToPoint({ x: 0, y: 0 })
+    const e = mat.applyToPoint({ x: props.x2, y: props.y2 })
+    const dx = e.x - s.x, dy = e.y - s.y
+    if (Math.hypot(dx, dy) < 1) continue
+    const dEnd = Math.hypot(e.x - point.x, e.y - point.y)
+    if (dEnd < bestDist) {
+      bestDist = dEnd
+      best = { x: dx, y: dy }
+    }
+    const dStart = Math.hypot(s.x - point.x, s.y - point.y)
+    if (dStart < bestDist) {
+      bestDist = dStart
+      // 시작점에 붙었으면 그 벽은 접점에서 **나가는** 중이다 — 뒤집어야 약속이 맞다.
+      best = { x: -dx, y: -dy }
+    }
+  }
+  return best
+}
+
+/**
  * 꺾이는 각을 **앞 구간 기준 직각**으로 당긴다.
  *
  * 15° 직교 스냅(`snapAngle`)은 **화면 축**을 기준으로 돈다. 앞 벽이 축에

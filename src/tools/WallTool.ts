@@ -1,5 +1,5 @@
 import { StateNode, createShapeId, type TLPointerEventInfo, type TLShapeId } from 'tldraw'
-import { resolveDrawPoint, snapToTurn, findAlignGuides, slideAlongTo } from '../lib/snap'
+import { resolveDrawPoint, snapToTurn, findAlignGuides, slideAlongTo, wallDirIntoPoint } from '../lib/snap'
 import { drawingState } from '../lib/drawingState'
 import { getDefaultWallThicknessMm, getSnapEnabled } from '../lib/settings'
 import { getScaleConfig } from '../lib/scaleConfig'
@@ -73,6 +73,11 @@ export class WallTool extends StateNode {
   }
 
   private startWallAt(point: { x: number; y: number }) {
+    // 이어 그리는 중이 아니면 **기존 벽 끝에 붙었는지** 본다. 거기서 시작하는
+    // 것도 사람 눈엔 똑같이 "꺾는" 동작인데, 앞 구간이 없다고 각도 스냅도
+    // 각도 표시도 안 되면 어떤 때만 되는 기능이 된다.
+    if (!this.prevDir) this.prevDir = wallDirIntoPoint(this.editor, point)
+
     const id = createShapeId()
     this.editor.createShape({
       id,
