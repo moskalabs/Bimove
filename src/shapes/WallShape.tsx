@@ -106,6 +106,22 @@ export function miterOffset(
   return { x: hA * nAx + t * ax, y: hA * nAy + t * ay }
 }
 
+/**
+ * 벽에 치수(길이선·화살표·숫자)를 띄울지.
+ *
+ * 전엔 모든 벽이 항상 달고 있었다. 벽 하나에 SVG 노드가 일곱이라 도면이 금세
+ * 숫자밭이 되고, 정작 보려던 벽의 숫자를 못 찾는다. (끄는 토글은 코드에만 있고
+ * UI 가 없어서 늘 켜져 있었다.)
+ *
+ * 그리는 중에는 `ToolOverlay` 가 길이와 꺾임 각을 띄우므로 여기선 안 봐도 된다.
+ *
+ * @param selCount 안 골랐으면 0, 골랐으면 **전체 선택 개수**. 전체 선택처럼 한
+ *   번에 많이 고르면 숫자밭이 되는 건 그대로라 예전 200개 가드를 여기 남긴다.
+ */
+export function shouldShowWallDim(settingOn: boolean, selCount: number): boolean {
+  return settingOn && selCount > 0 && selCount < 200
+}
+
 const JOIN_SNAP_R = 8 // page-unit radius for endpoint matching
 
 // ── Wall snapshot cache: avoid calling getCurrentPageShapes() per-wall ──
@@ -308,7 +324,18 @@ function computeWallOutline(editor: Editor, shape: WallShape): WallOutline {
 // eslint-disable-next-line react-refresh/only-export-components
 function WallComponent({ shape }: { shape: WallShape }) {
   const editor = useEditor()
-  const isSelected = useValue('wall-selected', () => editor.getSelectedShapeIds().includes(shape.id), [editor, shape.id])
+  // 고른 벽인지 + **몇 개나 골랐는지**를 하나로 센다. 둘 다 필요한데 useValue 를
+  // 두 번 걸면 벽마다 계산이 두 벌이 된다 — 도면 하나에 벽이 수백 개다.
+  // 안 골랐으면 0, 골랐으면 전체 선택 개수(≥1).
+  const selCount = useValue(
+    'wall-selected',
+    () => {
+      const ids = editor.getSelectedShapeIds()
+      return ids.includes(shape.id) ? ids.length : 0
+    },
+    [editor, shape.id],
+  )
+  const isSelected = selCount > 0
   const [showDim, setShowDim] = useState(getShowWallLengths)
   const [grayscale, setGrayscale] = useState(getGrayscaleMode)
 
@@ -324,9 +351,8 @@ function WallComponent({ shape }: { shape: WallShape }) {
   const { x2, y2, thickness } = shape.props
   const len = Math.sqrt(x2 * x2 + y2 * y2)
 
-  // 대량 shapes(200+)일 때 치수 라벨 자동 비활성화 (SVG 노드 3500+ 절감)
-  const shapeCount = _wallsCache.length // 이미 캐시된 wall 수 활용
-  const effectiveShowDim = showDim && shapeCount < 200
+  // 치수는 **고른 벽에만**. 규칙과 그 이유는 shouldShowWallDim 에 있다.
+  const effectiveShowDim = shouldShowWallDim(showDim, selCount)
 
   // DXF 임포트 shapes는 miter join 불필요 → 비싼 이웃 탐색 스킵
   const isDxf = !!shape.meta?.dxfFingerprint

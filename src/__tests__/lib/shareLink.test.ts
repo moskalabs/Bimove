@@ -160,7 +160,9 @@ describe.skipIf(!hasCompression)('압축 왕복', () => {
     const bomb = await gzipBytes('0'.repeat(40 * 1024 * 1024))
     expect(bomb.byteLength).toBeLessThan(1024 * 1024)   // 입력은 이렇게 작다
     await expect(gunzipLimited(bomb)).rejects.toThrow(/너무 큽니다/)
-  })
+    // 40MB 를 **압축하는** 쪽이 느리다. 기본 제한(5초)에 아슬아슬하게 걸려서
+    // 가끔 빨간불이 떴다 — 코드 문제가 아니라 기계가 바쁜 날의 문제다.
+  }, 30_000)
 
   it('상한 안쪽은 그대로 풀어준다', async () => {
     const { gunzipLimited } = await import('../../lib/shareLink')
