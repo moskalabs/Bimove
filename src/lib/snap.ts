@@ -9,18 +9,50 @@ export type SnapPoint = { x: number; y: number; sourceId?: string; snapType?: Sn
 /** Screen-space snap radius in px; converted to page units via current zoom. */
 const SNAP_RADIUS_PX = 12
 
-// ── Wall endpoint cache: 프레임당 1회만 수집 ──
+// ── Wall endpoint cache ──
+//
+// **캐시 키는 시간이 아니라 `getCurrentPageShapes()` 배열의 신원이다.**
+//
+// 전엔 `performance.now()` 로 16ms 창을 뒀다. 그게 정확히 제일 필요한 순간에
+// 무너진다 — 선분 5만 개짜리 DXF 에서는 목록을 **만드는 데만 14ms** 가 걸리고,
+// 한 프레임에 스냅 질의가 넷(끝점·교차·수직·연장)이라 두 번째 질의부터는
+// 이미 16ms 가 지나 있다. 그래서 네 번 다 처음부터 다시 만들었다 (한 프레임
+// 56ms). 재서 확인한 숫자다.
+//
+// 배열 신원으로 잡으면 **도형이 바뀔 때만** 만든다. 커서만 움직이는 동안은
+// 공짜고, 그리는 중에도 프레임당 한 번이다. tldraw 의 computed 는 바뀔 때만
+// 새 배열을 낸다.
 type WallEndpoint = { x: number; y: number; mx: number; my: number; id: string; edge?: boolean }
 let _snapCache: WallEndpoint[] = []
-let _snapCacheTime = -1
+let _snapCacheSrc: readonly unknown[] | null = null
+/**
+ * DXF 에서 뽑은 부분만 따로. **그 도형들이 그대로면 다시 안 판다.**
+ *
+ * 벽 하나를 그리는 동안 `getCurrentPageShapes()` 는 매 프레임 새 배열을 낸다
+ * (미리보기가 바뀌니까). 그렇다고 5만 선분짜리 pathData 를 다시 파싱하면
+ * 프레임마다 14ms 를 버린다 — DXF 는 그 사이 하나도 안 바뀌는데.
+ */
+let _dxfEndpoints: WallEndpoint[] = []
+let _dxfEndpointsSrc: readonly unknown[] = []
 let _snapDiagLogged = false
+
+/** 두 목록이 **같은 객체들**인가 (얕게). 도형 개수만큼만 돈다. */
+function sameRefs(a: readonly unknown[], b: readonly unknown[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
 
 /** 테스트용: 캐시 초기화 */
 export function _resetSnapCache() {
-  _snapCacheTime = -1
-  _lineCacheTime = -1
+  _snapCacheSrc = null
+  _lineCacheSrc = null
   _snapCache = []
   _lineCache = []
+  _dxfEndpoints = []
+  _dxfEndpointsSrc = []
+  _dxfLines = []
+  _dxfLinesSrc = []
   _snapDiagLogged = false
 }
 
@@ -36,67 +68,70 @@ export function parseDxfPathEndpoints(pathData: string): { x1: number; y1: numbe
 }
 
 function getWallEndpoints(editor: Editor): WallEndpoint[] {
-  const now = performance.now()
-  if (now - _snapCacheTime < 16) return _snapCache  // 같은 프레임 내 캐시 재사용
-  _snapCacheTime = now
-  _snapCache = []
-  let wallCount = 0
-  let dxfCount = 0
-  let dxfSegCount = 0
-  for (const shape of editor.getCurrentPageShapes()) {
-    if (shape.type === 'wall') {
-      wallCount++
-      const props = shape.props as { x2: number; y2: number; thickness: number }
-      // getShapePageTransform: 그룹/회전 포함 정확한 page 좌표 변환
-      const mat = editor.getShapePageTransform(shape)
-      const s = mat.applyToPoint({ x: 0, y: 0 })
-      const e = mat.applyToPoint({ x: props.x2, y: props.y2 })
-      const mid = { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2 }
-      // 중심선 끝점
-      _snapCache.push({ x: s.x, y: s.y, mx: mid.x, my: mid.y, id: shape.id })
-      _snapCache.push({ x: e.x, y: e.y, mx: mid.x, my: mid.y, id: shape.id })
-      // 양쪽 엣지 끝점 (두께 고려)
-      const half = (props.thickness ?? 10) / 2
-      const dx = e.x - s.x, dy = e.y - s.y
-      const len = Math.hypot(dx, dy)
-      if (len > 1) {
-        const nx = -dy / len * half, ny = dx / len * half // 수직 방향
-        // 왼쪽 엣지 끝점 2개
-        _snapCache.push({ x: s.x + nx, y: s.y + ny, mx: mid.x + nx, my: mid.y + ny, id: shape.id, edge: true })
-        _snapCache.push({ x: e.x + nx, y: e.y + ny, mx: mid.x + nx, my: mid.y + ny, id: shape.id, edge: true })
-        // 오른쪽 엣지 끝점 2개
-        _snapCache.push({ x: s.x - nx, y: s.y - ny, mx: mid.x - nx, my: mid.y - ny, id: shape.id, edge: true })
-        _snapCache.push({ x: e.x - nx, y: e.y - ny, mx: mid.x - nx, my: mid.y - ny, id: shape.id, edge: true })
-      }
-    } else if (shape.type === 'dxfgroup') {
-      dxfCount++
-      // DXF 그룹: pathData에서 각 선분의 시작/끝점 추출
+  const shapes = editor.getCurrentPageShapes()
+  if (shapes === _snapCacheSrc) return _snapCache
+  _snapCacheSrc = shapes
+
+  // 가르는 비용은 **도형 개수**에 비례한다 (선분 수가 아니라). DXF 한 장은
+  // dxfgroup 몇 개에 선분 수만 개가 들어 있으므로 이 루프는 공짜에 가깝다.
+  const groups: typeof shapes = []
+  const walls: typeof shapes = []
+  for (const s of shapes) {
+    if (s.type === 'dxfgroup') groups.push(s)
+    else if (s.type === 'wall') walls.push(s)
+  }
+
+  if (!sameRefs(groups, _dxfEndpointsSrc)) {
+    _dxfEndpointsSrc = groups
+    _dxfEndpoints = []
+    let dxfSegCount = 0
+    for (const shape of groups) {
       const pathData = (shape.props as Record<string, unknown>).pathData
       if (!pathData || typeof pathData !== 'string') continue
       const segs = parseDxfPathEndpoints(pathData)
       dxfSegCount += segs.length
       const mat = editor.getShapePageTransform(shape)
       for (const seg of segs) {
-        const s = mat.applyToPoint({ x: seg.x1, y: seg.y1 })
-        const e = mat.applyToPoint({ x: seg.x2, y: seg.y2 })
-        _snapCache.push({
-          x: s.x, y: s.y,
-          mx: (s.x + e.x) / 2, my: (s.y + e.y) / 2,
-          id: shape.id,
-        })
-        _snapCache.push({
-          x: e.x, y: e.y,
-          mx: (s.x + e.x) / 2, my: (s.y + e.y) / 2,
-          id: shape.id,
-        })
+        const a = mat.applyToPoint({ x: seg.x1, y: seg.y1 })
+        const b = mat.applyToPoint({ x: seg.x2, y: seg.y2 })
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2
+        _dxfEndpoints.push({ x: a.x, y: a.y, mx, my, id: shape.id })
+        _dxfEndpoints.push({ x: b.x, y: b.y, mx, my, id: shape.id })
       }
     }
+    if (!_snapDiagLogged) {
+      _snapDiagLogged = true
+      console.debug(`[snap] dxf endpoints: ${_dxfEndpoints.length} (groups: ${groups.length}, segs: ${dxfSegCount})`)
+    }
   }
-  // 진단: 첫 호출 시 1회 로그 (브라우저 콘솔에서 확인)
-  if (!_snapDiagLogged && _snapCache.length > 0) {
-    _snapDiagLogged = true
-    console.debug(`[snap] endpoints: ${_snapCache.length} (wall: ${wallCount}, dxfgroup: ${dxfCount}, dxfSegs: ${dxfSegCount})`)
+
+  // 벽은 몇 개 안 되므로 매번 새로 만든다.
+  const wallPart: WallEndpoint[] = []
+  for (const shape of walls) {
+    const props = shape.props as { x2: number; y2: number; thickness: number }
+    // getShapePageTransform: 그룹/회전 포함 정확한 page 좌표 변환
+    const mat = editor.getShapePageTransform(shape)
+    const s = mat.applyToPoint({ x: 0, y: 0 })
+    const e = mat.applyToPoint({ x: props.x2, y: props.y2 })
+    const mid = { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2 }
+    // 중심선 끝점
+    wallPart.push({ x: s.x, y: s.y, mx: mid.x, my: mid.y, id: shape.id })
+    wallPart.push({ x: e.x, y: e.y, mx: mid.x, my: mid.y, id: shape.id })
+    // 양쪽 엣지 끝점 (두께 고려)
+    const half = (props.thickness ?? 10) / 2
+    const dx = e.x - s.x, dy = e.y - s.y
+    const len = Math.hypot(dx, dy)
+    if (len > 1) {
+      const nx = -dy / len * half, ny = dx / len * half // 수직 방향
+      wallPart.push({ x: s.x + nx, y: s.y + ny, mx: mid.x + nx, my: mid.y + ny, id: shape.id, edge: true })
+      wallPart.push({ x: e.x + nx, y: e.y + ny, mx: mid.x + nx, my: mid.y + ny, id: shape.id, edge: true })
+      wallPart.push({ x: s.x - nx, y: s.y - ny, mx: mid.x - nx, my: mid.y - ny, id: shape.id, edge: true })
+      wallPart.push({ x: e.x - nx, y: e.y - ny, mx: mid.x - nx, my: mid.y - ny, id: shape.id, edge: true })
+    }
   }
+
+  // 벽이 없으면 **복사도 안 한다** (DXF 만 띄워 놓고 보는 동안이 그렇다).
+  _snapCache = wallPart.length === 0 ? _dxfEndpoints : wallPart.concat(_dxfEndpoints)
   return _snapCache
 }
 
@@ -181,48 +216,58 @@ export type WallLineSnap = {
 
 const WALL_LINE_RADIUS_PX = 20
 
-// ── Wall line cache: 프레임당 1회만 수집 ──
+// ── Wall line cache ──
+// 키 잡는 이유는 `getWallEndpoints` 주석과 같다.
 type WallLine = { x: number; y: number; dx: number; dy: number; len: number; thickness: number; id: string }
 let _lineCache: WallLine[] = []
-let _lineCacheTime = -1
+let _lineCacheSrc: readonly unknown[] | null = null
+let _dxfLines: WallLine[] = []
+let _dxfLinesSrc: readonly unknown[] = []
 
 function getWallLines(editor: Editor): WallLine[] {
-  const now = performance.now()
-  if (now - _lineCacheTime < 16) return _lineCache
-  _lineCacheTime = now
-  _lineCache = []
-  for (const shape of editor.getCurrentPageShapes()) {
-    if (shape.type === 'wall') {
-      const props = shape.props as { x2: number; y2: number; thickness: number }
-      const mat = editor.getShapePageTransform(shape)
-      const s = mat.applyToPoint({ x: 0, y: 0 })
-      const e = mat.applyToPoint({ x: props.x2, y: props.y2 })
-      const dx = e.x - s.x, dy = e.y - s.y
-      const len = Math.hypot(dx, dy)
-      if (len < 1) continue
-      _lineCache.push({
-        x: s.x, y: s.y,
-        dx, dy, len, thickness: props.thickness, id: shape.id,
-      })
-    } else if (shape.type === 'dxfgroup') {
+  const shapes = editor.getCurrentPageShapes()
+  if (shapes === _lineCacheSrc) return _lineCache
+  _lineCacheSrc = shapes
+
+  const groups: typeof shapes = []
+  const walls: typeof shapes = []
+  for (const s of shapes) {
+    if (s.type === 'dxfgroup') groups.push(s)
+    else if (s.type === 'wall') walls.push(s)
+  }
+
+  // DXF 는 끝점 쪽과 같은 이유로 따로 캐시한다 (주석은 _dxfEndpoints 참고).
+  if (!sameRefs(groups, _dxfLinesSrc)) {
+    _dxfLinesSrc = groups
+    _dxfLines = []
+    for (const shape of groups) {
       const pathData = (shape.props as Record<string, unknown>).pathData
       if (!pathData || typeof pathData !== 'string') continue
-      const thickness = ((shape.props as Record<string, unknown>).thickness as number) ?? 2
-      const segs = parseDxfPathEndpoints(pathData)
       const mat = editor.getShapePageTransform(shape)
-      for (const seg of segs) {
-        const s = mat.applyToPoint({ x: seg.x1, y: seg.y1 })
-        const e = mat.applyToPoint({ x: seg.x2, y: seg.y2 })
-        const dx = e.x - s.x, dy = e.y - s.y
+      for (const seg of parseDxfPathEndpoints(pathData)) {
+        const a = mat.applyToPoint({ x: seg.x1, y: seg.y1 })
+        const b = mat.applyToPoint({ x: seg.x2, y: seg.y2 })
+        const dx = b.x - a.x, dy = b.y - a.y
         const len = Math.hypot(dx, dy)
         if (len < 1) continue
-        _lineCache.push({
-          x: s.x, y: s.y,
-          dx, dy, len, thickness, id: shape.id,
-        })
+        _dxfLines.push({ x: a.x, y: a.y, dx, dy, len, thickness: 0, id: shape.id })
       }
     }
   }
+
+  const wallPart: WallLine[] = []
+  for (const shape of walls) {
+    const props = shape.props as { x2: number; y2: number; thickness: number }
+    const mat = editor.getShapePageTransform(shape)
+    const a = mat.applyToPoint({ x: 0, y: 0 })
+    const b = mat.applyToPoint({ x: props.x2, y: props.y2 })
+    const dx = b.x - a.x, dy = b.y - a.y
+    const len = Math.hypot(dx, dy)
+    if (len < 1) continue
+    wallPart.push({ x: a.x, y: a.y, dx, dy, len, thickness: props.thickness, id: shape.id })
+  }
+
+  _lineCache = wallPart.length === 0 ? _dxfLines : wallPart.concat(_dxfLines)
   return _lineCache
 }
 
