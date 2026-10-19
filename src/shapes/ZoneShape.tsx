@@ -2,6 +2,7 @@
  * ZoneShape: 공간지정 — 사용자가 그린 폴리곤 영역
  * 이름 + 층고 + 면적/둘레 표시, 마감재 물량표 연동용
  */
+import { ZONE_AREA_TEXT, ZONE_FILL, ZONE_STROKE } from '../lib/zoneStyle'
 import {
   Polygon2d,
   ShapeUtil,
@@ -93,10 +94,11 @@ export class ZoneShapeUtil extends ShapeUtil<ZoneShape> {
 
     return (
       <SVGContainer>
+        {/* 면은 회색, 이름만 색 — 이유는 lib/zoneStyle 주석. */}
         <path
           d={path}
-          fill={color + '18'}
-          stroke={color}
+          fill={ZONE_FILL}
+          stroke={ZONE_STROKE}
           strokeWidth={2}
           strokeDasharray="8 4"
         />
@@ -119,8 +121,7 @@ export class ZoneShapeUtil extends ShapeUtil<ZoneShape> {
             textAnchor="middle"
             dominantBaseline="middle"
             fontSize={11}
-            fill={color}
-            opacity={0.7}
+            fill={ZONE_AREA_TEXT}
             style={{ pointerEvents: 'none', userSelect: 'none' }}
           >
             {areaText}
@@ -144,12 +145,12 @@ export class ZoneShapeUtil extends ShapeUtil<ZoneShape> {
     const c = centroid(points)
     return (
       <g>
-        <path d={path} fill={color + '18'} stroke={color} strokeWidth={2} strokeDasharray="8 4" />
+        <path d={path} fill={ZONE_FILL} stroke={ZONE_STROKE} strokeWidth={2} strokeDasharray="8 4" />
         <text x={c.x} y={c.y - 6} textAnchor="middle" fontSize={14} fontWeight={600} fill={color}>
           {label || '미지정'}
         </text>
         {areaM2 > 0 && (
-          <text x={c.x} y={c.y + 12} textAnchor="middle" fontSize={11} fill={color} opacity={0.7}>
+          <text x={c.x} y={c.y + 12} textAnchor="middle" fontSize={11} fill={ZONE_AREA_TEXT}>
             {areaM2.toFixed(1)}m²
           </text>
         )}

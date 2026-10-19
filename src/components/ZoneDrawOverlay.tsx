@@ -9,19 +9,9 @@ import { shoelaceArea, pxAreaToM2, measurePolygon, type Pt } from '../lib/areaMe
 import { resolveDrawPointAt, type SnapPoint } from '../lib/snap'
 import { normalizeWheelDelta } from '../lib/wheelBehavior'
 import { nextZoneName } from '../lib/zoneName'
+import { ZONE_AREA_TEXT, ZONE_FILL } from '../lib/zoneStyle'
 
 const SNAP_DIST = 12
-
-/**
- * 지정 중인 공간을 칠하는 색.
- *
- * 한이 Rayon 화면을 보내며 "회색 느낌으로 공간 칠해지면서 여기가 zoning 된다는
- * 게 보여야 한다" 고 했다. 녹색 10% 였는데, 색이 있는 면은 **도면 위에 올린
- * 또 하나의 도형**처럼 보인다. 중성 회색이라야 "이 범위" 라는 표시로 읽힌다.
- *
- * 알파가 낮아야 밑의 벽·가구가 비친다 — 가려 버리면 어디를 집고 있는지 못 본다.
- */
-const ZONE_FILL = 'rgba(100,108,120,0.16)'
 
 /**
  * 커서가 가 있을 점. 벽체·치수 도구와 **같은 스냅 체인**을 쓴다.
@@ -249,7 +239,7 @@ export function ZoneDrawOverlay() {
               {zoneName}
             </text>
             <text x={centroid.x} y={centroid.y + 11} textAnchor="middle"
-              fontSize={12} fill="#5a6270"
+              fontSize={12} fill={ZONE_AREA_TEXT}
               style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3, fontFamily: 'ui-monospace, Consolas, monospace' }}>
               {previewArea}
             </text>
