@@ -8,8 +8,20 @@ import { getScaleConfig } from '../lib/scaleConfig'
 import { shoelaceArea, pxAreaToM2, measurePolygon, type Pt } from '../lib/areaMeasure'
 import { resolveDrawPointAt, type SnapPoint } from '../lib/snap'
 import { normalizeWheelDelta } from '../lib/wheelBehavior'
+import { nextZoneName } from '../lib/zoneName'
 
 const SNAP_DIST = 12
+
+/**
+ * 지정 중인 공간을 칠하는 색.
+ *
+ * 한이 Rayon 화면을 보내며 "회색 느낌으로 공간 칠해지면서 여기가 zoning 된다는
+ * 게 보여야 한다" 고 했다. 녹색 10% 였는데, 색이 있는 면은 **도면 위에 올린
+ * 또 하나의 도형**처럼 보인다. 중성 회색이라야 "이 범위" 라는 표시로 읽힌다.
+ *
+ * 알파가 낮아야 밑의 벽·가구가 비친다 — 가려 버리면 어디를 집고 있는지 못 본다.
+ */
+const ZONE_FILL = 'rgba(100,108,120,0.16)'
 
 /**
  * 커서가 가 있을 점. 벽체·치수 도구와 **같은 스냅 체인**을 쓴다.
@@ -34,6 +46,8 @@ export function ZoneDrawOverlay() {
   const [pagePoints, setPagePoints] = useState<Pt[]>([])
   const [vpPoints, setVpPoints] = useState<Pt[]>([])
   const [cursorVp, setCursorVp] = useState<Pt | null>(null)
+  /** 커서의 page 좌표. **면적을 커서까지 포함해 재려면** 필요하다. */
+  const [cursorPage, setCursorPage] = useState<Pt | null>(null)
   const [snapVp, setSnapVp] = useState<Pt | null>(null)
 
   useEffect(() => {
@@ -44,6 +58,7 @@ export function ZoneDrawOverlay() {
         setPagePoints([])
         setVpPoints([])
         setCursorVp(null)
+        setCursorPage(null)
       }
     }
     window.addEventListener('bimova:zone-draw', handler)
@@ -128,6 +143,7 @@ export function ZoneDrawOverlay() {
     const resolved = resolvePoint(editor, e, pagePoints)
     const vp = editor.pageToViewport({ x: resolved.x, y: resolved.y })
     setCursorVp(vp)
+    setCursorPage({ x: resolved.x, y: resolved.y })
     setSnapVp(isPointSnap(resolved.snapType) ? vp : null)
   }, [editor, active, pagePoints])
 
@@ -154,11 +170,37 @@ export function ZoneDrawOverlay() {
 
   if (!active) return null
 
+  // ── 미리보기는 **커서까지 포함한다** ──
+  //
+  // 전엔 찍은 점으로만 면을 만들어서, 마우스를 움직이는 동안 커서 쪽 모서리가
+  // 비어 있었다. 지금 어디를 집고 있는지가 안 보이면 "칠해진다" 는 느낌이
+  // 안 난다 — Rayon 은 끄는 내내 통째로 칠해져 있다.
+  const previewVp = cursorVp ? [...vpPoints, cursorVp] : vpPoints
+  const previewPage = cursorPage ? [...pagePoints, cursorPage] : pagePoints
+
   let previewArea = ''
-  if (editor && pagePoints.length >= 3) {
+  if (editor && previewPage.length >= 3) {
     const scale = getScaleConfig(editor)
-    previewArea = `${pxAreaToM2(shoelaceArea(pagePoints), scale.pxPerMm).toFixed(2)} m²`
+    previewArea = `${pxAreaToM2(shoelaceArea(previewPage), scale.pxPerMm).toFixed(2)} m²`
   }
+
+  // 라벨은 면 한가운데. 어느 면이 지정되는지와 그 넓이를 **거기서** 읽는다 —
+  // 아래 배너까지 눈을 내렸다 올리면 어디를 보고 있었는지 놓친다.
+  const centroid = previewVp.length >= 3
+    ? {
+        x: previewVp.reduce((a, p) => a + p.x, 0) / previewVp.length,
+        y: previewVp.reduce((a, p) => a + p.y, 0) / previewVp.length,
+      }
+    : null
+
+  // 그리는 동안 보여주는 이름 = 팝업에 채워질 이름 (lib/zoneName 주석 참고).
+  const zoneName = editor
+    ? nextZoneName(
+        editor.getCurrentPageShapes()
+          .filter(sh => sh.type === 'zone')
+          .map(sh => String((sh.props as { label?: string }).label ?? '')),
+      )
+    : '공간 1'
 
   const lastVp = vpPoints.length > 0 ? vpPoints[vpPoints.length - 1] : null
   const zoneColor = '#34a853'
@@ -194,9 +236,24 @@ export function ZoneDrawOverlay() {
             stroke={zoneColor} strokeWidth={1} strokeDasharray="4,4" opacity={0.3} />
         )}
 
-        {vpPoints.length >= 3 && (
-          <polygon points={vpPoints.map(p => `${p.x},${p.y}`).join(' ')}
-            fill="rgba(52,168,83,0.1)" stroke="none" />
+        {previewVp.length >= 3 && (
+          <polygon points={previewVp.map(p => `${p.x},${p.y}`).join(' ')}
+            fill={ZONE_FILL} stroke="none" />
+        )}
+
+        {centroid && previewArea && (
+          <g pointerEvents="none">
+            <text x={centroid.x} y={centroid.y - 7} textAnchor="middle"
+              fontSize={13} fontWeight={600} fill="#3c4250"
+              style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}>
+              {zoneName}
+            </text>
+            <text x={centroid.x} y={centroid.y + 11} textAnchor="middle"
+              fontSize={12} fill="#5a6270"
+              style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3, fontFamily: 'ui-monospace, Consolas, monospace' }}>
+              {previewArea}
+            </text>
+          </g>
         )}
 
         {vpPoints.map((p, i) => (

@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { type TLShapeId } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
+import { nextZoneName } from '../lib/zoneName'
 
 export function ZoneNamePopup() {
   const editor = useEditor()
@@ -16,7 +17,18 @@ export function ZoneNamePopup() {
       const detail = (e as CustomEvent).detail
       const id = detail.shapeId as TLShapeId
       setShapeId(id)
-      setLabel('')
+      // 그리는 동안 면 위에 떠 있던 그 이름을 그대로 채운다. 비워 두면
+      // 방금 본 "공간 3" 이 확인 누르는 순간 "미지정" 이 되어, 화면에서 본 것과
+      // 만들어진 것이 달라진다. 고치고 싶으면 지우고 쓰면 된다.
+      setLabel(
+        editor
+          ? nextZoneName(
+              editor.getCurrentPageShapes()
+                .filter(sh => sh.type === 'zone' && sh.id !== id)
+                .map(sh => String((sh.props as { label?: string }).label ?? '')),
+            )
+          : '',
+      )
       setHeightM('2.4')
 
       // 위치: shape centroid → viewport 좌표
