@@ -3,6 +3,7 @@ import type { TLShapeId } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
 import {
   snapToWallEndpoint, snapToIntersection, snapToPerpendicular, snapToExtension,
+  turnMagnitudeDeg,
   type SnapType,
 } from '../lib/snap'
 import { drawingState } from '../lib/drawingState'
@@ -103,9 +104,7 @@ export function ToolOverlay() {
             // 화면에서 바로 보인다.
             const prev = drawingState.prevDir
             if (prev && Math.hypot(prev.x, prev.y) > 1) {
-              const rel =
-                (Math.atan2(p.y2, p.x2) - Math.atan2(prev.y, prev.x)) * 180 / Math.PI
-              turnDeg = Math.abs(((rel % 360) + 540) % 360 - 180)
+              turnDeg = turnMagnitudeDeg(prev, { x: p.x2, y: p.y2 })
             }
           }
         }
@@ -252,7 +251,11 @@ export function ToolOverlay() {
           )}
         </>
       )}
-      {state.end && state.angleDeg !== null && (
+      {/* 절대 방향(0° = 오른쪽). **꺾임 각이 있으면 안 띄운다** — 둘을 나란히
+          놓으면 "180.0°" 와 "90.0°" 가 같이 떠서 어느 게 직각인지 알 수 없다.
+          평면도에서 알고 싶은 건 앞 벽과 이루는 각이지 화면 축 기준 각이 아니다.
+          첫 구간에는 앞 벽이 없으므로 그때만 이게 나온다. */}
+      {state.end && state.angleDeg !== null && state.turnDeg === null && (
         <div className="tool-angle-badge" style={{
           left: state.end.x + 12, top: state.end.y - 14,
         }}>
