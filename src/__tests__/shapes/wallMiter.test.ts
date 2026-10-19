@@ -21,6 +21,9 @@ import { miterOffset, miterExtension } from '../../shapes/WallShape'
 
 const H = 10 // 반두께
 
+const near2 = (p: { x: number; y: number }, q: { x: number; y: number }) =>
+  Math.hypot(p.x - q.x, p.y - q.y) < 1e-9
+
 describe('miterOffset — 옆면끼리 교차', () => {
   it('90° 코너: 바깥은 뻗고 **안쪽은 당긴다**', () => {
     // 내 벽은 접점에서 +x 로, 상대는 +y 로 나간다.
@@ -147,6 +150,50 @@ describe('miterOffset — 옆면끼리 교차', () => {
       expect(back[0]).toBeCloseTo(base.x, 6)
       expect(back[1]).toBeCloseTo(base.y, 6)
     }
+  })
+
+  it('**어느 각으로 꺾어도** 두 벽의 코너가 같은 점이다', () => {
+    // 한이 "대각선 꺾을 때 연결점이 자연스럽지 않다" 고 했다. 135° 하나만
+    // 보던 걸 쭉 훑는다 — 어긋나는 각이 하나라도 있으면 거기가 범인이다.
+    //
+    // 두께가 다른 벽끼리도 본다 (얇은 칸막이가 두꺼운 외벽에 붙는 경우).
+    const near = near2
+    const bad: string[] = []
+
+    for (const [hA, hB] of [[50, 50], [50, 20], [20, 50], [55, 55]]) {
+      // 접점에서 서로 멀어지는 방향 사이 각. 5° 는 거의 되접히는 꼴이고
+      // 175° 는 거의 일직선이다. 양쪽 끝까지 본다.
+      for (let deg = 5; deg <= 175; deg += 5) {
+        const r = (deg * Math.PI) / 180
+        const a: [number, number] = [1, 0]
+        const b: [number, number] = [Math.cos(r), Math.sin(r)]
+        // 두 벽 다 충분히 길다고 본다 (maxInto 가 안 걸리는 조건).
+        const LONG = 1e6
+        const a1 = miterOffset(a[0], a[1], b[0], b[1], hA, hB, 1, LONG)
+        const a2 = miterOffset(a[0], a[1], b[0], b[1], hA, hB, -1, LONG)
+        const b1 = miterOffset(b[0], b[1], a[0], a[1], hB, hA, 1, LONG)
+        const b2 = miterOffset(b[0], b[1], a[0], a[1], hB, hA, -1, LONG)
+        if (!a1 || !a2 || !b1 || !b2) continue       // 거의 나란하다 — miter 없음
+        const ok = (near(a1, b1) || near(a1, b2)) && (near(a2, b1) || near(a2, b2))
+        if (!ok) bad.push(`h=${hA}/${hB} ${deg}°`)
+      }
+    }
+    expect(bad).toEqual([])
+  })
+
+  it('**한쪽만 한도에 걸리면** 코너가 어긋난다 — 짧은 벽의 대각선 접합', () => {
+    // 여기가 진짜 위험한 자리다. 긴 벽은 제값대로 당겨지는데 짧은 벽은
+    // maxInto 에 걸려 덜 당겨진다. 그러면 두 벽이 **같은 점에서 안 만난다** —
+    // 코너에 턱이 생긴다. 막을 방법이 없는 기하라(벽이 제 miter 보다 짧다)
+    // 적어도 **언제 그런지는 알고** 있어야 한다.
+    const h = 50
+    const SHARP = (20 * Math.PI) / 180          // 거의 되접히는 꼴 → 많이 당긴다
+    const b: [number, number] = [Math.cos(SHARP), Math.sin(SHARP)]
+    const long = miterOffset(1, 0, b[0], b[1], h, h, 1, 1e6)!
+    const short = miterOffset(1, 0, b[0], b[1], h, h, 1, 30)!
+    expect(long.x).toBeGreaterThan(30)           // 제값은 30 을 넘는다
+    expect(short.x).toBeCloseTo(30, 9)           // 한도에 걸렸다
+    expect(near2(long, short)).toBe(false)       // → 어긋난다
   })
 
   it('결과에 NaN 이 없다', () => {

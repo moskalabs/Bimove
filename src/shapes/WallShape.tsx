@@ -102,9 +102,37 @@ export function miterOffset(
   const dx = hB * nBx - hA * nAx
   const dy = hB * nBy - hA * nAy
   let t = (dx * by - dy * bx) / cross
-  // 바깥(−)으로는 창처럼 뻗는 것만, 안(+)으로는 끝을 지나치는 것만 막는다.
-  t = Math.max(-hA * 8, Math.min(Math.min(maxInto, hA * 8), t))
-  return { x: hA * nAx + t * ax, y: hA * nAy + t * ay }
+
+  // ── 안쪽으로 당기는 쪽만 길이로 묶는다 ──
+  //
+  // `a` 가 늘 접점에서 몸통 쪽을 보므로 양수 t 가 "당기는" 방향이다. 벽이 제
+  // miter 보다 짧으면 당겨진 끝이 반대쪽 끝을 지나쳐 도형이 뒤집힌다.
+  //
+  // 이 한도는 **대칭이 아니다** (벽마다 길이가 다르다). 한쪽만 걸리면 두 벽의
+  // 코너가 어긋나 턱이 생긴다 — 벽이 제 miter 보다 짧은 이상 피할 수 없는
+  // 기하라서 그냥 둔다. 테스트에 그 경우를 적어 뒀다.
+  if (t > maxInto) t = maxInto
+
+  let ox = hA * nAx + t * ax
+  let oy = hA * nAy + t * ay
+
+  // ── 뾰족한 각에서 창처럼 뻗는 것만 막는다 ──
+  //
+  // **거리로** 묶어야 한다. 전엔 `t` 를 `hA*8` 로 묶었는데 그게 두 군데서
+  // 깨졌다. 한도가 제 두께에만 달려 있어 두께가 다르면 서로 다른 값이고,
+  // 무엇보다 t 를 묶는 건 **각자 제 방향으로** 자르는 것이라 두 벽이 다른
+  // 자리에 멈춘다 — 그게 "대각선 꺾을 때 연결점이 자연스럽지 않다" 의 정체다.
+  //
+  // 안 자른 교점은 두 벽이 똑같이 계산한다. 그러니 **그 점을 같은 비율로**
+  // 줄이고 한도를 두 두께에 대칭으로 잡으면, 잘린 뒤에도 같은 점에 선다.
+  const limit = Math.max(hA, hB) * 8
+  const dist = Math.hypot(ox, oy)
+  if (dist > limit) {
+    const k = limit / dist
+    ox *= k
+    oy *= k
+  }
+  return { x: ox, y: oy }
 }
 
 /**

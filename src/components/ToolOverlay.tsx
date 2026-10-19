@@ -8,11 +8,14 @@ import {
 } from '../lib/snap'
 import { drawingState } from '../lib/drawingState'
 import { getScaleConfig, formatLength } from '../lib/scaleConfig'
+import { angleArc } from '../lib/angleArc'
 
 type Pt = { x: number; y: number }
 
 /** 라벨을 선에서 떨어뜨릴 화면 px. 선도 글자도 다 보이는 최소치다. */
 const LABEL_OFFSET_PX = 18
+/** 각도 호의 반지름(화면 px). 너무 크면 짧은 벽을 통째로 덮는다. */
+const ARC_RADIUS_PX = 34
 
 type OverlayState = {
   start: Pt | null
@@ -30,6 +33,13 @@ type OverlayState = {
    */
   turnDeg: number | null
   /**
+   * 앞 구간이 **뻗어 있는 쪽** (코너에서 바깥으로). 각도 호의 기준선이다.
+   *
+   * page 방향을 그대로 들고 온다 — page→viewport 는 확대·이동뿐이라 각도가
+   * 안 변한다.
+   */
+  prevAway: Pt | null
+  /**
    * 그릴 **보조선** (뷰포트 좌표). 화면을 가로지르는 점선이다.
    *
    * 도구가 정해 준 것을 그대로 그린다 — 여기서 스냅을 다시 계산하면 둘이
@@ -38,7 +48,7 @@ type OverlayState = {
   guides: Array<{ axis: 'x' | 'y'; at: number }>
 }
 
-const EMPTY: OverlayState = { start: null, snap: null, snapType: null, end: null, mid: null, angleDeg: null, distLabel: null, turnDeg: null, guides: [] }
+const EMPTY: OverlayState = { start: null, snap: null, snapType: null, end: null, mid: null, angleDeg: null, distLabel: null, turnDeg: null, prevAway: null, guides: [] }
 
 /** 스냅 타입별 색상 */
 const SNAP_COLORS: Record<SnapType, string> = {
@@ -87,6 +97,7 @@ export function ToolOverlay() {
       let angleDeg: number | null = null
       let distLabel: string | null = null
       let turnDeg: number | null = null
+      let prevAway: Pt | null = null
 
       if (drawingId) {
         const shape = editor.getShape(drawingId as TLShapeId)
@@ -108,6 +119,9 @@ export function ToolOverlay() {
             const prev = drawingState.prevDir
             if (prev && Math.hypot(prev.x, prev.y) > 1) {
               turnDeg = turnMagnitudeDeg(prev, { x: p.x2, y: p.y2 })
+              // 앞 구간은 코너로 **들어오는** 방향이다. 기준선으로 쓰려면
+              // 코너에서 바깥으로 되돌려야 한다.
+              prevAway = { x: -prev.x, y: -prev.y }
             }
           }
         }
@@ -155,7 +169,7 @@ export function ToolOverlay() {
         return { axis: g.axis, at: g.axis === 'x' ? v.x : v.y }
       })
 
-      setState({ start, snap, snapType, end, mid, angleDeg, distLabel, turnDeg, guides })
+      setState({ start, snap, snapType, end, mid, angleDeg, distLabel, turnDeg, prevAway, guides })
     }
 
     let raf = 0
@@ -172,8 +186,23 @@ export function ToolOverlay() {
   // 라벨은 **선 옆으로 비켜서** 놓는다. 선 위에 얹으면 둘 다 안 보인다.
   const line = state.start && state.end ? { s: state.start, e: state.end } : null
   const distAt = line && state.mid ? labelPlacement(state.mid, line.s, line.e, LABEL_OFFSET_PX) : null
-  // 꺾임 각은 코너 옆에. 길이와 같은 쪽이라 둘이 한 줄로 읽힌다.
-  const turnAt = line ? labelPlacement(line.s, line.s, line.e, LABEL_OFFSET_PX) : null
+  // 각도 호. 숫자만 있으면 "60.0°" 가 얼마나 벌어진 건지 머리로 그려야 한다.
+  // 호가 있으면 눈이 바로 읽고, 앞 벽의 **점선 연장선**이 기준이 되어
+  // "거기서 이만큼 꺾었다" 가 된다.
+  //
+  // 반지름은 구간 길이에 맞춰 줄인다 — 짧은 벽에 큰 호를 그리면 벽을 덮는다.
+  const arc = line && state.prevAway
+    ? angleArc(
+        line.s.x, line.s.y,
+        state.prevAway.x, state.prevAway.y,
+        line.e.x - line.s.x, line.e.y - line.s.y,
+        Math.min(ARC_RADIUS_PX, Math.hypot(line.e.x - line.s.x, line.e.y - line.s.y) * 0.55),
+      )
+    : null
+  // 숫자는 호 한가운데 바깥에. 호가 없을 만큼 덜 꺾였으면 선 옆에 둔다.
+  const turnAt = arc
+    ? { x: arc.labelX, y: arc.labelY }
+    : line ? labelPlacement(line.s, line.s, line.e, LABEL_OFFSET_PX) : null
 
   return (
     <>
@@ -191,6 +220,19 @@ export function ToolOverlay() {
           }}
         />
       ))}
+      {/* 각도 호 + 앞 벽의 연장선(기준). pointerEvents 는 꺼 둔다 —
+          캔버스 위를 덮는 SVG 라 안 끄면 그리기가 통째로 막힌다. */}
+      {arc && (
+        <svg
+          style={{
+            position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
+            pointerEvents: 'none', zIndex: 101, overflow: 'visible',
+          }}
+        >
+          <path d={arc.legD} fill="none" stroke="#1a73e8" strokeWidth={1} strokeDasharray="4 4" opacity={0.55} />
+          <path d={arc.d} fill="none" stroke="#1a73e8" strokeWidth={1.5} />
+        </svg>
+      )}
       {/* 코너의 꺾임 각. 직각이면 또렷하게(진한 파랑), 아니면 옅게 —
           "쫙 90도로 붙었다" 가 한눈에 보여야 한다. */}
       {state.start && state.turnDeg !== null && turnAt && (
