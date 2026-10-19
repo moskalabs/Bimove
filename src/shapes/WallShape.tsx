@@ -247,7 +247,7 @@ export type WallOutline = { corners: Vec[]; capStart: boolean; capEnd: boolean }
  * 전엔 toSvg 만 옛 모양으로 남아서, 화면은 멀쩡한데 배치 썸네일과 PDF 에서만
  * 검은 벽에 겹친 코너가 나왔다.
  */
-export function wallPaths(outline: WallOutline): { d: string; dStroke: string } {
+function wallPaths(outline: WallOutline): { d: string; dStroke: string } {
   const c = outline.corners
   const d = `M${c[0].x},${c[0].y} L${c[1].x},${c[1].y} L${c[2].x},${c[2].y} L${c[3].x},${c[3].y} Z`
   const dStroke = outline.capStart && outline.capEnd

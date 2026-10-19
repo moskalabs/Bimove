@@ -354,7 +354,3 @@ export async function openBimoveDoc(doc: unknown, pageId = ''): Promise<CadDoc> 
   return mod.BimoveDoc.fromBimove(JSON.stringify(doc), pageId)
 }
 
-/** 엔진이 떠 있는지 (테스트·진단용). */
-export function isLoaded(): boolean {
-  return modPromise !== null
-}

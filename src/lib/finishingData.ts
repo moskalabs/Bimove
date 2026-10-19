@@ -449,11 +449,6 @@ export function calcPaintContainers(totalL: number, containerSizeL: number): num
   return Math.ceil(totalL / containerSizeL)
 }
 
-/** sheet/roll 단위 면적 (m²) */
-export function sheetAreaM2(item: FinishingItem, variant?: MaterialVariant): number {
-  const spec = specOf(item, variant)
-  return ((spec.itemWidthMm ?? 0) * (spec.itemLengthMm ?? 0)) / 1_000_000
-}
 
 // ── 발주서 연동: 마감재 → 발주서 매핑 ──
 

@@ -13,7 +13,7 @@
  * WritableStream<BufferSource> 라서, Uint8Array 로 좁히면 pipeThrough 가
  * 반공변 때문에 거부한다.
  */
-export function bytesToStream(bytes: Uint8Array): ReadableStream<BufferSource> {
+function bytesToStream(bytes: Uint8Array): ReadableStream<BufferSource> {
   return new ReadableStream<BufferSource>({
     start(controller) {
       // lib.dom 의 BufferSource 는 ArrayBuffer 기반 뷰만 받는다 (SharedArrayBuffer

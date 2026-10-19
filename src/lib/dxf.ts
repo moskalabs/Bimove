@@ -1680,7 +1680,7 @@ export function buildOrphanTextShapes(
  * 작은 도면이라 개수가 적어서 한 shape 에 모아도 충분하다 —
  * DxfGroupShape 은 overflow:visible 이라 bbox 가 커도 잘리지 않는다.
  */
-export function buildOrphanHatchShapes(
+function buildOrphanHatchShapes(
   pxHatches: PxHatch[], assignedHatchIdx: Set<number>,
   offsetX: number, offsetY: number, fingerprint: string,
 ): unknown[] {
