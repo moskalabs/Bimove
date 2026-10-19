@@ -249,7 +249,15 @@ function shapeHashKey(shape: WallShape, sx: number, sy: number, ex: number, ey: 
   return `${sx}|${sy}|${ex}|${ey}|${shape.props.thickness}`
 }
 
-function computeWallOutline(editor: Editor, shape: WallShape): WallOutline {
+/**
+ * 벽 하나의 외곽선. **반드시 `useValue` 안에서 불러야 한다** — 이웃을 읽는
+ * 함수라, 추적 밖에서 부르면 이웃이 변해도 다시 안 그려진다 (WallComponent 의
+ * 주석 참고).
+ *
+ * 안 바뀌었으면 **같은 객체**를 돌려준다. `useValue` 가 참조로 비교하므로
+ * 그래야 벽 수백 개가 쓸데없이 다시 그려지지 않는다.
+ */
+export function computeWallOutline(editor: Editor, shape: WallShape): WallOutline {
   const { x2, y2, thickness } = shape.props
   const len = Math.sqrt(x2 * x2 + y2 * y2)
   if (len < 1) return { corners: getCorners(shape), capStart: true, capEnd: true }
@@ -479,9 +487,32 @@ function WallComponent({ shape }: { shape: WallShape }) {
 
   // DXF 임포트 shapes는 miter join 불필요 → 비싼 이웃 탐색 스킵
   const isDxf = !!shape.meta?.dxfFingerprint
-  const outline: WallOutline = isDxf
-    ? { corners: getCorners(shape), capStart: true, capEnd: true }
-    : computeWallOutline(editor, shape)
+
+  // ── 외곽선은 **useValue 안에서** 만든다 ──
+  //
+  // 여기가 "꺾이는 지점이 겹친다" 의 진짜 원인이었다.
+  //
+  // tldraw 는 `ShapeUtil.component()` 를 `useStateTracking` 안에서 부른다.
+  // 그런데 우리 `component()` 는 `<WallComponent/>` **엘리먼트만** 돌려준다 —
+  // 추적은 그 엘리먼트를 **만드는 동안**에만 걸리고, 이 함수 본문은 React 가
+  // 나중에 따로 돌린다. 즉 여기서 뭘 읽어도 **구독이 안 걸린다.**
+  //
+  // 그래서 벽은 제 레코드가 바뀔 때만 다시 그려졌다. 이웃이 생기거나 움직여도
+  // 모른다. 이어 그리기에서 앞 구간이 마지막으로 그려지는 순간엔 다음 구간이
+  // 아직 없으므로, 앞 구간은 **이웃 없음 = miter 없고 끝이 막힌** 모양으로
+  // 굳는다. 그 위에 다음 구간이 miter 된 채 올라오니 겹쳐 보인다.
+  //
+  // `useValue` 로 감싸면 안에서 읽은 신호가 전부 의존성이 된다. 값이
+  // 참조로 같으면 다시 안 그리므로(_cornersCache 가 같은 객체를 돌려준다)
+  // 벽이 수백 개여도 쓸데없이 돌지 않는다.
+  //
+  // DXF 벽은 이웃을 안 보므로 추적에서 뺀다 — 수천 개가 서로를 다시 그린다.
+  const joined = useValue(
+    'wall-outline',
+    () => (shape.meta?.dxfFingerprint ? null : computeWallOutline(editor, shape)),
+    [editor, shape],
+  )
+  const outline: WallOutline = joined ?? { corners: getCorners(shape), capStart: true, capEnd: true }
   const { d, dStroke } = wallPaths(outline)
 
   // DXF 임포트 shapes는 가는 선으로 표시 (CAD 도면 스타일)
