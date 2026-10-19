@@ -93,6 +93,39 @@ describe('miterOffset — 옆면끼리 교차', () => {
     expect(free.x).toBeCloseTo(50, 9)
   })
 
+  it('두 벽의 코너가 **정확히 같은 점**에서 만난다 (= 안 겹친다)', () => {
+    // 한이 "우리꺼는 겹치잖아" 라고 한 게 이것이다. 예전엔 벽마다 닫힌 사각형을
+    // 접점 너머까지 **밀어서** 바깥 틈을 덮었다 — 덮는다는 건 곧 겹친다는 뜻이고,
+    // 진회색 속일 땐 안 보이다가 흰 속이 되자 이음매가 전부 드러났다.
+    //
+    // 이제는 옆면끼리 교차시키므로 두 벽이 **같은 모서리를 공유한다.**
+    //
+    // 한의 도면: 가로 벽(왼쪽으로 뻗음) + 45° 로 올라가는 벽. 접점에서 서로
+    // 멀어지는 방향 사이 각이 135° 다.
+    const SQ = Math.SQRT1_2
+    const h = 50
+    const awayA: [number, number] = [-1, 0]        // 가로 벽이 뻗는 쪽
+    const awayB: [number, number] = [SQ, -SQ]      // 45° 벽이 뻗는 쪽
+
+    // 가로 벽이 제 끝에서 본 코너 두 개
+    const a1 = miterOffset(awayA[0], awayA[1], awayB[0], awayB[1], h, h, 1)!
+    const a2 = miterOffset(awayA[0], awayA[1], awayB[0], awayB[1], h, h, -1)!
+    // 45° 벽이 제 시작에서 본 코너 두 개
+    const b1 = miterOffset(awayB[0], awayB[1], awayA[0], awayA[1], h, h, 1, 36)!
+    const b2 = miterOffset(awayB[0], awayB[1], awayA[0], awayA[1], h, h, -1, 36)!
+
+    // 짝이 어느 쪽끼리 맞는지는 부호 약속에 달렸다 — 집합으로 견준다.
+    const near = (p: { x: number; y: number }, q: { x: number; y: number }) =>
+      Math.hypot(p.x - q.x, p.y - q.y) < 1e-9
+    expect(near(a1, b1) || near(a1, b2)).toBe(true)
+    expect(near(a2, b1) || near(a2, b2)).toBe(true)
+    expect(near(a1, a2)).toBe(false)
+
+    // 135° 꺾임에서 옆면이 밀려나는 양은 h/tan(67.5°) = 0.414h ≈ 21mm 다.
+    // 36mm 토막이어도 한도(36)에 안 걸린다 — 당기는 쪽이 21mm 뿐이다.
+    expect(Math.max(Math.abs(a1.x), Math.abs(a2.x))).toBeLessThan(h + 1)
+  })
+
   it('결과에 NaN 이 없다', () => {
     for (let deg = 5; deg < 356; deg += 7) {
       const r = (deg * Math.PI) / 180
