@@ -169,15 +169,38 @@ type WallSnapshot = {
   /** 반두께 */        half: number
 }
 let _wallsCache: WallSnapshot[] = []
-let _wallsCacheTime = -1
+/** 이 캐시를 만든 원본 배열. 바뀌면(= 도형이 바뀌면) 다시 만든다. */
+let _wallsCacheSrc: readonly unknown[] | null = null
 
-function getWallsSnapshot(editor: Editor): WallSnapshot[] {
-  const now = performance.now()
-  // 같은 렌더 프레임(16ms) 내에서는 캐시 재사용
-  if (now - _wallsCacheTime < 16) return _wallsCache
-  _wallsCacheTime = now
+/**
+ * 페이지의 벽 목록. **캐시 키를 시간이 아니라 원본 배열로 잡는다.**
+ *
+ * 전엔 `performance.now()` 로 16ms 캐시를 했는데, 그게 코너를 깨뜨리고 있었다.
+ *
+ * tldraw 는 도형의 `component()` 를 `useStateTracking` 안에서 부른다 — 그리는
+ * 동안 읽은 **신호가 그대로 그 도형의 구독**이 된다. 그런데 캐시가 살아 있으면
+ * `getCurrentPageShapes()` 를 아예 안 읽고 돌아가므로, 그 프레임에 캐시를
+ * 맞은 벽은 **이웃을 구독하지 못한다.** 이웃이 나중에 움직여도 다시 안 그려지고,
+ * 제 레코드는 안 변하니 영영 안 그려진다.
+ *
+ * 그래서 코너마다 한쪽은 옛 모양(이웃이 없던 때의 **각진 끝**)으로 남는다.
+ * 특히 이어 그리기에서 그렇다 — 앞 구간이 마지막으로 그려지는 순간엔 다음
+ * 구간이 아직 없으므로, 그때 모양이 "이웃 없음" 이다. 그 위에 다음 구간이
+ * miter 된 채 올라오니 **겹쳐 보인다.** 한이 "겹치는 느낌" 이라고 한 게 이것이다.
+ *
+ * 읽기를 먼저 하면 구독이 걸리고, 배열이 그대로면 만드는 일만 건너뛴다.
+ *
+ * (테스트에서 직접 부르려고 export 한다 — 구독을 거르는 캐시는 화면으로만
+ *  확인하기 어렵고, 되돌아오면 또 코너가 어긋난다.)
+ */
+export function getWallsSnapshot(editor: Editor): WallSnapshot[] {
+  const shapes = editor.getCurrentPageShapes()
+  // 같은 배열이면 도형이 하나도 안 바뀐 것이다 (tldraw 의 computed 는 바뀔 때만
+  // 새 배열을 낸다). 구독은 위에서 이미 걸렸다.
+  if (shapes === _wallsCacheSrc) return _wallsCache
+  _wallsCacheSrc = shapes
   _wallsCache = []
-  for (const s of editor.getCurrentPageShapes()) {
+  for (const s of shapes) {
     if (s.type !== 'wall') continue
     const props = s.props as WallShapeProps
     const mat = editor.getShapePageTransform(s)
@@ -304,7 +327,12 @@ function computeWallOutline(editor: Editor, shape: WallShape): WallOutline {
     if (nearEnd || nearBody) {
       neighbors.push(w)
       // numeric hash: 빠른 비트 연산 (string concat GC 부담 제거)
-      neighborHash = (neighborHash * 31 + (w.sx * 73 | 0) + (w.sy * 37 | 0) + (w.ex * 53 | 0) + (w.ey * 97 | 0) + (w.half * 11 | 0)) | 0
+      //
+      // **1000 을 곱한 뒤 자른다.** 그냥 `|0` 이면 소수가 버려져서, 이웃이
+      // 1 단위 안에서 움직이는 동안 해시가 그대로다 — 줌이 크면 그 1 단위가
+      // 화면에서 여러 px 라 코너가 눈에 띄게 어긋난 채 멈춘다.
+      const q = (v: number) => (v * 1000) | 0
+      neighborHash = (neighborHash * 31 + q(w.sx) * 73 + q(w.sy) * 37 + q(w.ex) * 53 + q(w.ey) * 97 + q(w.half) * 11) | 0
     }
   }
 
