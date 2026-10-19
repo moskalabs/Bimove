@@ -126,6 +126,29 @@ describe('miterOffset — 옆면끼리 교차', () => {
     expect(Math.max(Math.abs(a1.x), Math.abs(a2.x))).toBeLessThan(h + 1)
   })
 
+  it('벽이 회전해 있어도 **같은 코너**가 나온다', () => {
+    // 코너는 shape 로컬로 돌려주는데 이웃은 page 에서 찾는다. 회전한 벽에서
+    // 이웃 방향을 page 그대로 쓰면 각이 틀어져 miter 가 풀린다. 그래서
+    // 이웃 방향을 우리 로컬 프레임으로 되돌려 넣는다 — 회전은 각을 보존하므로
+    // **두 프레임의 결과가 같아야** 한다. 그게 이 테스트다.
+    const h = 50
+    const rot = (v: [number, number], r: number): [number, number] =>
+      [v[0] * Math.cos(r) - v[1] * Math.sin(r), v[0] * Math.sin(r) + v[1] * Math.cos(r)]
+
+    const a: [number, number] = [1, 0]
+    const b: [number, number] = [0, 1]
+    const base = miterOffset(a[0], a[1], b[0], b[1], h, h, 1)!
+
+    for (const r of [0.3, 1.1, -2.4, Math.PI]) {
+      // 둘 다 같이 돌린 뒤 결과를 되돌리면 원래 값이어야 한다.
+      const ra = rot(a, r), rb = rot(b, r)
+      const turned = miterOffset(ra[0], ra[1], rb[0], rb[1], h, h, 1)!
+      const back = rot([turned.x, turned.y], -r)
+      expect(back[0]).toBeCloseTo(base.x, 6)
+      expect(back[1]).toBeCloseTo(base.y, 6)
+    }
+  })
+
   it('결과에 NaN 이 없다', () => {
     for (let deg = 5; deg < 356; deg += 7) {
       const r = (deg * Math.PI) / 180

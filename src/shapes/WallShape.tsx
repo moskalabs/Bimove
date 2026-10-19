@@ -1,4 +1,5 @@
 import {
+  Mat,
   Polygon2d,
   ShapeUtil,
   SVGContainer,
@@ -125,7 +126,20 @@ export function shouldShowWallDim(settingOn: boolean, selCount: number): boolean
 const JOIN_SNAP_R = 8 // page-unit radius for endpoint matching
 
 // ── Wall snapshot cache: avoid calling getCurrentPageShapes() per-wall ──
-type WallSnapshot = { id: string; x: number; y: number; props: WallShapeProps }
+/**
+ * 이웃 벽 하나. 좌표는 **page 기준**이다.
+ *
+ * 전엔 `shape.x + props.x2` 를 page 좌표처럼 썼다. 그건 벽이 회전도 안 했고
+ * 그룹 안에도 없을 때만 맞는다 — 벽에는 기본 회전 핸들이 뜨고 그룹도 묶을 수
+ * 있으므로, 그러면 계산한 끝점이 실제 화면 끝점과 어긋나 miter 가 풀리거나
+ * **엉뚱한 벽과 붙는다.** snap.ts 는 처음부터 getShapePageTransform 을 썼다.
+ */
+type WallSnapshot = {
+  id: string
+  /** 시작점 (page) */ sx: number; sy: number
+  /** 끝점 (page) */   ex: number; ey: number
+  /** 반두께 */        half: number
+}
 let _wallsCache: WallSnapshot[] = []
 let _wallsCacheTime = -1
 
@@ -134,9 +148,15 @@ function getWallsSnapshot(editor: Editor): WallSnapshot[] {
   // 같은 렌더 프레임(16ms) 내에서는 캐시 재사용
   if (now - _wallsCacheTime < 16) return _wallsCache
   _wallsCacheTime = now
-  _wallsCache = editor.getCurrentPageShapes()
-    .filter(s => s.type === 'wall')
-    .map(s => ({ id: s.id, x: s.x, y: s.y, props: s.props as WallShapeProps }))
+  _wallsCache = []
+  for (const s of editor.getCurrentPageShapes()) {
+    if (s.type !== 'wall') continue
+    const props = s.props as WallShapeProps
+    const mat = editor.getShapePageTransform(s)
+    const a = mat.applyToPoint({ x: 0, y: 0 })
+    const b = mat.applyToPoint({ x: props.x2, y: props.y2 })
+    _wallsCache.push({ id: s.id, sx: a.x, sy: a.y, ex: b.x, ey: b.y, half: (props.thickness ?? 10) / 2 })
+  }
   return _wallsCache
 }
 
@@ -147,10 +167,35 @@ function getWallsSnapshot(editor: Editor): WallSnapshot[] {
  */
 export type WallOutline = { corners: Vec[]; capStart: boolean; capEnd: boolean }
 
+/**
+ * 외곽선 → SVG path 두 개.
+ *
+ * `d` 는 **채움**(닫힌 사각형), `dStroke` 는 **윤곽**이다. 나눠 그리는 건 다른
+ * 벽이 붙은 끝을 막는 선을 빼야 하기 때문이다 — 그걸 그리면 코너를 가로지르는
+ * 선이 된다.
+ *
+ * 화면(WallComponent)과 내보내기(toSvg)가 **같은 것을 쓰도록** 여기 모았다.
+ * 전엔 toSvg 만 옛 모양으로 남아서, 화면은 멀쩡한데 배치 썸네일과 PDF 에서만
+ * 검은 벽에 겹친 코너가 나왔다.
+ */
+export function wallPaths(outline: WallOutline): { d: string; dStroke: string } {
+  const c = outline.corners
+  const d = `M${c[0].x},${c[0].y} L${c[1].x},${c[1].y} L${c[2].x},${c[2].y} L${c[3].x},${c[3].y} Z`
+  const dStroke = outline.capStart && outline.capEnd
+    ? d
+    : `M${c[0].x},${c[0].y} L${c[1].x},${c[1].y}`
+      + `${outline.capEnd ? ' L' : ' M'}${c[2].x},${c[2].y}`
+      + ` L${c[3].x},${c[3].y}`
+      + (outline.capStart ? ` L${c[0].x},${c[0].y}` : '')
+  return { d, dStroke }
+}
+
 const _cornersCache = new Map<string, { key: string; outline: WallOutline }>()
 
-function shapeHashKey(shape: WallShape): string {
-  return `${shape.x}|${shape.y}|${shape.props.x2}|${shape.props.y2}|${shape.props.thickness}`
+function shapeHashKey(shape: WallShape, sx: number, sy: number, ex: number, ey: number): string {
+  // page 좌표를 넣는다. shape.x/y 만 넣으면 **회전만 바뀐 경우**를 못 잡아서
+  // 캐시가 옛 코너를 계속 돌려준다.
+  return `${sx}|${sy}|${ex}|${ey}|${shape.props.thickness}`
 }
 
 function computeWallOutline(editor: Editor, shape: WallShape): WallOutline {
@@ -160,15 +205,31 @@ function computeWallOutline(editor: Editor, shape: WallShape): WallOutline {
 
   // 캐시 확인: 자신의 geometry + 이웃 wall들의 hash가 같으면 재사용
   const walls = getWallsSnapshot(editor)
-  const myKey = shapeHashKey(shape)
+
+  // ── 이웃 찾기는 page 좌표로, 코너 만들기는 로컬 좌표로 ──
+  //
+  // 돌려줄 코너는 shape 로컬이다 (tldraw 가 바깥에서 변환을 건다). 그런데
+  // 이웃이 어디 있는지는 page 에서만 알 수 있다 — 회전했거나 그룹 안에 있으면
+  // 로컬 좌표끼리는 비교할 수 없다. 그래서 **찾을 때만** page 로 가고,
+  // 찾은 이웃의 방향은 우리 로컬 프레임으로 되돌려서 쓴다 (`toLocalDir`).
+  // 회전은 각을 보존하므로 miter 계산은 어느 프레임에서 해도 같다.
+  const mat = editor.getShapePageTransform(shape)
+  const pStart = mat.applyToPoint({ x: 0, y: 0 })
+  const pEnd = mat.applyToPoint({ x: x2, y: y2 })
+  const sx = pStart.x, sy = pStart.y
+  const ex = pEnd.x, ey = pEnd.y
+  const pageRot = Mat.Rotation(mat)
+  const cosR = Math.cos(-pageRot), sinR = Math.sin(-pageRot)
+  const toLocalDir = (vx: number, vy: number): [number, number] =>
+    pageRot === 0 ? [vx, vy] : [vx * cosR - vy * sinR, vx * sinR + vy * cosR]
+
+  const myKey = shapeHashKey(shape, sx, sy, ex, ey)
 
   // 이웃 wall의 변경도 감지하기 위해 근접 wall들의 hash 포함
   const ux = x2 / len, uy = y2 / len
   const nx = -uy, ny = ux
   const half = thickness / 2
   const snapR = Math.max(JOIN_SNAP_R, half * 0.5)
-  const sx = shape.x, sy = shape.y
-  const ex = shape.x + x2, ey = shape.y + y2
 
   // 근접 wall만 추려서 해시에 포함 (AABB pre-filter → distance check)
   // AABB bounding box: shape의 양 끝점 ± snapR
@@ -181,32 +242,32 @@ function computeWallOutline(editor: Editor, shape: WallShape): WallOutline {
   const neighbors: WallSnapshot[] = []
   for (const w of walls) {
     if (w.id === shape.id) continue
-    const wp = w.props
-    const wlen = Math.hypot(wp.x2, wp.y2)
+    const wdx = w.ex - w.sx, wdy = w.ey - w.sy
+    const wlen = Math.hypot(wdx, wdy)
     if (wlen < 1) continue
 
     // AABB pre-filter: 바운딩박스 겹침 체크 (Math.hypot 이전에 저렴한 비교)
-    const wMinX = Math.min(w.x, w.x + wp.x2)
-    const wMaxX = Math.max(w.x, w.x + wp.x2)
-    const wMinY = Math.min(w.y, w.y + wp.y2)
-    const wMaxY = Math.max(w.y, w.y + wp.y2)
+    const wMinX = Math.min(w.sx, w.ex)
+    const wMaxX = Math.max(w.sx, w.ex)
+    const wMinY = Math.min(w.sy, w.ey)
+    const wMaxY = Math.max(w.sy, w.ey)
     if (wMaxX < bbMinX || wMinX > bbMaxX || wMaxY < bbMinY || wMinY > bbMaxY) continue
 
     // 빠른 거리 체크: 두 endpoint와의 거리가 snapR 이내인 wall만 이웃
-    const dSS = Math.hypot(w.x - sx, w.y - sy)
-    const dSE = Math.hypot(w.x + wp.x2 - sx, w.y + wp.y2 - sy)
-    const dES = Math.hypot(w.x - ex, w.y - ey)
-    const dEE = Math.hypot(w.x + wp.x2 - ex, w.y + wp.y2 - ey)
+    const dSS = Math.hypot(w.sx - sx, w.sy - sy)
+    const dSE = Math.hypot(w.ex - sx, w.ey - sy)
+    const dES = Math.hypot(w.sx - ex, w.sy - ey)
+    const dEE = Math.hypot(w.ex - ex, w.ey - ey)
     const nearEnd = dSS < snapR || dSE < snapR || dES < snapR || dEE < snapR
 
     // T-junction 체크도 포함
     let nearBody = false
     if (!nearEnd) {
-      const wux = wp.x2 / wlen, wuy = wp.y2 / wlen
+      const wux = wdx / wlen, wuy = wdy / wlen
       const checkProj = (px: number, py: number) => {
-        const t = (px - w.x) * wux + (py - w.y) * wuy
+        const t = (px - w.sx) * wux + (py - w.sy) * wuy
         if (t <= snapR || t >= wlen - snapR) return false
-        const projX = w.x + t * wux, projY = w.y + t * wuy
+        const projX = w.sx + t * wux, projY = w.sy + t * wuy
         return Math.hypot(px - projX, py - projY) < snapR
       }
       nearBody = checkProj(sx, sy) || checkProj(ex, ey)
@@ -215,7 +276,7 @@ function computeWallOutline(editor: Editor, shape: WallShape): WallOutline {
     if (nearEnd || nearBody) {
       neighbors.push(w)
       // numeric hash: 빠른 비트 연산 (string concat GC 부담 제거)
-      neighborHash = (neighborHash * 31 + (w.x * 73 | 0) + (w.y * 37 | 0) + (wp.x2 * 53 | 0) + (wp.y2 * 97 | 0) + (wp.thickness * 11 | 0)) | 0
+      neighborHash = (neighborHash * 31 + (w.sx * 73 | 0) + (w.sy * 37 | 0) + (w.ex * 53 | 0) + (w.ey * 97 | 0) + (w.half * 11 | 0)) | 0
     }
   }
 
@@ -239,15 +300,17 @@ function computeWallOutline(editor: Editor, shape: WallShape): WallOutline {
   let joinedEnd = false
 
   for (const w of neighbors) {
-    const wp = w.props
-    const wlen = Math.hypot(wp.x2, wp.y2)
-    const wux = wp.x2 / wlen, wuy = wp.y2 / wlen
-    const wh = wp.thickness / 2
+    const wdx = w.ex - w.sx, wdy = w.ey - w.sy
+    const wlen = Math.hypot(wdx, wdy)
+    // 이웃 방향을 **우리 로컬 프레임**으로 돌린다. 코너를 로컬 좌표로 만들기
+    // 때문이다 — page 방향을 그대로 쓰면 회전한 벽에서 miter 가 엉뚱해진다.
+    const [wux, wuy] = toLocalDir(wdx / wlen, wdy / wlen)
+    const wh = w.half
 
-    const dSS = Math.hypot(w.x - sx, w.y - sy)
-    const dSE = Math.hypot(w.x + wp.x2 - sx, w.y + wp.y2 - sy)
-    const dES = Math.hypot(w.x - ex, w.y - ey)
-    const dEE = Math.hypot(w.x + wp.x2 - ex, w.y + wp.y2 - ey)
+    const dSS = Math.hypot(w.sx - sx, w.sy - sy)
+    const dSE = Math.hypot(w.ex - sx, w.ey - sy)
+    const dES = Math.hypot(w.sx - ex, w.sy - ey)
+    const dEE = Math.hypot(w.ex - ex, w.ey - ey)
 
     // Corner miter: connection at our START — extend backward (−dir)
     if (dSS < snapR || dSE < snapR) {
@@ -267,12 +330,16 @@ function computeWallOutline(editor: Editor, shape: WallShape): WallOutline {
     }
 
     // T-junction: our endpoint near their BODY (not their endpoint)
+    //
+    // 각(sinAngle)은 어느 프레임에서 재도 같지만, **어디에 떨어지는지**는
+    // page 에서 봐야 한다 — 우리 끝점(sx,sy)이 page 좌표다.
     const sinAngle = Math.abs(ux * wuy - uy * wux)
     if (sinAngle > 0.05) {
       const tExt = Math.min(wh / sinAngle, wh * 8)
+      const pwux = wdx / wlen, pwuy = wdy / wlen
       const projectOntoW = (px: number, py: number) => {
-        const t = (px - w.x) * wux + (py - w.y) * wuy
-        const projX = w.x + t * wux, projY = w.y + t * wuy
+        const t = (px - w.sx) * pwux + (py - w.sy) * pwuy
+        const projX = w.sx + t * pwux, projY = w.sy + t * pwuy
         return { t, perpDist: Math.hypot(px - projX, py - projY), onBody: t > snapR && t < wlen - snapR }
       }
       const sp = projectOntoW(sx, sy)
@@ -359,16 +426,7 @@ function WallComponent({ shape }: { shape: WallShape }) {
   const outline: WallOutline = isDxf
     ? { corners: getCorners(shape), capStart: true, capEnd: true }
     : computeWallOutline(editor, shape)
-  const corners = outline.corners
-  const d = `M${corners[0].x},${corners[0].y} L${corners[1].x},${corners[1].y} L${corners[2].x},${corners[2].y} L${corners[3].x},${corners[3].y} Z`
-  // 윤곽선은 **채움과 따로** 그린다. 다른 벽이 붙은 끝은 막는 선을 빼야 한다 —
-  // 그걸 그리면 코너를 가로지르는 선이 되고, 벽을 이어 그릴 때마다 눈에 띈다.
-  const dStroke = outline.capStart && outline.capEnd
-    ? d
-    : `M${corners[0].x},${corners[0].y} L${corners[1].x},${corners[1].y}`
-      + `${outline.capEnd ? ' L' : ' M'}${corners[2].x},${corners[2].y}`
-      + ` L${corners[3].x},${corners[3].y}`
-      + (outline.capStart ? ` L${corners[0].x},${corners[0].y}` : '')
+  const { d, dStroke } = wallPaths(outline)
 
   // DXF 임포트 shapes는 가는 선으로 표시 (CAD 도면 스타일)
   if (isDxf) {
@@ -539,12 +597,20 @@ export class WallShapeUtil extends ShapeUtil<WallShape> {
       return <line x1={0} y1={0} x2={x2} y2={y2} stroke={color} strokeWidth={sw} strokeLinecap="round" />
     }
 
-    const corners = getCorners(shape)
-    const d = `M${corners[0].x},${corners[0].y} L${corners[1].x},${corners[1].y} L${corners[2].x},${corners[2].y} L${corners[3].x},${corners[3].y} Z`
-    const rawFill = (shape.meta?.fill as string) ?? '#555'
+    // 화면과 **같은 외곽선**을 쓴다. 전엔 여기만 getCorners(이어 붙이지 않은
+    // 사각형) + 기본색 '#555' 였다. 그래서 화면은 고쳐도 배치 썸네일·SVG/PDF
+    // 내보내기에서는 검은 벽, 겹치는 코너, 끝을 가로지르는 선이 그대로 나왔다.
+    const outline = computeWallOutline(this.editor, shape)
+    const { d, dStroke } = wallPaths(outline)
+    const rawFill = (shape.meta?.fill as string) ?? '#fff'
     const rawStroke = (shape.meta?.stroke as string) ?? '#222'
     const dxfLw = (shape.meta?.dxfLineweight as number) ?? 0
     const sw = dxfLw > 0 ? Math.max(0.4, Math.min(dxfLw * 0.03, 4)) : 0.6
-    return <path d={d} fill={rawFill} stroke={rawStroke} strokeWidth={sw} />
+    return (
+      <g>
+        <path d={d} fill={rawFill} stroke="none" />
+        <path d={dStroke} fill="none" stroke={rawStroke} strokeWidth={sw} strokeLinecap="butt" />
+      </g>
+    )
   }
 }

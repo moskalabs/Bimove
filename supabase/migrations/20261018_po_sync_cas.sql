@@ -22,22 +22,50 @@
 -- 인자 셋짜리를 **새로 만든다** (기존 둘짜리는 그대로 둔다). 배포 전 클라이언트가
 -- 돌고 있을 수 있어서, 있던 함수를 바꾸면 그쪽이 깨진다.
 --
---   p_expected_updated_at NULL  → 검사 없이 쓴다 (발주서가 처음 올라갈 때)
+--   p_expected_updated_at NULL  → **서버에 발주서가 없어야 한다.** 있으면 P0409
 --   값이 있고 서버와 같다       → 쓴다
 --   값이 있고 서버와 다르다     → **아무것도 안 쓰고** P0409 로 올린다
+--   값이 있는데 행이 없다       → 기대한 행이 사라졌다. P0409
 --
 -- 행을 FOR UPDATE 로 잡고 비교하므로, 같은 순간에 들어온 두 요청 중 하나는
 -- 반드시 기다렸다가 달라진 시각을 보고 충돌로 떨어진다.
+--
+-- ── NULL 이 "검사 없음" 이 아니라 "없어야 함" 인 이유 ──
+--
+-- 클라이언트가 NULL 을 보내는 경우는 하나뿐이다: **서버를 읽었는데 발주서가
+-- 없었다.** (읽기에 실패한 세션은 아예 서버로 쓰지 않는다.) 그걸 "검사 없음"
+-- 으로 받으면, 읽은 뒤 첫 저장 전에 다른 기기가 발주서를 만들었을 때 그걸
+-- 통째로 지우고 이쪽 내용으로 바꾼다 — 이 함수는 3단계에서 기존 물량표를
+-- 전부 DELETE 하기 때문이다.
+--
+-- 없는 행은 FOR UPDATE 로 못 잠근다. 그래서 "없어야 함" 쪽은 잠금이 아니라
+-- **유니크 인덱스**로 가린다: ON CONFLICT DO NOTHING 으로 넣어 보고, 아무것도
+-- 안 들어왔으면 그 사이 누가 만든 것이다. 동시에 들어온 첫 저장 둘 중 하나는
+-- 반드시 여기서 떨어진다.
+--
+-- ── 새 시각을 **같은 트랜잭션에서** 돌려준다 ──
+--
+-- 전엔 uuid 를 돌려주고 클라이언트가 updated_at 을 따로 읽었다. 그 사이에
+-- 다른 기기가 저장하면, 그 기기의 시각을 제 기준값으로 삼는다 — 내용은 보지도
+-- 않은 채 다음 CAS 가 통과해서 상대 변경을 덮는다. 쓴 값을 그대로 돌려주면
+-- 그 창이 없다.
 -- ============================================================
 
-CREATE OR REPLACE FUNCTION public.sync_purchase_order(
+-- 돌려주는 타입이 uuid 에서 timestamptz 로 바뀌었다. CREATE OR REPLACE 로는
+-- 반환 타입을 못 바꾸므로 먼저 지운다. 셋짜리는 아직 아무도 안 쓴다
+-- (클라이언트가 없으면 둘짜리로 떨어지게 되어 있다).
+DROP FUNCTION IF EXISTS public.sync_purchase_order(uuid, jsonb, timestamptz);
+
+CREATE FUNCTION public.sync_purchase_order(
   p_project_id uuid,
   p_tables jsonb,
   p_expected_updated_at timestamptz
-) RETURNS uuid AS $$
+) RETURNS timestamptz AS $$
 DECLARE
   v_po_id uuid;
+  v_new timestamptz;
   v_cur timestamptz;
+  v_found boolean;
   v_table jsonb;
   v_item jsonb;
   v_ex jsonb;
@@ -68,9 +96,12 @@ BEGIN
   FROM purchase_orders
   WHERE project_id = p_project_id
   FOR UPDATE;
+  v_found := FOUND;
 
-  IF FOUND AND p_expected_updated_at IS NOT NULL
-     AND v_cur IS DISTINCT FROM p_expected_updated_at THEN
+  IF v_found AND v_cur IS DISTINCT FROM p_expected_updated_at THEN
+    -- 기대와 다르다. p_expected_updated_at 이 NULL 인 경우(= 없어야 하는데
+    -- 있다)도 여기로 떨어진다 — IS DISTINCT FROM 은 NULL 을 값처럼 견준다.
+    --
     -- 아무것도 안 썼다. 예외를 내면 트랜잭션이 통째로 되돌아가므로
     -- "반쯤 쓰인" 상태가 남을 수 없다.
     RAISE EXCEPTION 'sync_purchase_order: 다른 기기가 먼저 저장했습니다 (서버 %, 기대 %)',
@@ -78,12 +109,32 @@ BEGIN
       USING ERRCODE = 'P0409';
   END IF;
 
-  -- 2. purchase_order upsert
-  INSERT INTO purchase_orders (project_id, updated_at)
-  VALUES (p_project_id, now())
-  ON CONFLICT (project_id)
-  DO UPDATE SET updated_at = now()
-  RETURNING id INTO v_po_id;
+  IF NOT v_found AND p_expected_updated_at IS NOT NULL THEN
+    -- 기대한 행이 사라졌다 (다른 기기가 프로젝트를 지웠거나 되돌렸다).
+    -- 조용히 새로 만들면 그쪽 삭제를 없던 일로 만든다.
+    RAISE EXCEPTION 'sync_purchase_order: 기대한 발주서가 서버에 없습니다 (기대 %)',
+      p_expected_updated_at
+      USING ERRCODE = 'P0409';
+  END IF;
+
+  -- 2. purchase_order 행 확보
+  IF v_found THEN
+    UPDATE purchase_orders SET updated_at = now()
+    WHERE project_id = p_project_id
+    RETURNING id, updated_at INTO v_po_id, v_new;
+  ELSE
+    -- 없는 행은 FOR UPDATE 로 못 잠근다. 유니크 인덱스에 맡긴다 —
+    -- 동시에 들어온 첫 저장 둘 중 늦은 쪽은 아무것도 못 넣고 아래서 떨어진다.
+    INSERT INTO purchase_orders (project_id, updated_at)
+    VALUES (p_project_id, now())
+    ON CONFLICT (project_id) DO NOTHING
+    RETURNING id, updated_at INTO v_po_id, v_new;
+
+    IF v_po_id IS NULL THEN
+      RAISE EXCEPTION 'sync_purchase_order: 그 사이 다른 기기가 발주서를 만들었습니다'
+        USING ERRCODE = 'P0409';
+    END IF;
+  END IF;
 
   -- 3. 기존 데이터 삭제 (CASCADE로 items/exclusions도 삭제)
   DELETE FROM boq_tables WHERE purchase_order_id = v_po_id;
@@ -144,7 +195,10 @@ BEGIN
     END LOOP;
   END LOOP;
 
-  RETURN v_po_id;
+  -- 쓴 시각을 **같은 트랜잭션에서** 돌려준다. 클라이언트가 이걸 다음 CAS 의
+  -- 기준으로 쓴다 — 따로 읽으면 그 사이 들어온 남의 저장 시각을 제 것으로
+  -- 삼게 된다.
+  RETURN v_new;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 

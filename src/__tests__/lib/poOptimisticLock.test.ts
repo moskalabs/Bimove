@@ -34,6 +34,16 @@ let rpcFails = false
  * 마이그레이션을 안 돌린 환경이다. 그때만 옛 길(집고 → 둘짜리)로 간다.
  */
 let casDeployed = true
+/**
+ * 발주서 행을 **읽은** 횟수.
+ *
+ * CAS 가 성공한 뒤에도 시각을 따로 읽으면, 그 사이 다른 기기가 저장했을 때
+ * 남의 시각을 제 기준값으로 삼는다 — 내용은 보지도 않았는데 다음 CAS 가
+ * 통과해서 상대를 덮는다. 그래서 "안 읽는다" 를 직접 센다.
+ */
+let poReads = 0
+/** true 면 다음 **읽기** 때 다른 기기가 저장한 것처럼 서버가 앞서 나간다. */
+let bumpOnRead = false
 
 vi.mock('../../lib/supabase', () => {
   const makeBuilder = () => {
@@ -50,6 +60,17 @@ vi.mock('../../lib/supabase', () => {
     }
 
     const run = () => {
+      if (patch === null) {
+        poReads++
+        if (bumpOnRead && server) {
+          // 다른 기기(B)가 방금 저장한 것처럼 서버를 앞세운다.
+          bumpOnRead = false
+          server = {
+            updatedAt: toPg(new Date(Date.parse(server.updatedAt) + 30_000).toISOString()),
+            tables: [...server.tables, { id: 'tB', label: 'B가 만든 표' }],
+          }
+        }
+      }
       if (!server) return { data: null, error: null }
       if (!matches()) return { data: null, error: null }     // 0행
       if (patch?.updated_at) {
@@ -106,21 +127,28 @@ vi.mock('../../lib/supabase', () => {
         }
         rpcCalls++
         if (rpcFails) return { error: { code: 'XX000', message: '네트워크' } }
-        // CAS: 기대값과 다르면 **아무것도 안 쓰고** P0409 로 올린다.
+        // CAS: 기대와 다르면 **아무것도 안 쓰고** P0409 로 올린다.
         // (마이그레이션의 RAISE EXCEPTION … ERRCODE = 'P0409' 와 같은 동작)
-        if (
-          cas && server &&
-          args.p_expected_updated_at != null &&
-          Date.parse(server.updatedAt) !== Date.parse(args.p_expected_updated_at)
-        ) {
-          return { error: { code: 'P0409', message: '다른 기기가 먼저 저장했습니다' } }
+        //
+        // NULL 은 "검사 없음" 이 아니라 **"서버에 없어야 한다"** 는 뜻이다.
+        // 그래서 네 경우를 다 가린다.
+        if (cas) {
+          const expected = args.p_expected_updated_at ?? null
+          const mismatch = server
+            ? expected === null || Date.parse(server.updatedAt) !== Date.parse(expected)
+            : expected !== null
+          if (mismatch) {
+            return { error: { code: 'P0409', message: '다른 기기가 먼저 저장했습니다' } }
+          }
         }
         // 목록을 그대로 반영하고 updated_at 을 다시 찍는다
         server = {
           updatedAt: toPg(new Date(Date.parse(server?.updatedAt ?? '2026-10-09T09:00:00.000Z') + 60_000).toISOString()),
           tables: args.p_tables.map(t => ({ id: t.id, label: t.label })),
         }
-        return { error: null }
+        // 셋짜리는 **찍은 시각을 그 자리에서** 돌려준다 (RETURNS timestamptz).
+        // 둘짜리는 예전처럼 uuid 다.
+        return { data: cas ? server.updatedAt : 'po1', error: null }
       },
     },
     supabaseConfigured: true,
@@ -142,6 +170,60 @@ beforeEach(() => {
   rpcCalls = 0
   rpcFails = false
   casDeployed = true
+  poReads = 0
+  bumpOnRead = false
+})
+
+describe('syncPurchaseOrder — "서버에 없음" 도 CAS 로 지킨다', () => {
+  it('없다고 읽고 왔는데 그 사이 생겼으면 **안 덮는다**', async () => {
+    // 기준값 없음 = "서버를 읽었는데 발주서가 없었다" 는 뜻이다.
+    // (못 읽은 세션은 아예 서버로 안 쓴다 — POTablesTab 의 fetchFailedRef.)
+    //
+    // 전엔 그 경우 **조건 없는 둘짜리 RPC** 로 내려갔다. 이 길은 서버 물량표를
+    // 전부 지우고 내 것으로 바꾸므로, 그 사이 다른 기기가 만든 발주서가
+    // 통째로 사라졌다.
+    server = { updatedAt: toPg('2026-10-09T09:10:00.000Z'), tables: [{ id: 'tB', label: 'B가 만든 표' }] }
+    const r = await syncPurchaseOrder(po('내 표'))
+    expect(r.kind).toBe('conflict')
+    expect(server!.tables.map(t => t.label)).toEqual(['B가 만든 표'])   // 그대로다
+  })
+
+  it('정말 비어 있으면 첫 저장은 그대로 나간다', async () => {
+    server = null
+    const r = await syncPurchaseOrder(po('내 표'))
+    expect(r.kind).toBe('ok')
+    expect(server!.tables.map(t => t.label)).toEqual(['내 표'])
+  })
+
+  it('기대한 행이 사라졌으면 다시 만들지 않는다', async () => {
+    // 다른 기기가 발주서를 지웠다. 조용히 새로 만들면 그 삭제를 없던 일로 만든다.
+    const base = server!.updatedAt
+    server = null
+    const r = await syncPurchaseOrder(po('내 표'), base)
+    expect(r.kind).toBe('conflict')
+    expect(server).toBeNull()
+  })
+})
+
+describe('syncPurchaseOrder — 성공 뒤 기준값', () => {
+  it('RPC 가 찍은 시각을 쓴다 — **따로 읽지 않는다**', async () => {
+    const base = server!.updatedAt
+    const r = await syncPurchaseOrder(po('벽체'), base)
+    expect(r.kind).toBe('ok')
+    expect(r.serverUpdatedAt).toBe(server!.updatedAt)
+    // 읽었으면 그 사이 남이 저장했을 때 **남의 시각**을 제 기준으로 삼는다.
+    expect(poReads).toBe(0)
+  })
+
+  it('쓰고 읽는 사이에 남이 저장해도 **남의 시각을 집어오지 않는다**', async () => {
+    const base = server!.updatedAt
+    bumpOnRead = true          // 지금 읽으면 B 의 저장이 보인다
+    const r = await syncPurchaseOrder(po('벽체'), base)
+    expect(r.kind).toBe('ok')
+    // 안 읽었으므로 B 의 저장은 안 보이고, 기준값은 내가 쓴 시각 그대로다.
+    expect(bumpOnRead).toBe(true)
+    expect(Date.parse(r.serverUpdatedAt!)).toBe(Date.parse(server!.updatedAt))
+  })
 })
 
 describe('syncPurchaseOrder — optimistic lock', () => {
@@ -231,18 +313,26 @@ describe('syncPurchaseOrder — optimistic lock', () => {
     expect((await syncPurchaseOrder(po('벽체'), base)).kind).toBe('conflict')
   })
 
-  it('기준값을 안 주면 옛 동작 — 조건 없이 쓴다', async () => {
-    // 서버에 발주서가 처음 올라가는 경우가 이 길이다.
+  // ── 여기 두 줄은 **계약이 바뀐 자리**다 ──
+  //
+  // 전엔 "기준값 없음 = 조건 없이 쓴다", "행이 없으면 기준값이 있어도 첫 쓰기"
+  // 였다. 둘 다 덮어쓰기 구멍이었다 — 이 RPC 는 서버 물량표를 전부 지우고 다시
+  // 넣기 때문에, 그 사이 다른 기기가 만들었거나 지운 것을 없던 일로 만든다.
+  // 바뀐 규칙은 바로 위 describe('…"서버에 없음" 도 CAS 로 지킨다') 에 있다.
+
+  it('기준값을 안 주면 **"서버에 없어야 한다"** 는 뜻이다', async () => {
+    // 지금 서버에는 행이 있다 → 기대와 다르다 → 안 쓴다.
+    const before = server!.tables.map(t => t.label)
     const r = await syncPurchaseOrder(po('벽체', '천장'))
-    expect(r.kind).toBe('ok')
-    expect(server!.tables).toHaveLength(2)
+    expect(r.kind).toBe('conflict')
+    expect(server!.tables.map(t => t.label)).toEqual(before)
   })
 
-  it('서버에 행이 아직 없으면 기준값이 있어도 첫 쓰기로 본다', async () => {
+  it('기준값이 있는데 행이 없으면 충돌이다 — 되살리지 않는다', async () => {
     server = null
     const r = await syncPurchaseOrder(po('벽체'), toPg('2026-10-09T09:00:00.000Z'))
-    expect(r.kind).toBe('ok')
-    expect(server!.tables.map(t => t.label)).toEqual(['벽체'])
+    expect(r.kind).toBe('conflict')
+    expect(server).toBeNull()
   })
 
   it('표기만 다른 같은 시각으로는 헛충돌이 나지 않는다 (Z vs +00:00)', async () => {

@@ -152,17 +152,35 @@ const PO_CONFLICT_SQLSTATE = 'P0409'
  * 비원자성이 사라진다. 아직 배포 안 된 환경이 있으므로 `null` 을 돌려
  * 옛 길로 내려보낸다.
  */
-async function syncViaCasRpc(
-  po: PurchaseOrder, expected: string,
-): Promise<'ok' | 'conflict' | null> {
-  const { error } = await supabase.rpc('sync_purchase_order', {
+/**
+ * CAS RPC 의 결과.
+ *
+ * `missing` 은 마이그레이션을 아직 안 돌린 환경이다 — 그때만 옛 길로 떨어진다.
+ */
+type CasResult =
+  /** 썼다. `updatedAt` 은 **그 트랜잭션이 찍은 값**이다. */
+  | { kind: 'ok'; updatedAt: string }
+  | { kind: 'conflict' }
+  | { kind: 'missing' }
+
+/**
+ * @param expected 서버가 들고 있어야 할 시각. **`null` 은 "서버에 발주서가
+ *   없어야 한다"** 는 뜻이다 ("검사 없음" 이 아니다 — 함수 주석 참고).
+ */
+async function syncViaCasRpc(po: PurchaseOrder, expected: string | null): Promise<CasResult> {
+  const { data, error } = await supabase.rpc('sync_purchase_order', {
     p_project_id: po.projectId,
     p_tables: toRpcTables(po),
     p_expected_updated_at: expected,
   })
-  if (!error) return 'ok'
-  if (error.code === PO_CONFLICT_SQLSTATE) return 'conflict'
-  if (isMissingFunction(error)) return null       // 아직 안 돌린 환경
+  if (!error) {
+    // 새 함수는 찍은 시각을 돌려준다. 옛 셋짜리(uuid 를 돌려주던 것)가 아직
+    // 서버에 남아 있을 수 있으니, 시각으로 안 보이면 따로 읽어서 메운다.
+    const updatedAt = typeof data === 'string' && data.includes(':') ? data : undefined
+    return { kind: 'ok', updatedAt: updatedAt ?? (await readPoUpdatedAt(po.projectId)) ?? '' }
+  }
+  if (error.code === PO_CONFLICT_SQLSTATE) return { kind: 'conflict' }
+  if (isMissingFunction(error)) return { kind: 'missing' }  // 아직 안 돌린 환경
   throw new Error(`발주서 동기화 실패 (RPC/CAS): ${error.message}`)
 }
 
@@ -356,8 +374,14 @@ export type POSyncResult =
  *
  * `expectedUpdatedAt` 을 주면 그 값일 때만 쓴다. 어긋나면 **아무것도 쓰지
  * 않고** `conflict` 를 돌려준다 — 호출부가 사용자에게 알리고 멈출 수 있게.
- * 안 주면 옛 동작(조건 없는 쓰기)이다. 서버에 발주서가 처음 올라가는
- * 경우가 그렇다.
+ *
+ * 안 주는 건 "조건 없이 써라" 가 아니라 **"서버에 발주서가 없는 걸 읽고 왔다"**
+ * 는 뜻이다. 호출부(POTablesTab)는 서버를 못 읽으면 아예 보내지 않으므로
+ * 그 경우밖에 없다. 그래서 그때도 CAS 로 보낸다 — 읽은 뒤 첫 저장 전에 다른
+ * 기기가 만들어 둔 발주서를 지우지 않기 위해서다.
+ *
+ * (RPC 가 아직 배포 안 된 환경에서만 옛 길로 떨어지고, 거기서는 기준값이
+ *  없으면 조건 없는 쓰기가 된다 — 그건 마이그레이션을 돌리면 사라진다.)
  */
 export async function syncPurchaseOrder(
   po: PurchaseOrder,
@@ -368,14 +392,19 @@ export async function syncPurchaseOrder(
   // 검사와 쓰기가 한 트랜잭션 안에 있으면 아래의 "집고 → 쓰고" 가 가진
   // 비원자성이 통째로 사라진다. 아직 마이그레이션을 안 돌린 환경에서는
   // null 이 돌아오고, 그때만 옛 길로 간다.
-  if (expectedUpdatedAt) {
-    const cas = await syncViaCasRpc(po, expectedUpdatedAt)
-    if (cas === 'conflict') {
-      return { kind: 'conflict', serverUpdatedAt: await readPoUpdatedAt(po.projectId) }
-    }
-    if (cas === 'ok') {
-      return { kind: 'ok', serverUpdatedAt: await readPoUpdatedAt(po.projectId) }
-    }
+  //
+  // **기준값이 없을 때도 CAS 로 간다.** 없다는 건 "서버를 읽었는데 발주서가
+  // 없었다" 는 뜻이지 "아무 때나 덮어도 된다" 가 아니다 (못 읽은 세션은 아예
+  // 서버로 안 쓴다 — POTablesTab 의 fetchFailedRef). 읽은 뒤 첫 저장 전에 다른
+  // 기기가 발주서를 만들었으면, 조건 없이 쓰는 길은 그걸 통째로 지운다.
+  const cas = await syncViaCasRpc(po, expectedUpdatedAt ?? null)
+  if (cas.kind === 'conflict') {
+    return { kind: 'conflict', serverUpdatedAt: await readPoUpdatedAt(po.projectId) }
+  }
+  if (cas.kind === 'ok') {
+    // **따로 읽지 않는다.** 읽는 사이 다른 기기가 저장하면 그 시각을 제 기준값
+    // 으로 삼게 되고, 내용은 보지도 않은 채 다음 CAS 가 통과해 상대를 덮는다.
+    return { kind: 'ok', serverUpdatedAt: cas.updatedAt || undefined }
   }
 
   let claimed: string | undefined

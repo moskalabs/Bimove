@@ -741,8 +741,27 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
         const inFlight = syncInFlight
         void (async () => {
           if (inFlight) { try { await inFlight } catch { /* 그쪽에서 이미 처리했다 */ } }
+          // ── 기다린 뒤에 **다시 본다** ──
+          //
+          // 위에서 "보낸다" 를 정한 건 기다리기 **전**이다. 기다리는 동안 그
+          // 동기화가 충돌을 만나 서버를 백업하려다 실패했으면 syncPaused 가
+          // 선다. 그 뒤로는 아무것도 쓰면 안 되는데, 여기서 다시 안 보면
+          // 그대로 보낸다 — 게다가 그 경로는 기준 시각을 새로 받아왔으므로
+          // 조건이 **맞아떨어져 실제로 덮인다.** 백업하려던 서버 도면이
+          // 그렇게 사라진다.
+          //
+          // 늦은 서버 읽기(needServerRead) 가 실패로 끝난 경우도 같다 —
+          // 기준 시각을 여전히 모르는 채로 쓰게 된다.
+          if (syncPaused || needServerRead) {
+            console.warn('[supabase-sync] 언마운트 flush 취소 — 그 사이 서버 쓰기가 막혔다')
+            return
+          }
           try {
-            await saveSnapshotToSupabase(projectId, snap, thumb, lastServerUpdatedAt)
+            // 주기 저장과 같은 규칙. 기준값이 없으면 조건 없는 UPDATE 가 되므로
+            // 시각만 따로 읽어 와서 건다. 서버에 행이 아예 없으면 undefined 가
+            // 그대로 와서 첫 저장(INSERT)이 된다 — 그건 막을 이유가 없다.
+            const expected = lastServerUpdatedAt ?? await fetchProjectUpdatedAt(projectId)
+            await saveSnapshotToSupabase(projectId, snap, thumb, expected)
           } catch (err) {
             console.warn('[supabase-sync] 언마운트 flush 실패', err)
           }
