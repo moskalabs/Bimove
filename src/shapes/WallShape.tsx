@@ -80,6 +80,10 @@ export function miterExtension(
  * @param ax,ay 접점에서 **바깥으로** 향하는 내 벽 방향 (단위)
  * @param bx,by 접점에서 **바깥으로** 향하는 상대 벽 방향 (단위)
  * @param side  +1 이면 perp(a) 쪽 옆면, -1 이면 반대쪽
+ * @param maxInto 안쪽 옆면을 **벽 안으로** 당겨도 되는 한도. `a` 가 늘 접점에서
+ *   벽 몸통 쪽을 보므로 양수 t 가 "당기는" 방향이다. 벽이 제 miter 보다 짧으면
+ *   (예: 두께 100mm 인 36mm 토막) 당겨진 끝이 반대쪽 끝을 **지나쳐** 도형이
+ *   뒤집힌다. 보통 벽 길이의 절반을 넘긴다.
  * @returns 접점에서의 오프셋. 거의 나란하면 `null` (꺾인 게 아니다).
  */
 export function miterOffset(
@@ -87,6 +91,7 @@ export function miterOffset(
   bx: number, by: number,
   hA: number, hB: number,
   side: 1 | -1,
+  maxInto = Infinity,
 ): { x: number; y: number } | null {
   const cross = ax * by - ay * bx
   if (Math.abs(cross) < 0.05) return null
@@ -96,9 +101,8 @@ export function miterOffset(
   const dx = hB * nBx - hA * nAx
   const dy = hB * nBy - hA * nAy
   let t = (dx * by - dy * bx) / cross
-  // 아주 뾰족한 각에서 창처럼 뻗는 것만 막는다.
-  const cap = hA * 8
-  t = Math.max(-cap, Math.min(cap, t))
+  // 바깥(−)으로는 창처럼 뻗는 것만, 안(+)으로는 끝을 지나치는 것만 막는다.
+  t = Math.max(-hA * 8, Math.min(Math.min(maxInto, hA * 8), t))
   return { x: hA * nAx + t * ax, y: hA * nAy + t * ay }
 }
 
@@ -282,10 +286,12 @@ function computeWallOutline(editor: Editor, shape: WallShape): WallOutline {
   const sdx = -ux * startExt, sdy = -uy * startExt
   const edx = ux * endExt, edy = uy * endExt
 
-  const s0 = startPeer && miterOffset(ux, uy, startPeer[0], startPeer[1], half, startPeer[2], 1)
-  const s3 = startPeer && miterOffset(ux, uy, startPeer[0], startPeer[1], half, startPeer[2], -1)
-  const e1 = endPeer && miterOffset(-ux, -uy, endPeer[0], endPeer[1], half, endPeer[2], -1)
-  const e2 = endPeer && miterOffset(-ux, -uy, endPeer[0], endPeer[1], half, endPeer[2], 1)
+  // 양 끝이 다 꺾여 있으면 둘이 가운데서 만나도 안 되므로 절반씩만 내준다.
+  const into = joinedStart && joinedEnd ? len / 2 : len
+  const s0 = startPeer && miterOffset(ux, uy, startPeer[0], startPeer[1], half, startPeer[2], 1, into)
+  const s3 = startPeer && miterOffset(ux, uy, startPeer[0], startPeer[1], half, startPeer[2], -1, into)
+  const e1 = endPeer && miterOffset(-ux, -uy, endPeer[0], endPeer[1], half, endPeer[2], -1, into)
+  const e2 = endPeer && miterOffset(-ux, -uy, endPeer[0], endPeer[1], half, endPeer[2], 1, into)
 
   const corners = [
     at(0, 0, s0 || null, 1, sdx, sdy),

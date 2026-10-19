@@ -74,6 +74,25 @@ describe('miterOffset — 옆면끼리 교차', () => {
     expect(Math.hypot(sharp.x, sharp.y)).toBeLessThanOrEqual(H * 8 + H + 1e-6)
   })
 
+  it('제 miter 보다 짧은 벽에서 **끝을 지나치지 않는다**', () => {
+    // 한이 그린 게 이거다 — 두께 100mm 짜리 벽의 36mm 토막. 당겨지는 쪽이
+    // 반대쪽 끝을 지나가면 도형이 뒤집혀서 나비넥타이가 된다.
+    const LEN = 36
+    const inner = miterOffset(1, 0, 0, 1, 50, 50, 1, LEN)!
+    // a(+x) 성분이 벽 길이 안에 있어야 한다.
+    expect(inner.x).toBeLessThanOrEqual(LEN)
+    expect(inner.x).toBeCloseTo(LEN, 9) // 한도에 걸렸다
+
+    // 바깥쪽은 안 막는다 — 뻗어도 뒤집히지 않는다.
+    const outer = miterOffset(1, 0, 0, 1, 50, 50, -1, LEN)!
+    expect(outer.x).toBeCloseTo(-50, 9)
+  })
+
+  it('한도를 안 주면 예전처럼 다 간다', () => {
+    const free = miterOffset(1, 0, 0, 1, 50, 50, 1)!
+    expect(free.x).toBeCloseTo(50, 9)
+  })
+
   it('결과에 NaN 이 없다', () => {
     for (let deg = 5; deg < 356; deg += 7) {
       const r = (deg * Math.PI) / 180
