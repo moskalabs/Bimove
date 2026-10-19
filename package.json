@@ -28,7 +28,6 @@
     "@velipso/polybool": "^2.0.11",
     "dwgdxf": "^2.0.1",
     "dxf": "^5.3.1",
-    "dxf-parser": "^1.1.2",
     "dxf-viewer": "^1.0.48",
     "html2canvas": "^1.4.1",
     "lodash-es": "^4.18.1",

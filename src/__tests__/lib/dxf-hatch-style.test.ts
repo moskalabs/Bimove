@@ -13,7 +13,6 @@
  * 분리돼 나오는지(=채움 규칙이 먹을 수 있는 모양인지) 를 본다.
  */
 import { describe, it, expect } from 'vitest'
-import { parseRawHatches } from '../../lib/dxf'
 import { parseHatchEntity } from '../../lib/dxf-fast-worker'
 
 type Pair = [string, string]
@@ -51,22 +50,14 @@ function ringHatch(style: string): Pair[] {
   ]
 }
 
-const asDxf = (pairs: Pair[]): string =>
-  ['0', 'SECTION', '2', 'ENTITIES', '0', 'HATCH']
-    .concat(pairs.flat(), ['0', 'ENDSEC', '0', 'EOF'])
-    .join('\n') + '\n'
-
 const asChunk = (pairs: Pair[]): string =>
   'HATCH\n' + pairs.map(([c, v]) => `${c}\n${v}`).join('\n') + '\n'
 
 describe('HATCH gc 75 해치 스타일', () => {
-  it('두 파서가 gc 75 를 그대로 싣는다', () => {
+  it('gc 75 를 그대로 싣는다', () => {
     for (const style of ['0', '1', '2']) {
-      const pairs = ringHatch(style)
-      const worker = parseHatchEntity(asChunk(pairs), 'F-1')
-      const legacy = parseRawHatches(asDxf(pairs), {})
+      const worker = parseHatchEntity(asChunk(ringHatch(style)), 'F-1')
       expect(worker?.hatchStyle).toBe(Number(style))
-      expect(legacy[0]?.hatchStyle).toBe(Number(style))
     }
   })
 
@@ -74,16 +65,12 @@ describe('HATCH gc 75 해치 스타일', () => {
     const pairs = ringHatch('0').filter(([c, v]) => !(c === '75' && v === '0'))
     const worker = parseHatchEntity(asChunk(pairs), 'F-1')
     expect(worker?.hatchStyle).toBe(0)
-    expect(parseRawHatches(asDxf(pairs), {})[0]?.hatchStyle).toBe(0)
   })
 
   // 루프가 하나로 뭉쳐 나오면 채움 규칙으로 홀을 뚫을 수가 없다.
   it('바깥 루프와 섬이 서브패스 두 개로 분리돼 나온다', () => {
     const pairs = ringHatch('0')
-    for (const d of [
-      parseHatchEntity(asChunk(pairs), 'F-1')!.pathData,
-      parseRawHatches(asDxf(pairs), {})[0].pathData,
-    ]) {
+    for (const d of [parseHatchEntity(asChunk(pairs), 'F-1')!.pathData]) {
       expect(d.match(/M/g)).toHaveLength(2)
       expect(d.match(/Z/g)).toHaveLength(2)
       // 두 루프가 같은 방향(CCW) 으로 감겨 있다 — nonzero 로 채우면 홀이 메워진다.

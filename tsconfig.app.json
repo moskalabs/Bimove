@@ -4,7 +4,22 @@
     "target": "es2023",
     "lib": ["ES2023", "DOM"],
     "module": "esnext",
-    "types": ["vite/client"],
+    /*
+      "node" 를 **명시한다.**
+
+      `src/__tests__` 가 이 프로젝트에 들어 있고, 거기 몇몇은 픽스처를 읽느라
+      fs / path / process / __dirname 을 쓴다. 그런데 여기엔 "vite/client" 밖에
+      없었다 — 그런데도 통과했다.
+
+      이유는 dxf-parser(npm) 의 .d.ts 첫 줄이 `/// <reference types="node" />`
+      라서, 그 패키지를 테스트 하나가 import 하는 것만으로 node 타입이 **온
+      프로젝트에** 끌려 들어오고 있었기 때문이다. 쓰지도 않는 라이브러리의
+      부수 효과에 타입 설정이 얹혀 있던 셈이고, 그 패키지를 떼어내자 숨어
+      있던 에러 여덟 개가 한꺼번에 드러났다.
+
+      의존성이 아니라 설정으로 선언한다.
+    */
+    "types": ["vite/client", "node"],
     "skipLibCheck": true,
 
     /* Bundler mode */

@@ -12,7 +12,6 @@
  * theta 로 판정하고 있었다 — 그 기준에 맞춘 것이다.
  */
 import { describe, it, expect } from 'vitest'
-import { parseRawHatches } from '../../lib/dxf'
 import { parseHatchEntity } from '../../lib/dxf-fast-worker'
 
 type Pair = [string, string]
@@ -41,11 +40,6 @@ function polylineBulge(bulge: string): Pair[] {
   ]
 }
 
-const asDxf = (pairs: Pair[]): string =>
-  ['0', 'SECTION', '2', 'ENTITIES', '0', 'HATCH']
-    .concat(pairs.flat(), ['0', 'ENDSEC', '0', 'EOF'])
-    .join('\n') + '\n'
-
 const asChunk = (pairs: Pair[]): string =>
   'HATCH\n' + pairs.map(([c, v]) => `${c}\n${v}`).join('\n') + '\n'
 
@@ -57,13 +51,11 @@ function points(pathData: string): Array<[number, number]> {
   return out
 }
 
-/** 두 파서를 같은 입력으로 돌려서 패스를 꺼낸다. */
+/** 워커를 돌려서 패스를 꺼낸다. (배열인 건 호출부가 for..of 로 쓰기 때문이다.) */
 function bothPaths(pairs: Pair[]): string[] {
   const worker = parseHatchEntity(asChunk(pairs), 'F-1')
-  const legacy = parseRawHatches(asDxf(pairs), {})
   expect(worker).not.toBeNull()
-  expect(legacy).toHaveLength(1)
-  return [worker!.pathData, legacy[0].pathData]
+  return [worker!.pathData]
 }
 
 function bbox(pathData: string) {

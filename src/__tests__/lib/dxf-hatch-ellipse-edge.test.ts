@@ -8,11 +8,10 @@
  * 규칙으로 채워지므로 **타원 전체를 메운 반투명 회색 원반**이 보인다 —
  * 리닝 도면 F-1 레이어에 네 개 떠 있던 그 동그라미.
  *
- * 같은 블록이 dxf-fast-worker.ts(V2 워커) 와 dxf.ts(parseRawHatches) 에
- * 복붙돼 있어서 양쪽을 다 검증한다.
+ * (2026-10-19: dxf.ts 쪽 사본은 지웠다 — 아무도 안 부르는 죽은 코드였다.
+ *  이제 출하되는 워커 하나만 본다.)
  */
 import { describe, it, expect } from 'vitest'
-import { parseRawHatches } from '../../lib/dxf'
 import { parseHatchEntity } from '../../lib/dxf-fast-worker'
 
 type Pair = [string, string]
@@ -45,11 +44,6 @@ function ellipseEdge(startDeg: string, endDeg: string, ccw?: string): Pair[] {
   ]
 }
 
-const asDxf = (pairs: Pair[]): string =>
-  ['0', 'SECTION', '2', 'ENTITIES', '0', 'HATCH']
-    .concat(pairs.flat(), ['0', 'ENDSEC', '0', 'EOF'])
-    .join('\n') + '\n'
-
 const asChunk = (pairs: Pair[]): string =>
   'HATCH\n' + pairs.map(([c, v]) => `${c}\n${v}`).join('\n') + '\n'
 
@@ -62,19 +56,17 @@ function points(pathData: string): Array<[number, number]> {
   return out
 }
 
-/** 두 파서를 같은 입력으로 돌려서 패스를 꺼낸다. */
-function bothPaths(pairs: Pair[]): { worker: string; legacy: string } {
+/** 워커를 돌려서 패스를 꺼낸다. */
+function workerPath(pairs: Pair[]): string {
   const worker = parseHatchEntity(asChunk(pairs), 'F-1')
-  const legacy = parseRawHatches(asDxf(pairs), {})
   expect(worker).not.toBeNull()
-  expect(legacy).toHaveLength(1)
-  return { worker: worker!.pathData, legacy: legacy[0].pathData }
+  return worker!.pathData
 }
 
 describe('HATCH 타원 호 테두리 — gc 50/51 은 도(度)', () => {
   it('0~90도 모서리 호는 1사분면에만 머문다', () => {
-    const { worker, legacy } = bothPaths(ellipseEdge('0.0', '90.0'))
-    for (const path of [worker, legacy]) {
+    const path = workerPath(ellipseEdge('0.0', '90.0'))
+    {
       const pts = points(path)
       expect(pts.length).toBeGreaterThanOrEqual(4)
       // 라디안으로 읽으면 90 rad = 14 바퀴라 점들이 타원 전체에 흩어진다.
@@ -90,8 +82,8 @@ describe('HATCH 타원 호 테두리 — gc 50/51 은 도(度)', () => {
   })
 
   it('0~360도는 한 바퀴만 돌고 제자리로 온다', () => {
-    const { worker, legacy } = bothPaths(ellipseEdge('0.0', '360.0'))
-    for (const path of [worker, legacy]) {
+    const path = workerPath(ellipseEdge('0.0', '360.0'))
+    {
       const pts = points(path)
       expect(pts[0][0]).toBeCloseTo(100, 6)
       expect(pts[0][1]).toBeCloseTo(0, 6)
@@ -111,16 +103,16 @@ describe('HATCH 타원 호 테두리 — gc 50/51 은 도(度)', () => {
     const pairs = ellipseEdge('0.0', '360.0').filter(
       ([c, v]) => !((c === '50' || c === '51') && (v === '0.0' || v === '360.0')),
     )
-    const { worker, legacy } = bothPaths(pairs)
-    for (const path of [worker, legacy]) {
+    const path = workerPath(pairs)
+    {
       for (const [x, y] of points(path)) expect(Math.hypot(x, y)).toBeCloseTo(100, 6)
     }
   })
 
   // 호 edge 는 gc 73 을 보는데 타원 edge 는 무시하고 있었다.
   it('gc 73 = 0 (시계방향) 이면 각도 부호를 뒤집는다', () => {
-    const { worker, legacy } = bothPaths(ellipseEdge('0.0', '90.0', '0'))
-    for (const path of [worker, legacy]) {
+    const path = workerPath(ellipseEdge('0.0', '90.0', '0'))
+    {
       const pts = points(path)
       // 0도에서 시작해 -90도로 내려가므로 4사분만에만 있다.
       expect(pts[0][0]).toBeCloseTo(100, 6)
@@ -137,8 +129,8 @@ describe('HATCH 타원 호 테두리 — gc 50/51 은 도(度)', () => {
 
   // 15도에 한 조각 — 호 edge 와 같은 기준. 90도면 6조각(7점), 360도면 24조각.
   it('호 길이에 맞춰 조각 수를 정한다', () => {
-    expect(points(bothPaths(ellipseEdge('0.0', '90.0')).worker)).toHaveLength(7)
-    expect(points(bothPaths(ellipseEdge('0.0', '360.0')).worker)).toHaveLength(25)
+    expect(points(workerPath(ellipseEdge('0.0', '90.0')))).toHaveLength(7)
+    expect(points(workerPath(ellipseEdge('0.0', '360.0')))).toHaveLength(25)
   })
 
   it('단축비(gc 40)와 장축 회전은 그대로 쓴다', () => {
@@ -147,7 +139,7 @@ describe('HATCH 타원 호 테두리 — gc 50/51 은 도(度)', () => {
     )
     // 장축 끝점을 (0,100) 으로 → 90도 회전, 단축 50.
     const fixed = pairs.map(([c, v]): Pair => (c === '21' && v === '0.0' ? [c, '100.0'] : [c, v]))
-    const pts = points(bothPaths(fixed).worker)
+    const pts = points(workerPath(fixed))
     const rs = pts.map(([x, y]) => Math.hypot(x, y))
     expect(Math.max(...rs)).toBeCloseTo(100, 6)
     expect(Math.min(...rs)).toBeCloseTo(50, 6)
