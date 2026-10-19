@@ -518,8 +518,18 @@ export function labelPlacement(
 }
 
 /**
- * 앞 구간과 이루는 **꺾임 각의 크기**(도). 곧게 이어가면 0, 직각이면 90,
- * 왔던 길로 되돌아가면 180.
+ * 코너의 **내각**(도) — 두 벽이 코너에서 벌어진 각. 직각이면 90, 곧게
+ * 이어가면 180, 왔던 길로 되접히면 0.
+ *
+ * 두 인자 모두 **코너에서 바깥으로** 향하는 방향이다. 앞 벽은 코너로
+ * 들어오므로 뒤집어서 넣어야 한다.
+ *
+ * ── 왜 "꺾인 각" 이 아니라 내각인가 ──
+ *
+ * 전엔 곧게 이어가면 0, 직각이면 90 이 되는 **꺾임 각**을 띄웠다. 직각에서는
+ * 둘이 같아서 차이가 안 보였는데, 코너에 부채꼴 가이드를 그리면서 갈렸다 —
+ * 가이드는 **두 벽 사이**를 칠하므로 그 각은 내각이다. 120° 를 칠해 놓고
+ * "60°" 라고 적으면 둘 다 못 믿게 된다. 경쟁 제품(Rayon)도 내각을 띄운다.
  *
  * 부호(좌/우)는 안 돌려준다 — 화면에서 바로 보이고, 숫자에 부호가 붙으면
  * "-90도" 가 무슨 뜻인지 또 설명해야 한다.
@@ -528,14 +538,16 @@ export function labelPlacement(
  * 싶은 건 앞 벽과 이루는 각이다 — 앞 벽이 37° 로 비스듬하면 절대 각으로는
  * 직각인지 영영 알 수 없다.
  */
-export function turnMagnitudeDeg(
-  prev: { x: number; y: number },
-  dir: { x: number; y: number },
+export function cornerAngleDeg(
+  prevAway: { x: number; y: number },
+  dirAway: { x: number; y: number },
 ): number {
-  const rel = (Math.atan2(dir.y, dir.x) - Math.atan2(prev.y, prev.x)) * 180 / Math.PI
-  // (-180, 180] 로 접은 뒤 크기만. 접지 않으면 350° 가 "10도 꺾임" 이 아니라
-  // 350 으로 뜬다.
-  return Math.abs(((rel % 360) + 540) % 360 - 180)
+  const la = Math.hypot(prevAway.x, prevAway.y)
+  const lb = Math.hypot(dirAway.x, dirAway.y)
+  if (la < 1e-9 || lb < 1e-9) return 0
+  // acos 는 부동소수 오차로 |x|>1 이 들어오면 NaN 을 낸다. 먼저 조인다.
+  const cos = Math.max(-1, Math.min(1, (prevAway.x * dirAway.x + prevAway.y * dirAway.y) / (la * lb)))
+  return Math.acos(cos) * 180 / Math.PI
 }
 
 /**

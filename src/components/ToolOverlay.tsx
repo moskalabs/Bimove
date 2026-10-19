@@ -3,7 +3,7 @@ import type { TLShapeId } from 'tldraw'
 import { useEditor } from '../context/EditorContext'
 import {
   snapToWallEndpoint, snapToIntersection, snapToPerpendicular, snapToExtension,
-  turnMagnitudeDeg, labelPlacement,
+  cornerAngleDeg, labelPlacement,
   type SnapType,
 } from '../lib/snap'
 import { drawingState } from '../lib/drawingState'
@@ -26,10 +26,10 @@ type OverlayState = {
   angleDeg: number | null
   distLabel: string | null
   /**
-   * 앞 구간과 이루는 각(도). 이어 그릴 때만 찬다.
+   * 코너의 **내각**(도). 이어 그릴 때만 찬다.
    *
-   * Rayon 이 코너에 띄우는 "90.0°" 와 같은 것이다. 이게 없으면 직각으로
-   * 꺾였는지 눈으로 재야 한다.
+   * 쐐기 가이드가 칠하는 각과 **같은 각**이어야 한다 — 120° 를 칠해 놓고
+   * "60°" 라고 적으면 둘 다 못 믿게 된다. 자세한 건 `cornerAngleDeg`.
    */
   turnDeg: number | null
   /**
@@ -118,10 +118,10 @@ export function ToolOverlay() {
             // 화면에서 바로 보인다.
             const prev = drawingState.prevDir
             if (prev && Math.hypot(prev.x, prev.y) > 1) {
-              turnDeg = turnMagnitudeDeg(prev, { x: p.x2, y: p.y2 })
-              // 앞 구간은 코너로 **들어오는** 방향이다. 기준선으로 쓰려면
-              // 코너에서 바깥으로 되돌려야 한다.
+              // 앞 구간은 코너로 **들어오는** 방향이다. 내각을 재려면
+              // 코너에서 바깥으로 되돌려야 한다 (쐐기도 같은 걸 쓴다).
               prevAway = { x: -prev.x, y: -prev.y }
+              turnDeg = cornerAngleDeg(prevAway, { x: p.x2, y: p.y2 })
             }
           }
         }
@@ -186,9 +186,8 @@ export function ToolOverlay() {
   // 라벨은 **선 옆으로 비켜서** 놓는다. 선 위에 얹으면 둘 다 안 보인다.
   const line = state.start && state.end ? { s: state.start, e: state.end } : null
   const distAt = line && state.mid ? labelPlacement(state.mid, line.s, line.e, LABEL_OFFSET_PX) : null
-  // 각도 호. 숫자만 있으면 "60.0°" 가 얼마나 벌어진 건지 머리로 그려야 한다.
-  // 호가 있으면 눈이 바로 읽고, 앞 벽의 **점선 연장선**이 기준이 되어
-  // "거기서 이만큼 꺾었다" 가 된다.
+  // 각도 쐐기. 숫자만 있으면 "82.0°" 가 얼마나 벌어진 건지 머리로 그려야
+  // 한다. 두 벽 사이를 옅게 칠해 두면 눈이 바로 읽는다 (Rayon 과 같은 꼴).
   //
   // 반지름은 구간 길이에 맞춰 줄인다 — 짧은 벽에 큰 호를 그리면 벽을 덮는다.
   const arc = line && state.prevAway
@@ -220,7 +219,7 @@ export function ToolOverlay() {
           }}
         />
       ))}
-      {/* 각도 호 + 앞 벽의 연장선(기준). pointerEvents 는 꺼 둔다 —
+      {/* 각도 쐐기 — 두 벽 사이를 옅게 칠한다. pointerEvents 는 꺼 둔다:
           캔버스 위를 덮는 SVG 라 안 끄면 그리기가 통째로 막힌다. */}
       {arc && (
         <svg
@@ -229,8 +228,7 @@ export function ToolOverlay() {
             pointerEvents: 'none', zIndex: 101, overflow: 'visible',
           }}
         >
-          <path d={arc.legD} fill="none" stroke="#1a73e8" strokeWidth={1} strokeDasharray="4 4" opacity={0.55} />
-          <path d={arc.d} fill="none" stroke="#1a73e8" strokeWidth={1.5} />
+          <path d={arc.d} fill="#1a73e8" fillOpacity={0.14} stroke="none" />
         </svg>
       )}
       {/* 코너의 꺾임 각. 직각이면 또렷하게(진한 파랑), 아니면 옅게 —
