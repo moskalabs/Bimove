@@ -6,17 +6,36 @@
  * 들어갔고, 정의선은 통째로 스킵됐다 — 실제 도면에서 축척 60 짜리
  * _USER 교차 해치가 45도 사선 하나로 렌더되는 원인이었다.
  *
- * @vitest-environment node
+ * ── 2026-10-19: 보는 대상을 **출하되는 파서**로 옮겼다 ──
+ *
+ * 이 테스트는 `dxf.ts` 의 `parseRawHatches` 를 보고 있었다. 그런데 그 함수는
+ * 앱 어디서도 안 부른다 — 입력으로 받던 "파싱된 엔티티 객체" 를 만들어 주던
+ * dxf-parser(npm) 경로가 지워지면서 **호출자가 사라졌다.** 초록불이었지만
+ * 출하되는 코드는 하나도 지키지 않고 있었던 셈이다.
+ *
+ * 실제로 해치를 읽는 건 워커의 `parseHatchEntity` 인데, 거기는 패턴 정의선
+ * 테스트가 **하나도 없었다.** 그래서 같은 코드 배치를 워커에 그대로 먹인다.
+ *
+ * (node 환경 지정을 뺐다. 워커 모듈은 맨 끝에서 `self.onmessage` 를 걸므로
+ *  node 에서는 import 자체가 터진다 — dxf-hatch-style 등 다른 워커 테스트도
+ *  같은 이유로 jsdom 에서 돈다.)
  */
 import { describe, it, expect } from 'vitest'
-import { parseRawHatches } from '../../lib/dxf'
+import { parseHatchEntity } from '../../lib/dxf-fast-worker'
 import { defLineSpacing } from '../../lib/dxf-shared'
 
+type Pair = [string, string]
+
+/**
+ * 워커가 받는 한 덩이. 엔티티 이름 줄 뒤로 코드/값이 한 줄씩 온다.
+ * (`parseHatchEntity` 는 1번 줄부터 두 줄씩 짝으로 읽는다.)
+ */
+const asChunk = (pairs: Pair[]): string =>
+  ['HATCH', ...pairs.flat()].join('\n') + '\n'
+
 /** 실제 도면(out.dxf)의 십자형 _USER 해치와 같은 코드 배치. */
-function crossHatchDxf(): string {
-  const pairs: Array<[string, string]> = [
-    ['0', 'SECTION'], ['2', 'ENTITIES'],
-    ['0', 'HATCH'],
+function crossHatch(): Pair[] {
+  return [
     ['5', '30FA8'], ['330', '1F'],
     ['100', 'AcDbEntity'], ['8', '0'], ['62', '8'], ['48', '30.0'],
     ['100', 'AcDbHatch'],
@@ -39,51 +58,49 @@ function crossHatchDxf(): string {
     ['53', '90.0'], ['43', '0.0'], ['44', '0.0'], ['45', '-60.0'], ['46', '0.0'], ['79', '0'],
     ['47', '1.0'],
     ['98', '1'], ['10', '50.0'], ['20', '50.0'],
-    ['0', 'ENDSEC'], ['0', 'EOF'],
   ]
-  return pairs.map(([c, v]) => `${c}\n${v}`).join('\n') + '\n'
 }
 
 describe('HATCH 패턴 정의 데이터', () => {
-  const hatches = parseRawHatches(crossHatchDxf(), {})
+  const h = parseHatchEntity(asChunk(crossHatch()), '0')!
 
-  it('해치를 1개 읽는다', () => {
-    expect(hatches).toHaveLength(1)
+  it('해치를 읽는다', () => {
+    expect(h).toBeTruthy()
   })
 
   it('boundary path 뒤의 gc 41 축척을 읽는다', () => {
-    expect(hatches[0].patternScale).toBe(60)
+    expect(h.patternScale).toBe(60)
   })
 
   it('gc 52 각도를 읽는다', () => {
-    expect(hatches[0].patternAngle).toBe(0)
+    expect(h.patternAngle).toBe(0)
   })
 
   it('gc 78 정의선 수를 읽는다 (2 = 교차 해치)', () => {
-    expect(hatches[0].patternDefLines).toBe(2)
+    expect(h.patternDefLines).toBe(2)
   })
 
   it('정의선 offset(gc 45/46) 에서 실제 간격을 계산한다', () => {
-    expect(hatches[0].patternSpacing).toBeCloseTo(60, 6)
+    expect(h.patternSpacing).toBeCloseTo(60, 6)
   })
 
   it('첫 정의선의 각도(gc 53)를 쓴다 — 45도 기본값이 아니다', () => {
-    expect(hatches[0].patternDefAngle).toBe(0)
+    expect(h.patternDefAngle).toBe(0)
   })
 
   it('패턴명과 단색 플래그(gc 70=0)를 유지한다', () => {
-    expect(hatches[0].patternName).toBe('_USER')
-    expect(hatches[0].solidFill).toBe(false)
+    expect(h.patternName).toBe('_USER')
+    expect(h.solidFill).toBe(false)
   })
 
   it('seed point(gc 98 뒤의 10/20)를 boundary 로 잘못 먹지 않는다', () => {
     // 사각형 네 변 = 8점. seed (50,50) 이 섞이면 centroid 가 틀어진다.
-    expect(hatches[0].cx).toBeCloseTo(50, 6)
-    expect(hatches[0].cy).toBeCloseTo(50, 6)
+    expect(h.cx).toBeCloseTo(50, 6)
+    expect(h.cy).toBeCloseTo(50, 6)
   })
 
   it('정의선을 각도·간격·dash 까지 전부 수집한다', () => {
-    expect(hatches[0].patternDefs).toEqual([
+    expect(h.patternDefs).toEqual([
       { angle: 0, spacing: 60, dashes: [] },
       { angle: 90, spacing: 60, dashes: [] },
     ])
@@ -97,10 +114,8 @@ describe('HATCH 패턴 정의 데이터', () => {
  * 수직 1 x 25.4 x 30 = 762, 선 방향 2.2 x 25.4 x 30 = 1676.4.
  * hypot 로 재면 1841 이 나와서 간격이 2.4배 넓어진다.
  */
-function dashedRoofDxf(): string {
-  const pairs: Array<[string, string]> = [
-    ['0', 'SECTION'], ['2', 'ENTITIES'],
-    ['0', 'HATCH'],
+function dashedRoof(): Pair[] {
+  return [
     ['5', '1A2B'], ['330', '1F'],
     ['100', 'AcDbEntity'], ['8', 'ROOF'],
     ['100', 'AcDbHatch'],
@@ -120,13 +135,11 @@ function dashedRoofDxf(): string {
     ['79', '4'], ['49', '11430.0'], ['49', '-1524.0'], ['49', '3810.0'], ['49', '-762.0'],
     ['47', '1.0'],
     ['98', '0'],
-    ['0', 'ENDSEC'], ['0', 'EOF'],
   ]
-  return pairs.map(([c, v]) => `${c}\n${v}`).join('\n') + '\n'
 }
 
 describe('HATCH 정의선 dash', () => {
-  const h = parseRawHatches(dashedRoofDxf(), {})[0]
+  const h = parseHatchEntity(asChunk(dashedRoof()), 'ROOF')!
 
   it('dash 길이(gc 49)를 순서대로 모은다 — 음수는 공백', () => {
     expect(h.patternDefs).toHaveLength(1)
