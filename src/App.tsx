@@ -9,6 +9,7 @@ import { TopBar } from './components/TopBar'
 import { LBar } from './components/LBar'
 import { RBar } from './components/RBar'
 import { ToolOverlay } from './components/ToolOverlay'
+import { WallDimOverlay } from './components/WallDimOverlay'
 import { RoomOverlay } from './components/RoomOverlay'
 import { CanvasPickOverlay } from './components/CanvasPickOverlay'
 import { AreaMeasureOverlay } from './components/AreaMeasureOverlay'
@@ -919,6 +920,7 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
           <LBar onBack={onBack} onShow3D={() => setShow3D(true)} />
           <main className="canvas-area">
             <ToolOverlay />
+            <WallDimOverlay />
             <Tldraw
               key={projectId}
               shapeUtils={SHAPE_UTILS}

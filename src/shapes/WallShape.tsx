@@ -16,8 +16,7 @@ import {
 } from 'tldraw'
 import type { IndexKey } from '@tldraw/editor'
 import { useEffect, useState } from 'react'
-import { getScaleConfig, formatLength } from '../lib/scaleConfig'
-import { getShowWallLengths, getGrayscaleMode } from '../lib/settings'
+import { getGrayscaleMode } from '../lib/settings'
 import { renderPatternDef } from '../lib/wallPatterns'
 import { dxfStrokePx, screenStrokeWidth } from '../lib/dxfStroke'
 import type { PatternId } from '../lib/materialPresets'
@@ -455,35 +454,22 @@ export function computeWallOutline(editor: Editor, shape: WallShape): WallOutlin
 // eslint-disable-next-line react-refresh/only-export-components
 function WallComponent({ shape }: { shape: WallShape }) {
   const editor = useEditor()
-  // 고른 벽인지 + **몇 개나 골랐는지**를 하나로 센다. 둘 다 필요한데 useValue 를
-  // 두 번 걸면 벽마다 계산이 두 벌이 된다 — 도면 하나에 벽이 수백 개다.
-  // 안 골랐으면 0, 골랐으면 전체 선택 개수(≥1).
-  const selCount = useValue(
+  const isSelected = useValue(
     'wall-selected',
-    () => {
-      const ids = editor.getSelectedShapeIds()
-      return ids.includes(shape.id) ? ids.length : 0
-    },
+    () => editor.getSelectedShapeIds().includes(shape.id),
     [editor, shape.id],
   )
-  const isSelected = selCount > 0
-  const [showDim, setShowDim] = useState(getShowWallLengths)
   const [grayscale, setGrayscale] = useState(getGrayscaleMode)
 
   useEffect(() => {
     const onSettings = () => {
-      setShowDim(getShowWallLengths())
       setGrayscale(getGrayscaleMode())
     }
     window.addEventListener('bimova:settings', onSettings)
     return () => window.removeEventListener('bimova:settings', onSettings)
   }, [])
 
-  const { x2, y2, thickness } = shape.props
-  const len = Math.sqrt(x2 * x2 + y2 * y2)
-
-  // 치수는 **고른 벽에만**. 규칙과 그 이유는 shouldShowWallDim 에 있다.
-  const effectiveShowDim = shouldShowWallDim(showDim, selCount)
+  const { x2, y2 } = shape.props
 
   // DXF 임포트 shapes는 miter join 불필요 → 비싼 이웃 탐색 스킵
   const isDxf = !!shape.meta?.dxfFingerprint
@@ -561,59 +547,15 @@ function WallComponent({ shape }: { shape: WallShape }) {
   const patternDef = patKey ? renderPatternDef(pattern as PatternId, patKey, stroke) : null
   const fillAttr = patKey ? `url(#${patKey})` : fill
 
-  if (len < 4 || !effectiveShowDim) {
-    return (
-      <SVGContainer>
-        {patternDef}
-        <path d={d} fill={fillAttr} stroke="none" />
-        <path d={dStroke} fill="none" stroke={stroke} strokeWidth={strokeW} strokeLinecap="butt"
-          style={{ strokeWidth: screenStrokeWidth(strokeW) }} />
-      </SVGContainer>
-    )
-  }
-
-  const nx = -y2 / len, ny = x2 / len
-  const off = thickness / 2 + 14
-  const ex = 6
-
-  const d1 = { x: nx * off, y: ny * off }
-  const d2 = { x: x2 + nx * off, y: y2 + ny * off }
-  const angle = Math.atan2(y2, x2) * 180 / Math.PI
-  const mid = { x: (d1.x + d2.x) / 2, y: (d1.y + d2.y) / 2 }
-
-  const arrowSize = 5
-  const ux = x2 / len, uy = y2 / len
-  const arrow1 = `M${d1.x + ux * arrowSize},${d1.y + uy * arrowSize} L${d1.x},${d1.y} L${d1.x + nx * arrowSize / 2},${d1.y + ny * arrowSize / 2}`
-  const arrow2 = `M${d2.x - ux * arrowSize},${d2.y - uy * arrowSize} L${d2.x},${d2.y} L${d2.x + nx * arrowSize / 2},${d2.y + ny * arrowSize / 2}`
-
+  // 치수와 코너 각도는 **여기서 안 그린다.** 화면 좌표로 그려야 줌과 무관하게
+  // 읽히기 때문이다 — 전엔 `fontSize={10}` 을 shape 단위로 줘서, 축소하면
+  // 글자가 같이 줄어 점이 됐다. components/WallDimOverlay 로 옮겼다.
   return (
     <SVGContainer>
       {patternDef}
       <path d={d} fill={fillAttr} stroke="none" />
       <path d={dStroke} fill="none" stroke={stroke} strokeWidth={strokeW} strokeLinecap="butt"
         style={{ strokeWidth: screenStrokeWidth(strokeW) }} />
-
-      {effectiveShowDim && (
-        <>
-          <line x1={d1.x} y1={d1.y} x2={d2.x} y2={d2.y} stroke="#1a73e8" strokeWidth={0.8} style={{ strokeWidth: screenStrokeWidth(0.8) }} />
-          <line x1={nx * (thickness / 2)} y1={ny * (thickness / 2)} x2={d1.x + nx * ex} y2={d1.y + ny * ex} stroke="#1a73e8" strokeWidth={0.8} style={{ strokeWidth: screenStrokeWidth(0.8) }} />
-          <line x1={x2 + nx * (thickness / 2)} y1={y2 + ny * (thickness / 2)} x2={d2.x + nx * ex} y2={d2.y + ny * ex} stroke="#1a73e8" strokeWidth={0.8} style={{ strokeWidth: screenStrokeWidth(0.8) }} />
-          <path d={arrow1} stroke="#1a73e8" strokeWidth={0.8} fill="none" style={{ strokeWidth: screenStrokeWidth(0.8) }} />
-          <path d={arrow2} stroke="#1a73e8" strokeWidth={0.8} fill="none" style={{ strokeWidth: screenStrokeWidth(0.8) }} />
-          <text
-            x={mid.x}
-            y={mid.y}
-            fontSize={10}
-            fill="#1a73e8"
-            textAnchor="middle"
-            dominantBaseline="middle"
-            transform={`rotate(${angle > 90 || angle < -90 ? angle + 180 : angle}, ${mid.x}, ${mid.y})`}
-            style={{ userSelect: 'none', pointerEvents: 'none', fontFamily: 'monospace' }}
-          >
-            {formatLength(len, getScaleConfig(editor))}
-          </text>
-        </>
-      )}
     </SVGContainer>
   )
 }

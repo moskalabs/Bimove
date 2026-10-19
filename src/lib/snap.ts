@@ -563,6 +563,30 @@ export function labelPlacement(
 }
 
 /**
+ * 그 자리에 붙은 이웃 벽과 이루는 **코너 내각**(도). 이웃이 없으면 `null`.
+ *
+ * `wallDirIntoPoint` 는 이웃이 접점으로 **들어오는** 방향을 준다. 내각은 서로
+ * **멀어지는** 두 방향 사이 각이므로 그걸 뒤집어서 넣어야 한다 — 여기서 부호를
+ * 틀리면 90° 가 90° 로 나와서(대칭이라) 안 보이다가, 비스듬한 코너에서만
+ * 조용히 틀린다. 그래서 조합을 한 군데로 모았다.
+ *
+ * @param atPage   코너 (page 좌표)
+ * @param awayPage 내 벽이 그 코너에서 **뻗어 나가는** 방향 (page)
+ * @param excludeId 나 자신
+ */
+export function cornerAngleAt(
+  editor: Editor,
+  atPage: { x: number; y: number },
+  awayPage: { x: number; y: number },
+  excludeId?: string,
+): { deg: number; prevAway: { x: number; y: number } } | null {
+  const into = wallDirIntoPoint(editor, atPage, excludeId)
+  if (!into) return null
+  const prevAway = { x: -into.x, y: -into.y }
+  return { deg: cornerAngleDeg(prevAway, awayPage), prevAway }
+}
+
+/**
  * 코너의 **내각**(도) — 두 벽이 코너에서 벌어진 각. 직각이면 90, 곧게
  * 이어가면 180, 왔던 길로 되접히면 0.
  *
