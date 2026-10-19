@@ -92,8 +92,12 @@ export function WallDimOverlay() {
           if (c.deg < 3 || c.deg > 177) return      // 안 꺾였거나 되접혔다
           corners.push({ at, prevAway: c.prevAway, away: awayPage, deg: c.deg })
         }
-        addCorner(sPage, s, { x: p.x2, y: p.y2 })
-        addCorner(ePage, e, { x: -p.x2, y: -p.y2 })
+        // 방향도 **page 기준**이어야 한다. 끝점은 변환을 거쳤는데 방향만
+        // 로컬 x2/y2 를 넣으면, 90° 돌려 놓은 벽은 실제로 세로인데 가로로
+        // 계산된다 — 90° 코너가 180° 로 나와 표시가 아예 사라진다.
+        const awayFromStart = { x: ePage.x - sPage.x, y: ePage.y - sPage.y }
+        addCorner(sPage, s, awayFromStart)
+        addCorner(ePage, e, { x: -awayFromStart.x, y: -awayFromStart.y })
 
         out.push({
           id: shape.id,

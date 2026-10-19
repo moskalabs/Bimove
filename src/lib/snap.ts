@@ -33,14 +33,26 @@ let _snapCacheSrc: readonly unknown[] | null = null
  * 프레임마다 14ms 를 버린다 — DXF 는 그 사이 하나도 안 바뀌는데.
  */
 let _dxfEndpoints: WallEndpoint[] = []
-let _dxfEndpointsSrc: readonly unknown[] = []
+let _dxfEndpointsKey = ''
 let _snapDiagLogged = false
 
-/** 두 목록이 **같은 객체들**인가 (얕게). 도형 개수만큼만 돈다. */
-function sameRefs(a: readonly unknown[], b: readonly unknown[]): boolean {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
-  return true
+/**
+ * DXF 캐시의 열쇠. 도형 id + **page 변환**이다.
+ *
+ * 레코드 참조만 보면 부족하다 — dxfgroup 을 **부모 그룹째** 옮기거나 돌리면
+ * 자식 레코드는 그대로고 부모 것만 바뀐다. 그러면 page 좌표로 구워 둔 끝점이
+ * 옛 자리에 남아서, 보이는 도면과 스냅이 어긋난다.
+ *
+ * `getShapePageTransform` 은 부모까지 합친 결과라 그 변화를 그대로 담는다.
+ * 도형 개수만큼만 도므로(선분 수와 무관) 값싸다.
+ */
+function dxfKey(editor: Editor, groups: readonly { id: string }[]): string {
+  let k = ''
+  for (const g of groups) {
+    const m = editor.getShapePageTransform(g as never)
+    k += `${g.id}:${m.a},${m.b},${m.c},${m.d},${m.e},${m.f};`
+  }
+  return k
 }
 
 /** 테스트용: 캐시 초기화 */
@@ -50,9 +62,9 @@ export function _resetSnapCache() {
   _snapCache = []
   _lineCache = []
   _dxfEndpoints = []
-  _dxfEndpointsSrc = []
+  _dxfEndpointsKey = ''
   _dxfLines = []
-  _dxfLinesSrc = []
+  _dxfLinesKey = ''
   _snapDiagLogged = false
 }
 
@@ -81,8 +93,9 @@ function getWallEndpoints(editor: Editor): WallEndpoint[] {
     else if (s.type === 'wall') walls.push(s)
   }
 
-  if (!sameRefs(groups, _dxfEndpointsSrc)) {
-    _dxfEndpointsSrc = groups
+  const epKey = dxfKey(editor, groups as never)
+  if (epKey !== _dxfEndpointsKey) {
+    _dxfEndpointsKey = epKey
     _dxfEndpoints = []
     let dxfSegCount = 0
     for (const shape of groups) {
@@ -222,7 +235,7 @@ type WallLine = { x: number; y: number; dx: number; dy: number; len: number; thi
 let _lineCache: WallLine[] = []
 let _lineCacheSrc: readonly unknown[] | null = null
 let _dxfLines: WallLine[] = []
-let _dxfLinesSrc: readonly unknown[] = []
+let _dxfLinesKey = ''
 
 function getWallLines(editor: Editor): WallLine[] {
   const shapes = editor.getCurrentPageShapes()
@@ -237,8 +250,9 @@ function getWallLines(editor: Editor): WallLine[] {
   }
 
   // DXF 는 끝점 쪽과 같은 이유로 따로 캐시한다 (주석은 _dxfEndpoints 참고).
-  if (!sameRefs(groups, _dxfLinesSrc)) {
-    _dxfLinesSrc = groups
+  const lineKey = dxfKey(editor, groups as never)
+  if (lineKey !== _dxfLinesKey) {
+    _dxfLinesKey = lineKey
     _dxfLines = []
     for (const shape of groups) {
       const pathData = (shape.props as Record<string, unknown>).pathData
@@ -453,7 +467,7 @@ export function snapAngle(dx: number, dy: number, stepDeg = 15): { x: number; y:
 export type AlignGuide = { axis: 'x' | 'y'; at: number; through: { x: number; y: number } }
 
 /** 맞출 자리를 찾는 범위 (화면 px). 스냅 반경과 같은 느낌이어야 손에 익는다. */
-const ALIGN_RADIUS_PX = 8
+export const ALIGN_RADIUS_PX = 8
 
 /**
  * 커서가 **기존 점과 가로/세로로 나란한지** 본다.
@@ -502,11 +516,26 @@ export function findAlignGuides(
  *
  * 방향이 보조선과 나란하면(세로선인데 가로로 긋는 중) 만나는 점이 없다.
  * 그때는 그냥 둔다.
+ *
+ * ── 왜 거리 제한이 필요한가 ──
+ *
+ * 보조선은 **커서에서 8px 안**에 있을 때만 잡힌다. 그러니 제대로 된 교점도
+ * 커서 근처에 있어야 맞다. 그런데 방향이 보조선과 거의 나란하면 1/denom 이
+ * 폭발해서, 8px 짜리 어긋남이 수천 단위의 이동이 된다 — 세로로 긋는 중에
+ * 세로 보조선이 살짝 스치기만 해도 벽 끝이 화면 밖으로 날아간다.
+ *
+ * 나란함을 각으로 막는 것만으로는 부족하다 (한계각 바로 안쪽에서 여전히 멀리
+ * 간다). 그래서 **결과가 커서에서 얼마나 떨어지는지**를 직접 막는다.
+ *
+ * @param maxSlide 커서(= `start + dir`)에서 결과까지 허용할 거리. page 단위.
+ *   부른 쪽이 `8px * 4 / zoom` 쯤을 넘긴다 — 60° 쯤 비스듬해도 닿고, 그보다
+ *   나란해지면 거절한다.
  */
 export function slideAlongTo(
   start: { x: number; y: number },
   dir: { x: number; y: number },
   guides: AlignGuide[],
+  maxSlide = Infinity,
 ): { point: { x: number; y: number }; used: AlignGuide } | null {
   const len = Math.hypot(dir.x, dir.y)
   if (len < 1e-9) return null
@@ -521,6 +550,8 @@ export function slideAlongTo(
     const t = ((g.axis === 'x' ? g.at - start.x : g.at - start.y)) / denom
     // 뒤로 가는 건 안 쓴다. 커서 반대편으로 벽이 뒤집힌다.
     if (!(t > 0) || !Number.isFinite(t)) continue
+    // 커서에서 너무 멀리 끌려가면 안 쓴다 (위 주석).
+    if (Math.abs(t - len) > maxSlide) continue
     const cand = { x: start.x + ux * t, y: start.y + uy * t }
     if (!best || t < best.t) best = { point: cand, used: g, t }
   }

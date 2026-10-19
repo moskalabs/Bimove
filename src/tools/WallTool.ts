@@ -1,5 +1,5 @@
 import { StateNode, createShapeId, type TLPointerEventInfo, type TLShapeId } from 'tldraw'
-import { resolveDrawPoint, snapToTurn, findAlignGuides, slideAlongTo, wallDirIntoPoint } from '../lib/snap'
+import { resolveDrawPoint, snapToTurn, findAlignGuides, slideAlongTo, wallDirIntoPoint, ALIGN_RADIUS_PX } from '../lib/snap'
 import { drawingState } from '../lib/drawingState'
 import { getDefaultWallThicknessMm, getSnapEnabled } from '../lib/settings'
 import { getScaleConfig } from '../lib/scaleConfig'
@@ -62,7 +62,10 @@ export class WallTool extends StateNode {
     if (guides.length === 0) return fixed
 
     const dir = { x: fixed.x - this.startPoint.x, y: fixed.y - this.startPoint.y }
-    const slid = slideAlongTo(this.startPoint, dir, guides)
+    // 커서에서 끌려가도 되는 거리를 넘긴다. 안 주면 방향이 보조선과 거의
+    // 나란할 때 벽 끝이 화면 밖까지 날아간다 (slideAlongTo 주석 참고).
+    const maxSlide = (ALIGN_RADIUS_PX * 4) / this.editor.getZoomLevel()
+    const slid = slideAlongTo(this.startPoint, dir, guides, maxSlide)
     if (!slid) {
       // 못 미끄러져도 보조선은 보여준다 — "저기에 맞출 수 있다" 는 신호다.
       drawingState.alignGuides = guides

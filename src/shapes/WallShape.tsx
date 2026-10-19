@@ -192,7 +192,26 @@ let _wallsCacheSrc: readonly unknown[] | null = null
  * (테스트에서 직접 부르려고 export 한다 — 구독을 거르는 캐시는 화면으로만
  *  확인하기 어렵고, 되돌아오면 또 코너가 어긋난다.)
  */
-export function getWallsSnapshot(editor: Editor): WallSnapshot[] {
+export function getWallsSnapshot(editor: Editor, pageId?: string): WallSnapshot[] {
+  // ── 다른 페이지를 그릴 때 ──
+  //
+  // 배치 썸네일은 **현재 페이지를 바꾸지 않고** 임의 페이지의 SVG 를 만든다.
+  // 그때 현재 페이지 이웃을 보면 코너가 안 붙거나 **엉뚱한 페이지의 벽과**
+  // 붙는다. 그 길은 한 번만 도는 일회성이라 캐시도 안 쓴다.
+  if (pageId && pageId !== editor.getCurrentPageId()) {
+    const out: WallSnapshot[] = []
+    for (const id of editor.getPageShapeIds(pageId as never)) {
+      const s = editor.getShape(id)
+      if (!s || s.type !== 'wall') continue
+      const props = s.props as WallShapeProps
+      const mat = editor.getShapePageTransform(s)
+      const a = mat.applyToPoint({ x: 0, y: 0 })
+      const b = mat.applyToPoint({ x: props.x2, y: props.y2 })
+      out.push({ id: s.id, sx: a.x, sy: a.y, ex: b.x, ey: b.y, half: (props.thickness ?? 10) / 2 })
+    }
+    return out
+  }
+
   const shapes = editor.getCurrentPageShapes()
   // 같은 배열이면 도형이 하나도 안 바뀐 것이다 (tldraw 의 computed 는 바뀔 때만
   // 새 배열을 낸다). 구독은 위에서 이미 걸렸다.
@@ -256,13 +275,13 @@ function shapeHashKey(shape: WallShape, sx: number, sy: number, ex: number, ey: 
  * 안 바뀌었으면 **같은 객체**를 돌려준다. `useValue` 가 참조로 비교하므로
  * 그래야 벽 수백 개가 쓸데없이 다시 그려지지 않는다.
  */
-export function computeWallOutline(editor: Editor, shape: WallShape): WallOutline {
+export function computeWallOutline(editor: Editor, shape: WallShape, pageId?: string): WallOutline {
   const { x2, y2, thickness } = shape.props
   const len = Math.sqrt(x2 * x2 + y2 * y2)
   if (len < 1) return { corners: getCorners(shape), capStart: true, capEnd: true }
 
   // 캐시 확인: 자신의 geometry + 이웃 wall들의 hash가 같으면 재사용
-  const walls = getWallsSnapshot(editor)
+  const walls = getWallsSnapshot(editor, pageId)
 
   // ── 이웃 찾기는 page 좌표로, 코너 만들기는 로컬 좌표로 ──
   //
@@ -629,7 +648,10 @@ export class WallShapeUtil extends ShapeUtil<WallShape> {
     // 화면과 **같은 외곽선**을 쓴다. 전엔 여기만 getCorners(이어 붙이지 않은
     // 사각형) + 기본색 '#555' 였다. 그래서 화면은 고쳐도 배치 썸네일·SVG/PDF
     // 내보내기에서는 검은 벽, 겹치는 코너, 끝을 가로지르는 선이 그대로 나왔다.
-    const outline = computeWallOutline(this.editor, shape)
+    // **그 도형이 있는 페이지**의 이웃을 본다. 배치 썸네일은 현재 페이지를
+    // 바꾸지 않고 다른 페이지의 SVG 를 만들기 때문이다 — 안 넘기면 코너가
+    // 안 붙거나 엉뚱한 페이지의 벽과 붙는다.
+    const outline = computeWallOutline(this.editor, shape, this.editor.getAncestorPageId(shape))
     const { d, dStroke } = wallPaths(outline)
     const rawFill = (shape.meta?.fill as string) ?? '#fff'
     const rawStroke = (shape.meta?.stroke as string) ?? '#222'

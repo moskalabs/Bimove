@@ -110,3 +110,39 @@ describe('getWallsSnapshot — 배열이 바뀌면 다시 만든다', () => {
     expect(getWallsSnapshot(editor)).toBe(getWallsSnapshot(editor))
   })
 })
+
+/**
+ * **다른 페이지**의 벽을 그릴 때 그 페이지 이웃을 보는가.
+ *
+ * 배치 썸네일(LayoutPanel)은 현재 페이지를 바꾸지 않고 임의 페이지의 SVG 를
+ * 만든다. 그런데 `getWallsSnapshot` 이 `getCurrentPageShapes()` 만 보면,
+ * 그 썸네일에서는 코너가 안 붙거나 **현재 페이지의 엉뚱한 벽과** 붙는다.
+ */
+describe('getWallsSnapshot — 페이지', () => {
+  it('다른 페이지를 지정하면 **그 페이지 벽**만 본다', () => {
+    const here = wall('here', 0, 0, 500, 0)
+    const there = wall('there', 9000, 9000, 0, 500)
+    const editor = {
+      getCurrentPageShapes: () => [here],
+      getCurrentPageId: () => 'page:1',
+      getPageShapeIds: (id: string) => (id === 'page:2' ? ['s:there'] : []),
+      getShape: (id: string) => (id === 's:there' ? there : undefined),
+      getShapePageTransform: (s: WallShape) => Mat.Translate(s.x, s.y),
+    } as unknown as Editor
+
+    const snap = getWallsSnapshot(editor, 'page:2')
+    expect(snap.map(w => w.id)).toEqual(['there'])
+    expect(snap[0].sx).toBe(9000)
+  })
+
+  it('현재 페이지를 지정하면 캐시를 그대로 쓴다', () => {
+    const a = A()
+    const editor = {
+      getCurrentPageShapes: () => [a],
+      getCurrentPageId: () => 'page:1',
+      getPageShapeIds: () => { throw new Error('현재 페이지인데 페이지 조회를 했다') },
+      getShapePageTransform: (s: WallShape) => Mat.Translate(s.x, s.y),
+    } as unknown as Editor
+    expect(() => getWallsSnapshot(editor, 'page:1')).not.toThrow()
+  })
+})

@@ -762,7 +762,37 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
             // 시각만 따로 읽어 와서 건다. 서버에 행이 아예 없으면 undefined 가
             // 그대로 와서 첫 저장(INSERT)이 된다 — 그건 막을 이유가 없다.
             const expected = lastServerUpdatedAt ?? await fetchProjectUpdatedAt(projectId)
-            await saveSnapshotToSupabase(projectId, snap, thumb, expected)
+            const result = await saveSnapshotToSupabase(projectId, snap, thumb, expected)
+            if (!result.conflict) return
+
+            // ── 충돌은 **버리면 안 된다** ──
+            //
+            // 전엔 결과를 안 보고 끝냈다. 안 썼으니 서버는 멀쩡하지만, 이쪽의
+            // 마지막 편집이 서버에 못 올라간 채 남는다. 다음에 들어올 때
+            // `isLocalNewer` 가 가려 주리라 믿었는데 그 비교는 **시각**으로
+            // 하므로, 서버 쪽이 더 최신이거나 기기 시계가 어긋나 있으면
+            // 서버본을 골라 그 편집을 덮는다.
+            //
+            // 그래서 주기 저장과 같은 규칙을 쓴다: **서버를 버전으로 백업한
+            // 뒤에만** 덮는다. 백업이 안 되면 안 쓴다 — 로컬에는 남아 있고,
+            // 조용히 날리는 것보다 안 올리는 쪽이 낫다.
+            console.warn('[supabase-sync] 언마운트 flush 충돌 — 서버 백업 후 재시도')
+            const backup = await backupServerSnapshot(
+              projectId, result.serverUpdatedAt, backedUpServerAt,
+              { loadRemote: loadSnapshotFromSupabase, saveVersion: saveVersionSynced, getVersion },
+            )
+            if (backup === 'failed') {
+              console.warn('[supabase-sync] 백업 실패 — 언마운트 flush 포기 (로컬에는 남아 있다)')
+              return
+            }
+            backedUpServerAt = result.serverUpdatedAt
+            const retry = await saveSnapshotToSupabase(projectId, snap, thumb, result.serverUpdatedAt)
+            if (retry.conflict) {
+              // 백업하는 사이에 또 누가 저장했다. 여기서 덮지 않는다 —
+              // 이 화면은 이미 사라졌으므로 다음 틱이란 게 없고, 덮으면
+              // 그 세 번째 기기의 저장이 백업 없이 날아간다.
+              console.warn('[supabase-sync] 백업 중에 또 충돌 — 안 쓰고 물러난다')
+            }
           } catch (err) {
             console.warn('[supabase-sync] 언마운트 flush 실패', err)
           }
