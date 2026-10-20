@@ -101,13 +101,21 @@ export function HamburgerMenu({ open, onClose, onImport }: {
         </div>
         <div className="lbar-menu-divider" />
         <div className="lbar-menu-section">
-          <div className="lbar-menu-item">공유</div>
+          {/* '공유' 는 추후. 눌러도 아무 일이 안 나는 항목은 비어 있는 게
+              아니라 **고장 난 것처럼** 보여서 일단 가린다. 지우지 않는 건
+              곧 붙일 자리이기 때문이다. */}
+          {/* <div className="lbar-menu-item">공유</div> */}
           <div className="lbar-menu-item" onClick={() => { window.print(); closeAll() }}>인쇄</div>
         </div>
+        {/* '옵션' 도 추후. 이 항목은 **섹션에 혼자** 있어서 항목만 가리면
+            구분선과 빈 섹션이 남는다 — 메뉴 바닥에 줄만 하나 그어진 꼴이 된다.
+            그래서 껍데기까지 통째로 묶는다. */}
+        {/*
         <div className="lbar-menu-divider" />
         <div className="lbar-menu-section">
           <div className="lbar-menu-item">옵션</div>
         </div>
+        */}
       </div>
     </div>
   )
