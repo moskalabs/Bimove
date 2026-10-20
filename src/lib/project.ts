@@ -3,6 +3,9 @@ import { isDesktop, openProjectFile, saveProjectFile } from './tauri'
 import { checkImageSize } from './importLimits'
 
 // ---- project file save / load ----
+//
+// 내보내기(saveProject)는 LBar 메뉴에 붙어 있다. **불러오기(openProject)는
+// 일부러 안 붙였다** — 지금 모양으로 붙이면 안 되기 때문이다. 아래 주석 참고.
 
 export async function saveProject(editor: Editor, filename = 'untitled') {
   const snapshot = editor.getSnapshot()
@@ -22,6 +25,22 @@ export async function saveProject(editor: Editor, filename = 'untitled') {
   }
 }
 
+/**
+ * `.bimova` 를 열어 캔버스에 올린다. **아직 메뉴에 안 붙어 있다.**
+ *
+ * 붙이려면 먼저 고쳐야 한다. 여기는 받은 JSON 을 `editor.loadSnapshot` 에
+ * 그대로 넘기는데, 그러면 `lib/bimoveDocStore.loadDocument` 가 지키는 것들을
+ * 통째로 건너뛴다 — 그쪽은 변환에서 빠진 도형이 있거나(`skipped > 0`) 결과가
+ * 비면 **도면을 안 넘긴다.** 빈 캔버스를 올리는 순간 자동 저장이 돌아서 서버
+ * 정본을 덮어쓰고, 그건 되돌릴 수 없기 때문이다.
+ *
+ * 즉 이 함수는 "파일 하나로 서버 도면을 날릴 수 있는" 길이다. 내보내기만
+ * 먼저 열어 둔 이유가 그것이다 — 내보내기는 읽기라 위험이 없다.
+ *
+ * 붙일 때 할 일: 파싱한 스냅샷을 loadDocument 와 **같은 검사**에 통과시키고,
+ * 통과하면 올리고 아니면 사유를 보여준다. 덮어쓰기 전에 서버본을 버전으로
+ * 백업하는 것도 같이 봐야 한다 (App.tsx 의 backupServerSnapshot 과 같은 규칙).
+ */
 export async function openProject(editor: Editor) {
   if (isDesktop()) {
     try {

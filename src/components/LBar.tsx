@@ -8,6 +8,7 @@ import { MaterialsPanel } from './panels/MaterialsPanel'
 import { LayoutPanel } from './panels/LayoutPanel'
 import { EditLock } from './EditLock'
 import { useImportActions, type ImportKind } from './useImportActions'
+import { saveProject } from '../lib/project'
 import { useEditor } from '../context/EditorContext'
 import { useReadonly } from '../context/ReadonlyContext'
 import { useProjectId, useProjectName } from '../context/ProjectContext'
@@ -87,6 +88,12 @@ export function HamburgerMenu({ open, onClose, onImport }: {
                 </div>
                 <div className="lbar-menu-item" onClick={() => { if (editor) printReport(editor, { projectId: projectId || undefined }); closeAll() }}>
                   📋 리포트 내보내기
+                </div>
+                {/* "저장" 이 아니라 **내보내기**다. 이 앱은 서버가 정본이고 계속
+                    자동 저장되므로, "저장" 버튼이 있으면 "그럼 지금까지는 저장이
+                    안 된 건가" 로 읽힌다. 이건 계정 밖으로 들고 나가는 파일이다. */}
+                <div className="lbar-menu-item" onClick={() => { if (editor) void saveProject(editor, projectName.trim() || '도면'); closeAll() }}>
+                  📁 .bimova 파일로 내보내기
                 </div>
               </div>
             )}
