@@ -231,7 +231,11 @@ const WALL_LINE_RADIUS_PX = 20
 
 // ── Wall line cache ──
 // 키 잡는 이유는 `getWallEndpoints` 주석과 같다.
-type WallLine = { x: number; y: number; dx: number; dy: number; len: number; thickness: number; id: string }
+type WallLine = {
+  x: number; y: number; dx: number; dy: number; len: number; thickness: number; id: string
+  /** 진짜 벽인가. DXF 에서 뽑은 선분은 false — 밑그림이지 벽이 아니다. */
+  wall: boolean
+}
 let _lineCache: WallLine[] = []
 let _lineCacheSrc: readonly unknown[] | null = null
 let _dxfLines: WallLine[] = []
@@ -264,7 +268,7 @@ function getWallLines(editor: Editor): WallLine[] {
         const dx = b.x - a.x, dy = b.y - a.y
         const len = Math.hypot(dx, dy)
         if (len < 1) continue
-        _dxfLines.push({ x: a.x, y: a.y, dx, dy, len, thickness: 0, id: shape.id })
+        _dxfLines.push({ x: a.x, y: a.y, dx, dy, len, thickness: 0, id: shape.id, wall: false })
       }
     }
   }
@@ -278,7 +282,7 @@ function getWallLines(editor: Editor): WallLine[] {
     const dx = b.x - a.x, dy = b.y - a.y
     const len = Math.hypot(dx, dy)
     if (len < 1) continue
-    wallPart.push({ x: a.x, y: a.y, dx, dy, len, thickness: props.thickness, id: shape.id })
+    wallPart.push({ x: a.x, y: a.y, dx, dy, len, thickness: props.thickness, id: shape.id, wall: true })
   }
 
   _lineCache = wallPart.length === 0 ? _dxfLines : wallPart.concat(_dxfLines)
@@ -390,7 +394,23 @@ export function snapToIntersection(
 
 // ── 수직 스냅: 시작점에서 벽에 수직인 점 ──
 
-/** 수직 스냅: 시작점에서 벽 선분에 수선을 내린 발. 새로 그리는 벽이 기존 벽과 직교가 됨. */
+/**
+ * 수직(직교) 스냅: 시작점에서 벽에 내린 **수선의 발**.
+ *
+ * ── 언제 걸리는가 ──
+ *
+ * **커서가 그 벽 위에 있을 때** 걸린다. CAD 의 PER 오스냅과 같다 — 직교로
+ * 붙이고 싶은 벽을 가리키면, 시작점에서 거기 내린 수선의 발로 끌어 준다.
+ *
+ * 전엔 **커서가 수선의 발 근처**에 있어야 걸렸다. 그 발이 어디 생기는지는
+ * 화면에 아무 표시가 없으므로, 사용자는 찍어야 할 자리를 모른 채 12px 안을
+ * 더듬어야 했다 — 그래서 "직교점이 안 먹는다" 가 된다. 발은 늘 선분 위에
+ * 있으므로(아래에서 clamp 한다) 새 조건이 옛 조건을 **포함한다** — 되던 건
+ * 그대로 되고, 안 되던 것만 된다.
+ *
+ * 고르는 기준도 "발까지 거리" 가 아니라 **"커서에서 벽까지 거리"** 다.
+ * 겹쳐 있는 벽 중에 **내가 가리킨 것**이 이겨야 한다.
+ */
 export function snapToPerpendicular(
   editor: Editor,
   startPoint: { x: number; y: number },
@@ -399,23 +419,39 @@ export function snapToPerpendicular(
 ): SnapPoint | null {
   if (!getSnapMode('perpendicular')) return null
   const radius = SNAP_RADIUS_PX / editor.getZoomLevel()
+  const r2 = radius * radius
   let best: SnapPoint | null = null
-  let bestDist = radius
+  let bestD2 = r2
 
   for (const w of getWallLines(editor)) {
     if (w.id === excludeId) continue
-    // 시작점에서 벽 직선에 수선의 발 = 벽 위의 점 P, 이때 (startPoint -> P) ⊥ (wall direction)
+    // ── DXF 선분은 대상이 아니다 ──
+    //
+    // `getWallLines` 에는 DXF 선분이 **수만 개** 들어 있다. 그걸 다 직교
+    // 대상으로 두면, 밑그림 위에 그리는 동안 커서가 아무 선이나 스칠 때마다
+    // **멀리 있는 수선의 발로 끌려간다.** 끝점·교차점과 달리 결과가 커서에서
+    // 먼 자리라 더 그렇다.
+    //
+    // 직교는 "기존 **벽**에 직각으로 붙인다" 는 동작이다. DXF 선에도 걸고
+    // 싶어지면 그때 따로 연다.
+    if (!w.wall) continue
+    // 커서가 이 벽 위에 있나.
+    const d2 = distSqToSeg(point.x, point.y, w)
+    if (d2 >= bestD2) continue
+
+    // 시작점에서 벽 직선에 내린 수선의 발. 선분 밖이면 가까운 끝으로 당긴다 —
+    // 연장선 위의 발은 벽에 안 닿아서 직교로 붙지도 않는다.
     const t = ((startPoint.x - w.x) * w.dx + (startPoint.y - w.y) * w.dy) / (w.len * w.len)
-    // 벽 선분 범위 내로 클램프
     const tc = Math.max(0, Math.min(1, t))
     const px = w.x + tc * w.dx
     const py = w.y + tc * w.dy
-    // 커서가 이 수선발 근처에 있는지 확인
-    const d = Math.hypot(point.x - px, point.y - py)
-    if (d < bestDist) {
-      bestDist = d
-      best = { x: px, y: py, sourceId: w.id, snapType: 'perpendicular' }
-    }
+
+    // 시작점이 그 벽 위면 발이 곧 시작점이다 — 거기 붙이면 길이 0 짜리 벽이
+    // 생긴다. 그건 스냅이 아니라 사고다.
+    if (Math.hypot(px - startPoint.x, py - startPoint.y) < 1) continue
+
+    bestD2 = d2
+    best = { x: px, y: py, sourceId: w.id, snapType: 'perpendicular' }
   }
   return best
 }

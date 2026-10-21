@@ -151,9 +151,18 @@ describe('individual snap modes', () => {
     expect(getSnapMode('intersection')).toBe(true)
   })
 
-  it('perpendicular defaults to false', () => {
+  it('perpendicular 는 **켜진 채로** 시작한다', () => {
+    // 2026-10-21 에 바뀐 계약이다. 직교로 붙이는 건 평면도에서 제일 많이 쓰는
+    // 동작인데, 꺼 두면 토글을 찾아 켜기 전까지 "직교가 안 먹는다" 로 보인다.
     localStorage.clear()
-    expect(getSnapMode('perpendicular')).toBe(false)
+    expect(getSnapMode('perpendicular')).toBe(true)
+  })
+
+  it('extension 은 여전히 꺼진 채로 시작한다', () => {
+    // 벽 연장선은 화면 밖까지 뻗는다. 켜 두면 아무 상관없는 먼 벽의 연장선에
+    // 커서가 끌려간다 — 쓸 사람이 켜는 쪽이 맞다.
+    localStorage.clear()
+    expect(getSnapMode('extension')).toBe(false)
   })
 
   it('extension defaults to false', () => {
@@ -187,7 +196,7 @@ describe('individual snap modes', () => {
       endpoint: true,
       midpoint: true,
       intersection: true,
-      perpendicular: false,
+      perpendicular: true,
       extension: false,
     })
   })

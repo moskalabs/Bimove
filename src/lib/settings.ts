@@ -62,7 +62,12 @@ const SNAP_DEFAULTS: Record<SnapMode, boolean> = {
   endpoint: true,
   midpoint: true,
   intersection: true,
-  perpendicular: false,
+  // 직교(수직) 스냅은 평면도에서 제일 많이 쓰는 축이다 — 기존 벽에 직각으로
+  // 붙이는 일. 꺼 두면 토글을 찾아 켜야 쓸 수 있는데, 그 전까지는 "직교가
+  // 안 먹는다" 로 보인다.
+  perpendicular: true,
+  // 연장은 아직 끈다. 벽 연장선은 **화면 밖까지** 뻗으므로, 켜 두면 아무
+  // 상관없는 먼 벽의 연장선에 커서가 끌려간다. 쓸 사람이 켜는 쪽이 맞다.
   extension: false,
 }
 
