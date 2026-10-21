@@ -18,6 +18,7 @@ import {
 import { getGrayscaleMode, getDarkMode } from '../lib/settings'
 import { unpackTextsJson } from '../lib/dxf'
 import { dxfStrokePx, screenStrokeWidth } from '../lib/dxfStroke'
+import { grayTones } from '../lib/grayscale'
 
 /** 색상의 상대 밝기 (0~1) */
 function luminance(hex: string): number {
@@ -621,7 +622,7 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
   // 배경 대비 색상 보정
   const rawColor = matStroke || (meta.dxfColor as string) || (darkMode ? '#ccc' : '#333')
   const stroke = grayscale
-    ? (darkMode ? '#ccc' : '#333')
+    ? grayTones(darkMode).line
     : darkMode
       ? (isNearBlack(rawColor) ? '#ccc' : rawColor)
       : darkenForLightBg(rawColor)
@@ -646,7 +647,7 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
   // HATCH SVG 패턴 defs + fill 준비 (캐싱)
   const hatchDefs = useMemo(() => hatches.map((h, i) => {
     const hColor = grayscale
-      ? (darkMode ? '#aaa' : '#666')
+      ? grayTones(darkMode).hatch
       : h.c
         ? (darkMode ? (isNearBlack(h.c) ? '#aaa' : h.c) : darkenForLightBg(h.c))
         : (darkMode ? '#aaa' : '#666')
@@ -702,7 +703,7 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
       {texts.map((t, i) => {
         // 흑백 모드에서는 색을 쓰지 않기로 한 약속을 지킨다.
         const textColor = grayscale
-          ? (darkMode ? '#bbb' : '#555')
+          ? grayTones(darkMode).text
           : (darkMode ? DXF_TEXT_COLOR_DARK : DXF_TEXT_COLOR_LIGHT)
         const haloColor = darkMode ? DXF_TEXT_HALO_DARK : DXF_TEXT_HALO_LIGHT
         // MTEXT attachment point → SVG textAnchor + dominantBaseline

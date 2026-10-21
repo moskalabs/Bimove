@@ -16,9 +16,10 @@ import {
 } from 'tldraw'
 import type { IndexKey } from '@tldraw/editor'
 import { useEffect, useState } from 'react'
-import { getGrayscaleMode } from '../lib/settings'
+import { getGrayscaleMode, getDarkMode } from '../lib/settings'
 import { renderPatternDef } from '../lib/wallPatterns'
 import { dxfStrokePx, screenStrokeWidth } from '../lib/dxfStroke'
+import { grayTones } from '../lib/grayscale'
 import type { PatternId } from '../lib/materialPresets'
 
 /** #ffffff 등 배경과 구분 안 되는 밝은 색 감지 */
@@ -479,10 +480,14 @@ function WallComponent({ shape }: { shape: WallShape }) {
     [editor, shape.id],
   )
   const [grayscale, setGrayscale] = useState(getGrayscaleMode)
+  // 흑백 농도는 배경에 따라 뒤집힌다 — 어두운 배경에서는 **밝아야** 진하게
+  // 읽힌다. 안 읽으면 다크+흑백에서 벽이 배경에 묻는다.
+  const [darkMode, setDarkMode] = useState(getDarkMode)
 
   useEffect(() => {
     const onSettings = () => {
       setGrayscale(getGrayscaleMode())
+      setDarkMode(getDarkMode())
     }
     window.addEventListener('bimova:settings', onSettings)
     return () => window.removeEventListener('bimova:settings', onSettings)
@@ -558,8 +563,11 @@ function WallComponent({ shape }: { shape: WallShape }) {
   // meta.fill 을 직접 준 벽과 패턴이 걸린 벽은 그대로 둔다.
   const rawFill = (shape.meta?.fill as string) ?? dxfColor ?? '#fff'
   const rawStroke = (shape.meta?.stroke as string) ?? dxfColor ?? '#222'
-  const fill = isSelected ? '#e8f0fe' : (grayscale ? '#f5f5f5' : rawFill)
-  const stroke = isSelected ? '#1a73e8' : (grayscale ? '#333' : rawStroke)
+  // 흑백 벽 속. 밝은 배경에선 거의 흰 종이, 어두운 배경에선 거의 검정이라야
+  // "속은 비어 있다" 로 읽힌다 — 양쪽 다 #f5f5f5 면 다크에서 벽이 하얗게 뜬다.
+  const fill = isSelected ? '#e8f0fe' : (grayscale ? (darkMode ? '#1a1a1a' : '#f5f5f5') : rawFill)
+  // 흑백에서는 도면선과 **같은 농도**로. 벽만 옅으면 거기부터 안 보인다.
+  const stroke = isSelected ? '#1a73e8' : (grayscale ? grayTones(darkMode).line : rawStroke)
   const pattern = grayscale ? undefined : (shape.meta?.pattern as string | undefined)
   // 패턴 ID를 패턴 이름+색상으로 공유 (벽마다 <defs> 중복 방지)
   const patKey = pattern && pattern !== 'none' ? `pat-${pattern}-${stroke.replace('#', '')}` : null

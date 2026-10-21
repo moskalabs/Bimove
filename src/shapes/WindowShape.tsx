@@ -52,8 +52,8 @@ export class WindowShapeUtil extends ShapeUtil<WindowShape> {
         <line x1={hw} y1={-ht} x2={hw} y2={ht} stroke="#222" strokeWidth={2} />
 
         {/* 유리 (평행선 2개) */}
-        <line x1={-hw} y1={-gap} x2={hw} y2={-gap} stroke="#55aaff" strokeWidth={1.5} />
-        <line x1={-hw} y1={gap} x2={hw} y2={gap} stroke="#55aaff" strokeWidth={1.5} />
+        <line x1={-hw} y1={-gap} x2={hw} y2={-gap} stroke="#55aaff" strokeWidth={1.5} className="mono-ink-line" />
+        <line x1={-hw} y1={gap} x2={hw} y2={gap} stroke="#55aaff" strokeWidth={1.5} className="mono-ink-line" />
       </SVGContainer>
     )
   }
@@ -68,8 +68,8 @@ export class WindowShapeUtil extends ShapeUtil<WindowShape> {
         <rect x={-hw} y={-ht} width={width} height={thickness} fill="white" stroke="none" />
         <line x1={-hw} y1={-ht} x2={-hw} y2={ht} stroke="#222" strokeWidth={2} />
         <line x1={hw} y1={-ht} x2={hw} y2={ht} stroke="#222" strokeWidth={2} />
-        <line x1={-hw} y1={-gap} x2={hw} y2={-gap} stroke="#55aaff" strokeWidth={1.5} />
-        <line x1={-hw} y1={gap} x2={hw} y2={gap} stroke="#55aaff" strokeWidth={1.5} />
+        <line x1={-hw} y1={-gap} x2={hw} y2={-gap} stroke="#55aaff" strokeWidth={1.5} className="mono-ink-line" />
+        <line x1={-hw} y1={gap} x2={hw} y2={gap} stroke="#55aaff" strokeWidth={1.5} className="mono-ink-line" />
       </g>
     )
   }

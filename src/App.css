@@ -2055,9 +2055,51 @@ body[data-material-guide="true"] .topbar-btn[data-tool="select"]::after {
   border-top: 1px solid #fbbf24;
 }
 
-/* ── Grayscale (CAD 흑백) 모드 ── */
+/* ── Grayscale (CAD 흑백) 모드 ──
+ *
+ * `contrast(1.15)` 를 걷어냈다. 흑백 처리가 **두 겹**이었기 때문이다 — 도형이
+ * 제 색을 회색으로 칠하고(lib/grayscale 의 먹 농도), 여기서 또 한 번 건드렸다.
+ * contrast 는 값을 중간(128)에서 밀어내므로 `#333`(51) 이 39 로, `#666`(102)
+ * 이 98 로 바뀐다. 즉 **코드에 적은 숫자가 화면의 숫자가 아니었고**, 톤을
+ * 손보려 해도 얼마나 바뀔지 예측이 안 됐다. 농도는 lib/grayscale 한 곳에서만
+ * 정한다.
+ *
+ * `grayscale(1)` 은 남긴다. 아직 흑백 분기가 없는 도형(문·창·치수·공간 등)을
+ * 여기서 받아 준다 — 그것들까지 다 분기시키기 전까지는 이 그물이 필요하다. */
 body[data-grayscale="true"] .canvas-area .tl-canvas {
-  filter: grayscale(1) contrast(1.15);
+  filter: grayscale(1);
+}
+
+/* 색이 **명도로는 옅은** 요소들.
+ *
+ * grayscale(1) 은 채도만 없앤다 — 명도는 그대로 남는다. 그래서 창 유리선
+ * (#55aaff) 은 명도 154, 치수선(#e67e22) 은 147 로, 흰 배경에서 거의 중간
+ * 회색이 된다. "선이 잘 안 보인다" 의 절반이 이것이었다.
+ *
+ * JS 가 아니라 CSS 로 바꾸는 이유: 이 도형들의 component() 는 ShapeUtil 의
+ * **메서드**라 훅을 못 쓴다. 토글을 구독하려면 리액트 컴포넌트로 바꿔야 하는데,
+ * 인라인 stroke 는 presentation attribute 라서 CSS 가 그냥 이긴다 — 토글하는
+ * 순간 바로 바뀌고 다시 그릴 일도 없다.
+ *
+ * 농도는 lib/grayscale 의 `line` 과 같은 값이다. 거길 고치면 여기도 같이 고칠 것. */
+/* **자식을 직접 겨눈다.** <g> 에 stroke 를 줘도 자식이 제 stroke 속성을
+   들고 있으면 그게 이긴다 (상속값보다 자기 속성이 세다). */
+body[data-grayscale="true"] .canvas-area .mono-ink line,
+body[data-grayscale="true"] .canvas-area .mono-ink path,
+body[data-grayscale="true"] .canvas-area .mono-ink-line {
+  stroke: #111111;
+}
+body[data-grayscale="true"] .canvas-area .mono-ink text {
+  fill: #111111;
+}
+
+html[data-dark="true"] body[data-grayscale="true"] .canvas-area .mono-ink line,
+html[data-dark="true"] body[data-grayscale="true"] .canvas-area .mono-ink path,
+html[data-dark="true"] body[data-grayscale="true"] .canvas-area .mono-ink-line {
+  stroke: #f0f0f0;
+}
+html[data-dark="true"] body[data-grayscale="true"] .canvas-area .mono-ink text {
+  fill: #f0f0f0;
 }
 
 body[data-grayscale="true"] .canvas-area .tl-background {

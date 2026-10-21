@@ -80,6 +80,10 @@ export class DimensionShapeUtil extends ShapeUtil<DimensionShape> {
 
     return (
       <SVGContainer>
+        {/* 흑백 모드에서 이 주황(#e67e22)은 회색으로 바뀌면 명도 147 —
+            거의 중간 회색이라 흰 배경에서 묻는다. CSS 가 여기를 받아
+            먹 농도로 바꾼다 (App.css 의 mono-ink 규칙). */}
+        <g className="mono-ink">
         {/* 연장선 */}
         <line x1={0} y1={0} x2={d1x + nx * ext} y2={d1y + ny * ext} stroke={color} strokeWidth={sw} />
         <line x1={x2} y1={y2} x2={d2x + nx * ext} y2={d2y + ny * ext} stroke={color} strokeWidth={sw} />
@@ -107,6 +111,7 @@ export class DimensionShapeUtil extends ShapeUtil<DimensionShape> {
         >
           {formatLength(len, getScaleConfig(this.editor))}
         </text>
+        </g>
       </SVGContainer>
     )
   }
