@@ -39,6 +39,15 @@ const zone = (i, x, y, w, h, label, area) => ({
     label, areaM2: area, perimeterM: 0, wallHeightMm: 2400, color: '#34a853',
   },
 })
+// 물량표는 `x,y` 가 좌상단. rowsJson 은 문자열 안의 JSON 이다
+const boq = (i, x, y, rows, total) => ({
+  id: `shape:t${i}`, type: 'boqtable', x, y, rotation: 0, index: `f${i}`,
+  parentId: 'page:main',
+  props: {
+    w: 612, h: 96, title: '마감재 물량 산출표',
+    rowsJson: JSON.stringify(rows), totalAreaM2: total,
+  },
+})
 const shapes = [
   wall(1, 0, 0, 200, 0),
   wall(2, 200, 0, 0, 150),
@@ -48,6 +57,10 @@ const shapes = [
   win(1, 200, 75),
   dim(1, 0, 0, 200, 0, 60),
   zone(1, 0, 0, 200, 150, '거실', 30),
+  boq(1, 300, 0, [
+    { category: '벽체 마감', item: '석고보드', spec: '9.5T 일반', areaM2: 30, qty: 17, unit: '장' },
+    { category: '바닥 마감', item: '강마루', spec: '7.5T 오크', areaM2: 30, qty: 2.5, unit: '평' },
+  ], 60),
 ]
 const json = JSON.stringify({
   version: 1,
@@ -65,6 +78,7 @@ console.log('wallMlineCount =', doc.wallMlineCount())
 console.log('openingCount   =', doc.openingCount())
 console.log('dimCount       =', doc.dimCount())
 console.log('zoneCount      =', doc.zoneCount())
+console.log('boqCount       =', doc.boqCount())
 console.log('notes          =', JSON.stringify(doc.notes()))
 
 const f = doc.buildFrame('', 1.0)
@@ -80,7 +94,7 @@ console.log('ink            =', ink, '/', w * h)
 
 const ok =
   doc.wallCount() === 4 && doc.wallMlineCount() === 2 && doc.openingCount() === 2 &&
-  doc.dimCount() === 1 && doc.zoneCount() === 1 &&
+  doc.dimCount() === 1 && doc.zoneCount() === 1 && doc.boqCount() === 1 &&
   doc.notes().length === 0 && ink > 100
 console.log(ok ? '\nOK' : '\nFAIL')
 if (!ok) process.exitCode = 1

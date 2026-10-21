@@ -57,6 +57,13 @@ export interface CadDoc {
    * 하나가 엔티티 넷이 된다 (반투명 면 + 점선 테두리 + 이름 + 면적).
    */
   zoneCount(): number
+  /**
+   * 읽은 물량표 도형 수.
+   *
+   * 하나가 엔티티 하나다 — 엔진 TABLE 이라 칸과 괘선을 그 안에서 만든다.
+   * 선·글자로 풀면 그림만 같고 표가 아니게 된다.
+   */
+  boqCount(): number
   revision(): number
   exec(id: string, paramsJson: string): string
   buildFrame(layout: string, tolerance: number): CadFrame
