@@ -17,6 +17,7 @@ import { detectWalls } from '../lib/detectWalls'
 import {
   getScaleConfig,
   setScaleConfig,
+  SCALE_PRESETS,
   type ScaleUnit,
   type ScaleConfig,
 } from '../lib/scaleConfig'
@@ -221,6 +222,17 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
   }
 
   const handleUnit = (unit: ScaleUnit) => { if (editor) setScaleConfig(editor, { unit }) }
+  /**
+   * 축척을 바꾼다.
+   *
+   * **도형은 안 움직인다.** 좌표는 px 그대로고, px 를 몇 mm 로 읽을지만
+   * 달라진다. 그래서 길이·두께·면적·물량이 **전부 같은 배로 바뀐다** — 1:1 에서
+   * 재 둔 물량이 1:50 으로 옮기면 50배가 된다. 도면을 들여온 축척에 맞춰
+   * 처음에 한 번 정하는 값이다.
+   */
+  const handleScale = (pxPerMm: number) => {
+    if (editor && Number.isFinite(pxPerMm) && pxPerMm > 0) setScaleConfig(editor, { pxPerMm })
+  }
 
   const UNIT_OPTIONS: { value: ScaleUnit; label: string }[] = [
     { value: 'mm', label: 'Millimeters' },
@@ -290,6 +302,24 @@ function ModelPageSection({ scale }: { scale: ScaleConfig }) {
             onClick={() => { if (gridOn) toggleGrid() }}
           >Hide</button>
         </div>
+      </div>
+
+      {/* 축척 — px 를 몇 mm 로 읽을지. 치수·물량이 전부 여기에 매달려 있다 */}
+      <div className="rbar-prop-row">
+        <span className="rbar-prop-label">축 척</span>
+        <select
+          className="rbar-select"
+          value={scale.pxPerMm}
+          onChange={e => handleScale(Number(e.target.value))}
+        >
+          {/* 고객이 손으로 맞춰 둔 값이 목록에 없을 수 있다 — 지우지 않고 같이 띄운다 */}
+          {!SCALE_PRESETS.some(p => Math.abs(p.pxPerMm - scale.pxPerMm) < 1e-9) && (
+            <option value={scale.pxPerMm}>{`사용자 (1px = ${1 / scale.pxPerMm}mm)`}</option>
+          )}
+          {SCALE_PRESETS.map(p => (
+            <option key={p.pxPerMm} value={p.pxPerMm}>{p.label}</option>
+          ))}
+        </select>
       </div>
 
       {/* 단위 */}

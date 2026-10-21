@@ -43,6 +43,14 @@ export interface CadDoc {
    * 하나가 엔티티 여럿이 된다 (벽을 가리는 사각형 + 잼브 둘 + 문짝 + 스윙 호).
    */
   openingCount(): number
+  /**
+   * 읽은 치수 도형 수.
+   *
+   * 이것만 봐서는 **숫자가 맞는지 모른다.** 캔버스 축척(`pxPerMm`)은 tldraw
+   * 세션 상태라 문서에 안 들어가서, 못 찾으면 엔진이 `1px = 1mm` 로 두고
+   * `notes()` 에 그 얘기를 올린다 — 둘을 같이 봐야 한다.
+   */
+  dimCount(): number
   revision(): number
   exec(id: string, paramsJson: string): string
   buildFrame(layout: string, tolerance: number): CadFrame

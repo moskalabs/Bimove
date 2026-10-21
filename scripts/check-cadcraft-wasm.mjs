@@ -25,6 +25,11 @@ const win = (i, x, y) => ({
   id: `shape:n${i}`, type: 'window', x, y, rotation: 0, index: `c${i}`,
   parentId: 'page:main', props: { width: 60, thickness: 20 },
 })
+// 치수는 `x,y` 가 첫 점이고 `x2,y2` 는 거기서의 상대 좌표다
+const dim = (i, x, y, x2, y2, offset) => ({
+  id: `shape:m${i}`, type: 'dimension', x, y, rotation: 0, index: `d${i}`,
+  parentId: 'page:main', props: { x2, y2, offset },
+})
 const shapes = [
   wall(1, 0, 0, 200, 0),
   wall(2, 200, 0, 0, 150),
@@ -32,10 +37,13 @@ const shapes = [
   wall(4, 0, 400, 100, 0),
   door(1, 60, 0),
   win(1, 200, 75),
+  dim(1, 0, 0, 200, 0, 60),
 ]
 const json = JSON.stringify({
   version: 1,
   pages: [{ id: 'page:main', name: '모형', index: 'a1' }],
+  // 1:10 — 치수 숫자가 px 가 아니라 mm 로 나와야 한다
+  scale: { pxPerMm: 0.1, unit: 'mm' },
   shapes,
   records: {}, skipped: 0,
   source: { from: 'tldraw', at: 0, sourceHash: 'x', shapeCount: shapes.length },
@@ -45,6 +53,7 @@ const doc = BimoveDoc.fromBimove(json, '')
 console.log('wallCount      =', doc.wallCount())
 console.log('wallMlineCount =', doc.wallMlineCount())
 console.log('openingCount   =', doc.openingCount())
+console.log('dimCount       =', doc.dimCount())
 console.log('notes          =', JSON.stringify(doc.notes()))
 
 const f = doc.buildFrame('', 1.0)
@@ -60,6 +69,6 @@ console.log('ink            =', ink, '/', w * h)
 
 const ok =
   doc.wallCount() === 4 && doc.wallMlineCount() === 2 && doc.openingCount() === 2 &&
-  doc.notes().length === 0 && ink > 100
+  doc.dimCount() === 1 && doc.notes().length === 0 && ink > 100
 console.log(ok ? '\nOK' : '\nFAIL')
 if (!ok) process.exitCode = 1

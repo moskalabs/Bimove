@@ -15,6 +15,8 @@
 // 같은 규칙으로 실린다. 변환기가 타입 목록을 알 필요가 없다는 뜻이고, 그게
 // 유실을 막는 가장 확실한 방법이다.
 
+import type { ScaleConfig, ScaleUnit } from './scaleConfig'
+
 /** 문서 포맷 판번호. 읽는 쪽이 이걸 보고 갈린다. */
 export const BIMOVE_DOC_VERSION = 1
 
@@ -77,6 +79,16 @@ export interface BimoveDocument {
    */
   source: { from: string; at: number; shapeCount: number }
   /**
+   * 도면의 축척 — 캔버스 1px 이 몇 mm 인가, 그리고 길이를 어느 단위로 쓰나.
+   *
+   * **없을 수 있다.** 축척을 문서 레코드에 넣기 전에 저장된 도면에는 아무
+   * 자리에도 안 들어 있다 (그때는 tldraw 세션 상태에만 있었다). 읽는 쪽이
+   * 없는 걸 **없다고 알려야** 한다 — 조용히 1 로 두면 2000mm 짜리 벽에
+   * "200mm" 가 찍히고 아무도 모른다. 엔진은 그래서 `notes` 에 적는다
+   * (`crates/bimove-wasm/src/dim.rs`).
+   */
+  scale?: ScaleConfig
+  /**
    * 옮기다 **못 읽은 레코드** 수. 0 이 아니면 유실이다.
    *
    * 조용히 0 으로 두면 "다 옮겼다" 로 보이므로 반드시 남긴다 — 저장하기 전에
@@ -116,6 +128,27 @@ function storeOf(snapshot: unknown): Record<string, unknown> | null {
   if (isRecord(s.document?.store)) return s.document.store
   if (isRecord(s.store)) return s.store
   return null
+}
+
+/**
+ * 문서 레코드의 meta 에서 축척을 꺼낸다. 없거나 못 쓰는 값이면 `undefined`.
+ *
+ * `pxPerMm` 이 0 이나 음수면 **버린다.** 그걸 넘기면 엔진이 `1/0 = Infinity`
+ * 를 DIMLFAC 으로 쓰고 치수 숫자가 통째로 깨진다. 없는 것과 같이 다루는
+ * 편이 낫다 — 그 쪽은 적어도 `notes` 에 올라온다.
+ */
+function scaleOf(records: Record<string, unknown>): ScaleConfig | undefined {
+  const doc = records['document:document']
+  if (!isRecord(doc) || !isRecord(doc.meta)) return undefined
+  const raw = doc.meta.scale
+  if (!isRecord(raw)) return undefined
+  const pxPerMm = typeof raw.pxPerMm === 'number' ? raw.pxPerMm : NaN
+  if (!(pxPerMm > 0) || !Number.isFinite(pxPerMm)) return undefined
+  const unit = raw.unit
+  return {
+    pxPerMm,
+    unit: unit === 'cm' || unit === 'm' ? (unit as ScaleUnit) : 'mm',
+  }
 }
 
 /**
@@ -191,6 +224,7 @@ export function fromTldrawSnapshot(snapshot: unknown): BimoveDocument {
     pages,
     shapes,
     records,
+    scale: scaleOf(records),
     source: {
       from: 'tldraw',
       at: Date.now(),

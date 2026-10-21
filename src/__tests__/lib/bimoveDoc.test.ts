@@ -169,3 +169,59 @@ describe('fromTldrawSnapshot', () => {
     }
   })
 })
+
+describe('축척', () => {
+  const docRec = (meta: Record<string, unknown>) => ({
+    id: 'document:document', typeName: 'document', gridSize: 10, name: '', meta,
+  })
+
+  it('문서 레코드의 meta 에서 축척을 읽는다', () => {
+    const d = fromTldrawSnapshot(snap([
+      page('page:main', '모형'),
+      docRec({ scale: { pxPerMm: 0.02, unit: 'm' } }),
+      shape('shape:w1', 'wall', { x2: 200, y2: 0, thickness: 20 }),
+    ]))
+    expect(d.scale).toEqual({ pxPerMm: 0.02, unit: 'm' })
+  })
+
+  it('축척이 없으면 **없다고** 둔다 — 1 로 메우지 않는다', () => {
+    // 조용히 1 로 두면 2000mm 짜리 벽에 "200mm" 가 찍히고 아무도 모른다.
+    // 읽는 쪽(엔진)이 없는 걸 알아야 notes 에 올릴 수 있다.
+    const d = fromTldrawSnapshot(snap([
+      page('page:main', '모형'),
+      shape('shape:w1', 'wall', { x2: 200, y2: 0, thickness: 20 }),
+    ]))
+    expect(d.scale).toBeUndefined()
+  })
+
+  it('못 쓰는 pxPerMm 은 버린다', () => {
+    // 0 을 넘기면 엔진이 1/0 = Infinity 를 DIMLFAC 으로 쓴다
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, '0.1']) {
+      const d = fromTldrawSnapshot(snap([
+        page('page:main', '모형'),
+        docRec({ scale: { pxPerMm: bad, unit: 'mm' } }),
+        shape('shape:w1', 'wall', { x2: 200, y2: 0, thickness: 20 }),
+      ]))
+      expect(d.scale, `pxPerMm=${String(bad)}`).toBeUndefined()
+    }
+  })
+
+  it('모르는 단위는 mm 로 떨어뜨린다 — pxPerMm 만 맞으면 쓸 수 있다', () => {
+    const d = fromTldrawSnapshot(snap([
+      page('page:main', '모형'),
+      docRec({ scale: { pxPerMm: 0.1, unit: '척' } }),
+      shape('shape:w1', 'wall', { x2: 200, y2: 0, thickness: 20 }),
+    ]))
+    expect(d.scale).toEqual({ pxPerMm: 0.1, unit: 'mm' })
+  })
+
+  it('문서 레코드는 records 에도 그대로 남는다', () => {
+    // 축척을 꺼내 쓴다고 원본을 빼면 그게 유실이다.
+    const d = fromTldrawSnapshot(snap([
+      page('page:main', '모형'),
+      docRec({ scale: { pxPerMm: 0.1, unit: 'mm' }, 남의것: 1 }),
+      shape('shape:w1', 'wall', { x2: 200, y2: 0, thickness: 20 }),
+    ]))
+    expect(d.records['document:document']).toMatchObject({ meta: { 남의것: 1 } })
+  })
+})

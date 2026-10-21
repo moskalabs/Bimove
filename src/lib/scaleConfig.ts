@@ -23,17 +23,45 @@ export const SCALE_PRESETS: { label: string; pxPerMm: number }[] = [
 
 export const DEFAULT_SCALE: ScaleConfig = { unit: 'mm', pxPerMm: 1 }
 
+/**
+ * 축척이 사는 자리 — tldraw **문서** 레코드의 meta.
+ *
+ * 전엔 `getInstanceState().meta` 에 뒀다. 그건 tldraw 의 **세션** 상태라
+ * `getSnapshot()` 의 `document.store` 에 안 들어간다 — 저장이 안 되고, 새로
+ * 열면 기본값으로 돌아간다. 고객이 1:50 으로 맞춰 둔 도면을 다시 열면 1:1 이
+ * 된다는 뜻이고, 치수 숫자가 통째로 달라진다.
+ *
+ * 문서 레코드는 document scope 라 스냅샷에 실린다. 그래서 `fromTldrawSnapshot`
+ * 이 읽을 수 있고, 엔진(`crates/bimove-wasm/src/dim.rs`)이 그걸로 DIMLFAC 을
+ * 맞춘다. 축척은 도면 하나당 하나라 문서 레코드가 제자리다.
+ */
+const DOC_META_KEY = 'scale'
+
+/** 문서 meta 를 읽는다. 목이 없는 에디터(테스트 목)에서도 안 터지게. */
+function docMeta(editor: Editor): Record<string, unknown> {
+  try {
+    return (editor.getDocumentSettings?.()?.meta as Record<string, unknown>) ?? {}
+  } catch {
+    return {}
+  }
+}
+
 export function getScaleConfig(editor: Editor): ScaleConfig {
-  const meta = editor.getInstanceState().meta as Partial<ScaleConfig>
+  const saved = docMeta(editor)[DOC_META_KEY] as Partial<ScaleConfig> | undefined
+  // 옛 세션은 축척을 instance meta 에만 들고 있다. 그 창을 쓰는 동안은
+  // 그대로 읽어줘야 저장 전에 축척이 튀지 않는다.
+  const session = (editor.getInstanceState?.()?.meta ?? {}) as Partial<ScaleConfig>
   return {
-    unit: meta.unit ?? DEFAULT_SCALE.unit,
-    pxPerMm: meta.pxPerMm ?? DEFAULT_SCALE.pxPerMm,
+    unit: saved?.unit ?? session.unit ?? DEFAULT_SCALE.unit,
+    pxPerMm: saved?.pxPerMm ?? session.pxPerMm ?? DEFAULT_SCALE.pxPerMm,
   }
 }
 
 export function setScaleConfig(editor: Editor, config: Partial<ScaleConfig>) {
-  const current = getScaleConfig(editor)
-  editor.updateInstanceState({ meta: { ...current, ...config } })
+  const next = { ...getScaleConfig(editor), ...config }
+  // 문서 meta 의 **다른 키를 지우지 않는다** — 통째로 덮으면 남이 넣어 둔 걸
+  // 잃는다.
+  editor.updateDocumentSettings({ meta: { ...docMeta(editor), [DOC_META_KEY]: next } })
 }
 
 export function formatLength(pxLen: number, config: ScaleConfig): string {

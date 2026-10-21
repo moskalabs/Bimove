@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   formatLength, DEFAULT_SCALE, SCALE_PRESETS,
+  getScaleConfig, setScaleConfig,
   type ScaleConfig,
 } from '../../lib/scaleConfig'
 
@@ -98,5 +99,66 @@ describe('SCALE_PRESETS', () => {
     for (let i = 0; i < SCALE_PRESETS.length - 1; i++) {
       expect(SCALE_PRESETS[i].pxPerMm).toBeGreaterThan(SCALE_PRESETS[i + 1].pxPerMm)
     }
+  })
+})
+
+describe('축척이 사는 자리', () => {
+  /** 문서 레코드와 세션 meta 를 둘 다 들고 있는 최소 에디터. */
+  function fakeEditor(doc: Record<string, unknown> = {}, session: Record<string, unknown> = {}) {
+    const settings = { gridSize: 10, name: '', meta: doc }
+    return {
+      editor: {
+        getDocumentSettings: () => settings,
+        updateDocumentSettings: (p: { meta?: Record<string, unknown> }) => {
+          if (p.meta) settings.meta = p.meta
+        },
+        getInstanceState: () => ({ meta: session }),
+      } as never,
+      settings,
+    }
+  }
+
+  it('문서 레코드에 쓴다 — 세션이 아니라', () => {
+    // 세션에 두면 getSnapshot() 의 document.store 에 안 들어가서 저장이 안 된다.
+    // 고객이 1:50 으로 맞춘 도면을 다시 열면 1:1 이 되고 치수가 통째로 달라진다.
+    const { editor, settings } = fakeEditor()
+    setScaleConfig(editor, { pxPerMm: 0.02, unit: 'm' })
+    expect(settings.meta.scale).toEqual({ pxPerMm: 0.02, unit: 'm' })
+    expect(getScaleConfig(editor)).toEqual({ pxPerMm: 0.02, unit: 'm' })
+  })
+
+  it('일부만 바꿔도 나머지가 남는다', () => {
+    const { editor } = fakeEditor({ scale: { pxPerMm: 0.1, unit: 'mm' } })
+    setScaleConfig(editor, { unit: 'cm' })
+    expect(getScaleConfig(editor)).toEqual({ pxPerMm: 0.1, unit: 'cm' })
+  })
+
+  it('문서 meta 의 남의 키를 지우지 않는다', () => {
+    const { editor, settings } = fakeEditor({ 남의것: 1 })
+    setScaleConfig(editor, { unit: 'cm' })
+    expect(settings.meta.남의것).toBe(1)
+  })
+
+  it('옛 세션의 축척도 읽어준다', () => {
+    // 저장 전의 창은 축척을 instance meta 에만 들고 있다. 그걸 무시하면
+    // 이 배포가 올라간 순간 열려 있던 창의 축척이 튄다.
+    const { editor } = fakeEditor({}, { pxPerMm: 0.005, unit: 'cm' })
+    expect(getScaleConfig(editor)).toEqual({ pxPerMm: 0.005, unit: 'cm' })
+  })
+
+  it('문서 쪽이 세션보다 우선이다', () => {
+    const { editor } = fakeEditor({ scale: { pxPerMm: 0.1, unit: 'mm' } }, { pxPerMm: 1, unit: 'm' })
+    expect(getScaleConfig(editor)).toEqual({ pxPerMm: 0.1, unit: 'mm' })
+  })
+
+  it('둘 다 없으면 기본값이다', () => {
+    const { editor } = fakeEditor()
+    expect(getScaleConfig(editor)).toEqual(DEFAULT_SCALE)
+  })
+
+  it('getDocumentSettings 가 없는 에디터에서도 안 터진다', () => {
+    // 테스트 목이나 옛 tldraw 가 그렇다. 축척 하나 때문에 화면이 죽으면 안 된다.
+    const editor = { getInstanceState: () => ({ meta: { unit: 'cm' } }) } as never
+    expect(getScaleConfig(editor)).toEqual({ pxPerMm: 1, unit: 'cm' })
   })
 })
