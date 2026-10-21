@@ -37,6 +37,12 @@ export interface CadDoc {
    * 같으면 하나도 이어붙지 않았다는 뜻이고, 코너가 miter 로 맞물리지 않는다.
    */
   wallMlineCount(): number
+  /**
+   * 읽은 문·창 도형 수.
+   *
+   * 하나가 엔티티 여럿이 된다 (벽을 가리는 사각형 + 잼브 둘 + 문짝 + 스윙 호).
+   */
+  openingCount(): number
   revision(): number
   exec(id: string, paramsJson: string): string
   buildFrame(layout: string, tolerance: number): CadFrame

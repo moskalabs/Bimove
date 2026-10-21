@@ -30,7 +30,8 @@ const BG = 0xFFFFFF
 const counts = (doc: CadDoc) =>
   `선 ${doc.lineCount().toLocaleString()}개 / 글자 ${doc.textCount().toLocaleString()}개` +
   ` / 해치 ${doc.hatchCount().toLocaleString()}개` +
-  ` / 벽 ${doc.wallCount().toLocaleString()}→${doc.wallMlineCount().toLocaleString()}`
+  ` / 벽 ${doc.wallCount().toLocaleString()}→${doc.wallMlineCount().toLocaleString()}` +
+  ` / 문창 ${doc.openingCount().toLocaleString()}개`
 
 export function CadCraftViewer({ onClose }: { onClose: () => void }) {
   const cvRef = useRef<HTMLCanvasElement | null>(null)

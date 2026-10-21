@@ -16,22 +16,35 @@ const wall = (i, x, y, x2, y2) => ({
   id: `shape:w${i}`, type: 'wall', x, y, rotation: 0, index: `a${i}`,
   parentId: 'page:main', props: { x2, y2, thickness: 20 },
 })
+// 문·창은 `x,y` 가 **가운데**다 — 벽선에 스냅된 그 점
+const door = (i, x, y) => ({
+  id: `shape:d${i}`, type: 'door', x, y, rotation: 0, index: `b${i}`,
+  parentId: 'page:main', props: { width: 80, thickness: 20, swing: 1, flipped: false },
+})
+const win = (i, x, y) => ({
+  id: `shape:n${i}`, type: 'window', x, y, rotation: 0, index: `c${i}`,
+  parentId: 'page:main', props: { width: 60, thickness: 20 },
+})
+const shapes = [
+  wall(1, 0, 0, 200, 0),
+  wall(2, 200, 0, 0, 150),
+  wall(3, 200, 150, -200, 0),
+  wall(4, 0, 400, 100, 0),
+  door(1, 60, 0),
+  win(1, 200, 75),
+]
 const json = JSON.stringify({
   version: 1,
   pages: [{ id: 'page:main', name: '모형', index: 'a1' }],
-  shapes: [
-    wall(1, 0, 0, 200, 0),
-    wall(2, 200, 0, 0, 150),
-    wall(3, 200, 150, -200, 0),
-    wall(4, 0, 400, 100, 0),
-  ],
+  shapes,
   records: {}, skipped: 0,
-  source: { from: 'tldraw', at: 0, sourceHash: 'x', shapeCount: 4 },
+  source: { from: 'tldraw', at: 0, sourceHash: 'x', shapeCount: shapes.length },
 })
 
 const doc = BimoveDoc.fromBimove(json, '')
 console.log('wallCount      =', doc.wallCount())
 console.log('wallMlineCount =', doc.wallMlineCount())
+console.log('openingCount   =', doc.openingCount())
 console.log('notes          =', JSON.stringify(doc.notes()))
 
 const f = doc.buildFrame('', 1.0)
@@ -45,6 +58,8 @@ let ink = 0
 for (let i = 0; i < px.length; i += 4) if (!(px[i] === 255 && px[i+1] === 255 && px[i+2] === 255)) ink++
 console.log('ink            =', ink, '/', w * h)
 
-const ok = doc.wallCount() === 4 && doc.wallMlineCount() === 2 && ink > 100
+const ok =
+  doc.wallCount() === 4 && doc.wallMlineCount() === 2 && doc.openingCount() === 2 &&
+  doc.notes().length === 0 && ink > 100
 console.log(ok ? '\nOK' : '\nFAIL')
 if (!ok) process.exitCode = 1
