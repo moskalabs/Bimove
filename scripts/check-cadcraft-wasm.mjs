@@ -30,6 +30,15 @@ const dim = (i, x, y, x2, y2, offset) => ({
   id: `shape:m${i}`, type: 'dimension', x, y, rotation: 0, index: `d${i}`,
   parentId: 'page:main', props: { x2, y2, offset },
 })
+// 공간의 `points` 는 **첫 점 기준 상대 좌표**다
+const zone = (i, x, y, w, h, label, area) => ({
+  id: `shape:z${i}`, type: 'zone', x, y, rotation: 0, index: `e${i}`,
+  parentId: 'page:main',
+  props: {
+    points: [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }],
+    label, areaM2: area, perimeterM: 0, wallHeightMm: 2400, color: '#34a853',
+  },
+})
 const shapes = [
   wall(1, 0, 0, 200, 0),
   wall(2, 200, 0, 0, 150),
@@ -38,6 +47,7 @@ const shapes = [
   door(1, 60, 0),
   win(1, 200, 75),
   dim(1, 0, 0, 200, 0, 60),
+  zone(1, 0, 0, 200, 150, '거실', 30),
 ]
 const json = JSON.stringify({
   version: 1,
@@ -54,6 +64,7 @@ console.log('wallCount      =', doc.wallCount())
 console.log('wallMlineCount =', doc.wallMlineCount())
 console.log('openingCount   =', doc.openingCount())
 console.log('dimCount       =', doc.dimCount())
+console.log('zoneCount      =', doc.zoneCount())
 console.log('notes          =', JSON.stringify(doc.notes()))
 
 const f = doc.buildFrame('', 1.0)
@@ -69,6 +80,7 @@ console.log('ink            =', ink, '/', w * h)
 
 const ok =
   doc.wallCount() === 4 && doc.wallMlineCount() === 2 && doc.openingCount() === 2 &&
-  doc.dimCount() === 1 && doc.notes().length === 0 && ink > 100
+  doc.dimCount() === 1 && doc.zoneCount() === 1 &&
+  doc.notes().length === 0 && ink > 100
 console.log(ok ? '\nOK' : '\nFAIL')
 if (!ok) process.exitCode = 1

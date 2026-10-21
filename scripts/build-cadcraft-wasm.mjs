@@ -39,11 +39,11 @@ const out = join(root, 'public', 'cadcraft')
  * 커밋은 그대로 남으므로 같은 Bimove 커밋은 언제 빌드해도 같은 엔진을 받는다.
  */
 const PIN = {
-  commit: 'd6bea44d61c3311ee9399c1768dccdc87f21cc32',
+  commit: '9a66cb21d9427d924b9f6e241c2c1b6dd06de159',
   sha256: {
-    'bimove_wasm.js':        '4310da6199f904e12b718d1cd92c7930c7da864a6450082e1b9881fa022f8eed',
-    'bimove_wasm_bg.wasm':   '464315c799cf3e2199450d40e4ff7a1953b7d1bfea9f4fc0d1ef06bb8069d8b1',
-    'bimove_wasm.d.ts':      'd20ad1de47b004e90d76f7e719f62e674b6f4a4ac5642fbf45a029e6e0af632a',
+    'bimove_wasm.js':        'c386eab2f757a5844fe98ec3ba1a5541d9dd3f7029f59a13a157b8bd0c7ac5d2',
+    'bimove_wasm_bg.wasm':   '6d05af668355f7a9280206a433b49bfe0bd325fd406be20df4b8581a3a24c824',
+    'bimove_wasm.d.ts':      '81933d6643d31dd97f51108c6f5c0fac116f49482fb6fea734f791aa6cb9f826',
   },
 }
 

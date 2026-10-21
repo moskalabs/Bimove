@@ -32,7 +32,8 @@ const counts = (doc: CadDoc) =>
   ` / 해치 ${doc.hatchCount().toLocaleString()}개` +
   ` / 벽 ${doc.wallCount().toLocaleString()}→${doc.wallMlineCount().toLocaleString()}` +
   ` / 문창 ${doc.openingCount().toLocaleString()}개` +
-  ` / 치수 ${doc.dimCount().toLocaleString()}개`
+  ` / 치수 ${doc.dimCount().toLocaleString()}개` +
+  ` / 공간 ${doc.zoneCount().toLocaleString()}개`
 
 export function CadCraftViewer({ onClose }: { onClose: () => void }) {
   const cvRef = useRef<HTMLCanvasElement | null>(null)

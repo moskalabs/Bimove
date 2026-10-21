@@ -51,6 +51,12 @@ export interface CadDoc {
    * `notes()` 에 그 얘기를 올린다 — 둘을 같이 봐야 한다.
    */
   dimCount(): number
+  /**
+   * 읽은 공간 도형 수.
+   *
+   * 하나가 엔티티 넷이 된다 (반투명 면 + 점선 테두리 + 이름 + 면적).
+   */
+  zoneCount(): number
   revision(): number
   exec(id: string, paramsJson: string): string
   buildFrame(layout: string, tolerance: number): CadFrame
