@@ -7,8 +7,10 @@ import {
   AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
   ChevronUp, ChevronDown,
+  Scissors,
 } from 'lucide-react'
 import { useEditor } from '../context/EditorContext'
+import { explodeDxfShapes } from '../lib/dxfExplode'
 import { useReadonly } from '../context/ReadonlyContext'
 import { EditLock } from './EditLock'
 import { detectWalls } from '../lib/detectWalls'
@@ -610,6 +612,28 @@ export function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: S
     </section>
   )
 
+  // DXF 덩어리는 **분해**할 수 있다. 가져온 DXF 는 연결된 선분 덩어리 하나가
+  // shape 하나라, 선 하나를 눌러도 덩어리째 잡힌다. 쪼개면 줄 단위로 집힌다.
+  const explodeBtn = sel.type === 'dxfgroup' ? (
+    <section className="rbar-section" style={{ paddingTop: 0, paddingBottom: 10 }}>
+      <button
+        className="action-btn"
+        onClick={() => {
+          if (!editor) return
+          const r = explodeDxfShapes(editor, editor.getSelectedShapeIds())
+          if (r.kind === 'too-many') {
+            // 만들고 나서 느려지면 되돌릴 기회도 없다. 미리 세어 보고 막는다.
+            alert(`${r.count}개로 쪼개집니다. 너무 많아서 멈췄어요 — 더 좁게 골라서 다시 해주세요.`)
+          } else if (r.kind === 'nothing') {
+            alert('더 쪼갤 게 없습니다.')
+          }
+        }}
+      >
+        <span className="icon-label"><Scissors size={14} strokeWidth={1.75} /> 분해</span>
+      </button>
+    </section>
+  ) : null
+
   if (sel.type === 'image') {
     return (
       <>
@@ -884,11 +908,22 @@ export function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: S
     )
   }
 
+  // 전용 패널이 없는 타입 — dxfgroup 이 여기로 온다. 잠금·분해는 붙여 둔다.
   return (
-    <section className="rbar-section">
-      <h3>선택됨</h3>
-      <div className="rbar-row"><span>유형</span><span>{sel.type}</span></div>
-    </section>
+    <>
+      {lockBtn}
+      {explodeBtn}
+      <section className="rbar-section">
+        <h3>선택됨</h3>
+        <div className="rbar-row"><span>유형</span><span>{sel.type === 'dxfgroup' ? 'DXF 덩어리' : sel.type}</span></div>
+        {sel.type === 'dxfgroup' && (
+          <div className="rbar-row">
+            <span>선분</span>
+            <span>{String((sel.props as { segCount?: number }).segCount ?? 0)}개</span>
+          </div>
+        )}
+      </section>
+    </>
   )
 }
 

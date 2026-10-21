@@ -14,6 +14,7 @@ import {
   type VecLike,
   Vec,
   useEditor,
+  useValue,
 } from 'tldraw'
 import { getGrayscaleMode, getDarkMode } from '../lib/settings'
 import { unpackTextsJson } from '../lib/dxf'
@@ -606,6 +607,25 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
   // 텍스트 컬링 셋업: editor당 1회 (store.listen 1개)
   useEffect(() => { _ensureTextCulling(editor) }, [editor])
 
+  /**
+   * 화면 밖이면 **내용을 안 만든다.**
+   *
+   * tldraw 의 컬링은 컨테이너에 `display:none` 만 건다 — 자식 DOM 은 그대로
+   * 남는다. 제 도형들은 노드가 몇 개뿐이라 그 편이 빠르지만, DXF 덩어리 하나는
+   * path·글자·해치 defs 를 **수백 개**씩 들고 있다. 도면 하나를 열면 그게
+   * 수십 덩어리라, 화면에 한 조각만 보여도 전부가 메모리에 떠 있다.
+   *
+   * 그래서 컬링된 동안에는 null 을 낸다. 어차피 안 보이는 것이므로 화면이
+   * 달라지지 않고, 돌아오면 다시 만든다 — 메모리를 CPU 와 바꾸는 쪽이다.
+   * (글자 컬링은 `visibility:hidden` 이라 노드를 안 지운다. 여기서 통째로
+   *  빠지면 그 노드도 같이 빠진다.)
+   */
+  const culled = useValue(
+    'dxf-culled',
+    () => editor.getCulledShapes().has(shape.id),
+    [editor, shape.id],
+  )
+
   useEffect(() => {
     const onSettings = () => {
       setGrayscale(getGrayscaleMode())
@@ -653,6 +673,9 @@ const DxfGroupComponent = memo(function DxfGroupComponent({ shape }: { shape: Dx
         : (darkMode ? '#aaa' : '#666')
     return buildHatchFill(h, `hatch-${shape.id}-${i}`, hColor, Math.max(shape.props.w, shape.props.h))
   }), [hatches, grayscale, darkMode, shape.id, shape.props.w, shape.props.h])
+
+  // 훅을 다 돌린 **뒤에** 가른다 — 훅 개수가 렌더마다 달라지면 리액트가 깨진다.
+  if (culled) return null
 
   return (
     <SVGContainer style={{ overflow: 'visible' }}>
