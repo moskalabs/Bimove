@@ -39,11 +39,11 @@ const out = join(root, 'public', 'cadcraft')
  * 커밋은 그대로 남으므로 같은 Bimove 커밋은 언제 빌드해도 같은 엔진을 받는다.
  */
 const PIN = {
-  commit: 'be1699922bf86f47fa002cfc642973ebc8d01fcd',
+  commit: '149962df9d1f0447ccfd9bb9cb3d84b134934aeb',
   sha256: {
-    'bimove_wasm.js':        'e5f6f91b07d08f9474bf649f0422e52c0ed95f30eded9db04b1e22aa6dd02fe4',
-    'bimove_wasm_bg.wasm':   '870e50693185bfe32084a7428ea76a68ecdfc270ffd31f9a72912a72fd731c02',
-    'bimove_wasm.d.ts':      'd8a4327f9b2170ce111717ecfcd6c208feb5084131d161dd0a69940fd1e0f5ab',
+    'bimove_wasm.js':        '73309cb2eca6e577ffd12a1b04a65de25bab784f1e1bce736930d2d9d68f5580',
+    'bimove_wasm_bg.wasm':   '32a2bd0abfb68c8e10acebd761a0ef04aa5eb93f0383b89256c2fb59e9ec3085',
+    'bimove_wasm.d.ts':      '481d08f21d3ca538fd6a98f2322f6cf3a856963e42f8c7035ce07761a74e278c',
   },
 }
 
@@ -56,25 +56,37 @@ const MIN_WASM_BYTES = 1_000_000
 
 const sha256 = buf => createHash('sha256').update(buf).digest('hex')
 
-function have(cmd) {
-  try {
-    execFileSync(cmd, ['--version'], { stdio: 'ignore' })
-    return true
-  } catch {
-    return false
+/**
+ * 그 연장을 어디서 부를지 — PATH 에 없으면 **cargo 가 깔아 두는 자리**까지 본다.
+ *
+ * rustup 설치는 `~/.cargo/bin` 을 PATH 에 넣어 주지만, 그게 로그인 셸에만
+ * 붙어 있는 기계가 있다 (한의 윈도우가 그렇다). PATH 만 보면 포크가 옆에
+ * 있는데도 "Rust 가 없다" 며 **못 박은 옛 엔진을 받아와 덮는다** — 방금
+ * 고친 엔진이 조용히 사라지고, 화면에서만 옛 동작이 나온다.
+ *
+ * @returns 부를 수 있는 경로, 없으면 `null`
+ */
+function tool(cmd) {
+  const cargoBin = join(process.env.CARGO_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.cargo'), 'bin')
+  for (const c of [cmd, join(cargoBin, `${cmd}.exe`), join(cargoBin, cmd)]) {
+    try {
+      execFileSync(c, ['--version'], { stdio: 'ignore' })
+      return c
+    } catch { /* 다음 자리 */ }
   }
+  return null
 }
 
-function buildFromSource() {
+function buildFromSource(cargo, bindgen) {
   const run = (cmd, args) => execFileSync(cmd, args, { stdio: 'inherit', cwd: fork })
   console.log(`[cadcraft] 포크에서 빌드: ${fork}`)
-  run('cargo', ['build', '--release', '-p', 'bimove-wasm', '--target', 'wasm32-unknown-unknown'])
+  run(cargo, ['build', '--release', '-p', 'bimove-wasm', '--target', 'wasm32-unknown-unknown'])
 
   // wasm-bindgen 의 버전이 crate 의 wasm-bindgen 과 다르면 **조용히 깨진
   // 글루**가 나온다 (함수는 있는데 부르면 터진다). 미리 본다.
   const lock = readFileSync(join(fork, 'Cargo.lock'), 'utf8')
   const want = lock.match(/name = "wasm-bindgen"\r?\nversion = "([^"]+)"/)?.[1]
-  const havever = execFileSync('wasm-bindgen', ['--version'], { encoding: 'utf8' }).trim().split(/\s+/).pop()
+  const havever = execFileSync(bindgen, ['--version'], { encoding: 'utf8' }).trim().split(/\s+/).pop()
   if (want && havever && want !== havever) {
     throw new Error(
       `wasm-bindgen 버전이 다르다 — Cargo.lock ${want} vs CLI ${havever}\n` +
@@ -83,7 +95,7 @@ function buildFromSource() {
   }
 
   mkdirSync(out, { recursive: true })
-  run('wasm-bindgen', [
+  run(bindgen, [
     '--target', 'web', '--out-dir', out,
     join(fork, 'target', 'wasm32-unknown-unknown', 'release', 'bimove_wasm.wasm'),
   ])
@@ -162,10 +174,19 @@ if (pinFlag >= 0) {
   }
   await printPin(commit)
 } else {
-  const canBuild = existsSync(join(fork, 'Cargo.toml')) && have('cargo') && have('wasm-bindgen')
+  const forkHere = existsSync(join(fork, 'Cargo.toml'))
+  const cargo = forkHere ? tool('cargo') : null
+  const bindgen = cargo ? tool('wasm-bindgen') : null
   try {
-    if (canBuild) {
-      buildFromSource()
+    if (cargo && bindgen) {
+      buildFromSource(cargo, bindgen)
+    } else if (cargo) {
+      // 포크도 Rust 도 있는데 wasm-bindgen 만 없다. 여기서 받아오면 **지금
+      // 고치고 있는 엔진이 옛 PIN 으로 덮인다** — 받는 쪽으로 넘기지 않는다.
+      throw new Error(
+        'wasm-bindgen 이 없어서 포크를 빌드하지 못한다 — 옛 PIN 으로 덮지 않고 둔다.\n' +
+        'Cargo.lock 과 같은 버전을 깔아라: https://github.com/rustwasm/wasm-bindgen/releases',
+      )
     } else if (pinnedAlreadyThere()) {
       // 못 박은 그대로 놓여 있다. 매 빌드마다 12MB 를 다시 받을 이유가 없다.
       console.log(`[cadcraft] 이미 있어서 건너뛴다 (${PIN.commit.slice(0, 7)})`)

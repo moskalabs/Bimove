@@ -22,10 +22,15 @@ const BG = 0xFFFFFF
  *
  * 해치 수를 **일부러 늘 띄운다.** 0 이면 "해치가 없는 도면" 이라는 뜻인데,
  * 안 띄우면 "해치를 못 그린 것" 과 구분이 안 된다.
+ *
+ * 벽체는 **도형 수와 MLINE 수를 같이** 띄운다. 이어진 벽을 한 MLINE 으로
+ * 묶어야 코너가 맞물리는데, 묶였는지는 두 숫자를 견줘야만 보인다 —
+ * `벽 42→7` 이면 듣는 것이고 `벽 42→42` 면 하나도 못 묶었다는 뜻이다.
  */
 const counts = (doc: CadDoc) =>
   `선 ${doc.lineCount().toLocaleString()}개 / 글자 ${doc.textCount().toLocaleString()}개` +
-  ` / 해치 ${doc.hatchCount().toLocaleString()}개`
+  ` / 해치 ${doc.hatchCount().toLocaleString()}개` +
+  ` / 벽 ${doc.wallCount().toLocaleString()}→${doc.wallMlineCount().toLocaleString()}`
 
 export function CadCraftViewer({ onClose }: { onClose: () => void }) {
   const cvRef = useRef<HTMLCanvasElement | null>(null)

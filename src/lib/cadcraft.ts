@@ -30,6 +30,13 @@ export interface CadDoc {
   lineCount(): number
   textCount(): number
   hatchCount(): number
+  /** 읽어들인 벽체 조각 수. */
+  wallCount(): number
+  /**
+   * 그 벽들이 묶여서 생긴 MLINE 수. `wallCount` 보다 **작아야** 정상이다 —
+   * 같으면 하나도 이어붙지 않았다는 뜻이고, 코너가 miter 로 맞물리지 않는다.
+   */
+  wallMlineCount(): number
   revision(): number
   exec(id: string, paramsJson: string): string
   buildFrame(layout: string, tolerance: number): CadFrame
