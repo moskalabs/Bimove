@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  Menu, Layers, Palette, FileText, Info, ArrowLeftCircle, MessageSquare,
+  Menu, Layers, Palette, FileText, Info, ArrowLeftCircle, MessageSquare, PanelRight,
 } from 'lucide-react'
 import { LayersPanel } from './panels/LayersPanel'
 import { BOQPanel } from './panels/BOQPanel'
@@ -155,7 +155,13 @@ function View3DIcon() {
 
 type PanelId = 'layers' | 'materials' | 'table' | 'layout' | 'comments' | null
 
-export function LBar({ onBack, onShow3D }: { onBack?: () => void; onShow3D?: () => void }) {
+export function LBar({ onBack, onShow3D, onToggleRbar, rbarOpen }: {
+  onBack?: () => void
+  onShow3D?: () => void
+  /** 좁은 화면에서 우측 속성 패널 여닫기 — 넓은 화면에서는 버튼이 안 보인다. */
+  onToggleRbar?: () => void
+  rbarOpen?: boolean
+}) {
   const [activePanel, setActivePanel] = useState<PanelId>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   // 레일 아이콘의 배지 — **지금 장**에 아직 열려 있는 코멘트 수.
@@ -229,6 +235,17 @@ export function LBar({ onBack, onShow3D }: { onBack?: () => void; onShow3D?: () 
 
         {/* ── 섹션 3: 하단 ── */}
         <div className="lbar-section">
+          {/* 좁은 화면에서만 나온다. 우측바가 오버레이로 바뀌는 폭에서,
+              **여는 길이 여기밖에 없다** (App.css 의 `.lbar-narrow-only`). */}
+          {onToggleRbar && (
+            <button
+              className={`lbar-icon lbar-narrow-only${rbarOpen ? ' active' : ''}`}
+              title={rbarOpen ? '속성 닫기' : '속성 열기'}
+              onClick={onToggleRbar}
+            >
+              <PanelRight size={18} strokeWidth={1.75} />
+            </button>
+          )}
           {onBack && (
             <button
               className="lbar-icon"

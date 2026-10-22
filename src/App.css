@@ -8,7 +8,12 @@
   display: flex;
   flex-direction: column;
   width: 100vw;
+  /* 폰의 `100vh` 는 **주소창이 펼쳐진 높이**다. 스크롤해서 주소창이 접히면
+     실제 보이는 칸은 더 커지지만 레이아웃은 그대로라, 아래쪽(우측바 바닥 ·
+     상태줄)이 잘린 채로 남는다. `dvh` 는 지금 보이는 높이다. 모르는
+     브라우저는 윗줄을 쓴다. */
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background: #f5f5f5;
 }
@@ -143,6 +148,15 @@
   gap: 4px;
   z-index: 10;
 }
+
+/* 좁은 화면에서만 나오는 레일 버튼 (우측 속성 패널 여닫기).
+   넓은 화면에서는 우측바가 늘 붙어 있으므로 버튼이 할 일이 없다.
+
+   **선택자를 두 겹으로 쓴다.** 이 버튼은 `.lbar-icon` 이기도 한데 그쪽이
+   `display: flex` 라, 한 겹(0,1,0)으로 쓰면 파일에서 뒤에 오는 쪽이 이긴다.
+   끝에 뒀을 땐 폰에서 버튼이 안 나왔고(여는 길이 사라졌다), 앞으로 옮기니
+   이번엔 데스크톱에서 안 숨겨졌다. 두 겹(0,2,0)이면 자리와 무관하다. */
+.lbar-icon.lbar-narrow-only { display: none; }
 
 .lbar-icon {
   width: 36px;
@@ -2447,7 +2461,10 @@ html[data-dark="true"] ::-webkit-scrollbar-thumb:hover { background: #555; }
     box-shadow: 4px 0 16px rgba(0,0,0,0.15);
   }
 
-  /* 우측바: 기본 숨김, 오버레이 전환 */
+  /* 우측바: 오버레이로 전환하고 **닫아 둔다.**
+     주석에는 "기본 숨김" 이라 적혀 있었는데 숨기는 규칙이 없었다. 그래서
+     600px 짜리 화면에서 속성 패널이 오른쪽 절반을 **늘** 덮고 있었다.
+     여는 건 좌측 레일의 '속성' 버튼이다 (`lbar-narrow-only`). */
   .rbar {
     position: fixed;
     right: 0;
@@ -2456,7 +2473,17 @@ html[data-dark="true"] ::-webkit-scrollbar-thumb:hover { background: #555; }
     width: 280px;
     z-index: 50;
     box-shadow: -4px 0 16px rgba(0,0,0,0.15);
+    transform: translateX(100%);
+    transition: transform 0.18s ease;
   }
+  .rbar-open .rbar { transform: none; }
+
+  /* 레일은 덮개들 **위**에 둔다. 밑에 깔리면 열어 놓은 패널을 닫을 방법이
+     없다 — 닫는 버튼이 그 레일에 있기 때문이다. */
+  .lbar { z-index: 60; }
+
+  /* 좁을 때만 나오는 버튼 (평소엔 `.lbar-icon.lbar-narrow-only` 가 숨긴다) */
+  .lbar-icon.lbar-narrow-only { display: flex; }
 
   /* PO 템플릿 모달 축소 */
   .po-template-modal,
@@ -2478,18 +2505,25 @@ html[data-dark="true"] ::-webkit-scrollbar-thumb:hover { background: #555; }
   .topbar-project-tab { padding: 2px 6px; }
   .topbar-project-name { max-width: 48px; font-size: 11px; }
 
-  /* 좌측바 숨김 → 캔버스 풀 */
-  .lbar { display: none; }
+  /* 좌측바는 **숨기지 않는다.**
+     전엔 `display: none` 이었다. 캔버스를 넓히려던 것인데, 그 레일에
+     메뉴·레이어·재질·물량·배치·코멘트·3D·**프로젝트 목록으로 돌아가기**가
+     전부 달려 있다. 폰에서는 도면을 볼 수도, 빠져나갈 수도 없었다.
+     40px 이면 캔버스를 크게 갉아먹지도 않는다. */
+  .lbar { width: 40px; }
+
+  /* 덮개들은 레일을 **비켜서** 편다. 레일을 덮으면 닫을 수가 없다. */
   .lbar-panel {
-    left: 0;
+    left: 40px;
+    right: 0;
+    width: auto;
     top: 40px;
-    width: 100vw;
     border-right: none;
   }
-
-  /* 우측바 풀폭 오버레이 */
   .rbar {
-    width: 100vw;
+    left: 40px;
+    right: 0;
+    width: auto;
     top: 40px;
   }
 

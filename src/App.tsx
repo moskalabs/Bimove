@@ -145,6 +145,14 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
   const [editor, setEditor] = useState<Editor | null>(null)
   const [show3D, setShow3D] = useState(false)
   /**
+   * 좁은 화면에서 **우측 속성 패널을 펼쳤나.**
+   *
+   * 넓은 화면에서는 우측바가 늘 붙어 있어서 이 값이 아무 일도 하지 않는다
+   * (App.css 의 `@media (max-width: 768px)` 안에서만 읽힌다). 좁을 때는
+   * 기본이 닫힘이다 — 안 그러면 패널이 캔버스를 통째로 덮는다.
+   */
+  const [rbarOpen, setRbarOpen] = useState(false)
+  /**
    * 저장본을 하나도 읽지 못했을 때의 사유.
    *
    * 이게 차 있으면 **에디터를 올리지 않는다.** 빈 캔버스를 띄우면 자동 저장이
@@ -956,10 +964,15 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
     <ProjectContext.Provider value={projectId}>
     <ProjectNameContext.Provider value={projectNameValue}>
     <EditorContext.Provider value={editor}>
-      <div className="bimova-layout">
+      <div className={`bimova-layout${rbarOpen ? ' rbar-open' : ''}`}>
         <TopBar />
         <div className="bimova-body">
-          <LBar onBack={onBack} onShow3D={() => setShow3D(true)} />
+          <LBar
+            onBack={onBack}
+            onShow3D={() => setShow3D(true)}
+            onToggleRbar={() => setRbarOpen(v => !v)}
+            rbarOpen={rbarOpen}
+          />
           <main className="canvas-area">
             <ToolOverlay />
             <WallDimOverlay />
