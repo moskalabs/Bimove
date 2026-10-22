@@ -17,19 +17,20 @@ import { useEditor } from '../context/EditorContext'
 import { useAuth } from '../context/AuthContext'
 import { commentPinState, cancelCommentPin, completeCommentPin } from '../lib/drawingState'
 import {
-  getThreads, rawThreads, addThread, addReply, setResolved, deleteThread, moveThread,
+  addThread, addReply, setResolved, deleteThread, moveThread,
   authorName, rememberAuthor, CommentLimitError, MAX_TEXT,
   initialOf, pinColor, formatWhen, RESOLVED_COLOR,
   type CommentThread,
 } from '../lib/commentStore'
-
-/** 핀 지름. 글타래 창을 핀 옆에 붙일 때도 쓴다. */
-const PIN = 28
+import { useCommentThreads } from './useCommentThreads'
+import { placePopup, PIN } from '../lib/commentPopup'
 
 /** 이만큼 못 움직였으면 끈 게 아니라 **누른** 것이다. */
 const DRAG_SLOP = 4
 
-const POPUP_W = 260
+/** 창 자리는 `placePopup` 이 잰다 (lib/commentPopup.ts) — 거기에 테스트가 있다. */
+const popupStyle = (vx: number, vy: number, box: { w: number; h: number }): React.CSSProperties =>
+  ({ ...placePopup(vx, vy, box), pointerEvents: 'auto' })
 
 type Placed = CommentThread & { vx: number; vy: number }
 
@@ -38,6 +39,9 @@ export function CommentOverlay() {
   const { user } = useAuth()
   const me = authorName((user?.user_metadata?.display_name as string) ?? user?.email?.split('@')[0])
 
+  // 지금 장의 글타래. 장이 바뀌면 훅이 알아서 다시 읽는다.
+  const threads = useCommentThreads(editor)
+
   const [placing, setPlacing] = useState(false)
   const [placed, setPlaced] = useState<Placed[]>([])
   const [openId, setOpenId] = useState<string | null>(null)
@@ -45,11 +49,15 @@ export function CommentOverlay() {
   const [draftAt, setDraftAt] = useState<{ x: number; y: number } | null>(null)
   const [draft, setDraft] = useState('')
   const [err, setErr] = useState<string | null>(null)
+  /** 창을 밀어 넣을 상자 — 창(window)이 아니라 **캔버스**다. */
+  const [box, setBox] = useState({ w: 0, h: 0 })
 
   const threadsRef = useRef<CommentThread[]>([])
-  const rawRef = useRef<unknown>(undefined)
+  /** 끌기 핸들러는 한 번 만들어 붙으므로 state 를 그대로 읽으면 옛값이 잡힌다. */
+  const openIdRef = useRef<string | null>(null)
   const rafRef = useRef(0)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
 
   /** 화면 좌표만 다시 잰다 — 카메라가 움직일 때마다 부르는 가벼운 쪽. */
   const reposition = useCallback(() => {
@@ -60,45 +68,69 @@ export function CommentOverlay() {
     }))
   }, [editor])
 
-  /** 코멘트 자체가 바뀌었을 때만 다시 거른다 (commentStore.rawThreads 주석). */
-  const resync = useCallback(() => {
-    if (!editor) return
-    threadsRef.current = getThreads(editor)
+  // 글타래가 바뀌면 자리를 다시 잰다.
+  useEffect(() => {
+    threadsRef.current = threads
     reposition()
-  }, [editor, reposition])
+  }, [threads, reposition])
 
+  // 카메라가 움직이면 자리만 다시 잰다 — 거르지 않는다.
   useEffect(() => {
     if (!editor) return
-    rawRef.current = rawThreads(editor)
-    resync()
-
     const unsub = editor.store.listen(() => {
-      const raw = rawThreads(editor)
-      if (raw !== rawRef.current) {
-        rawRef.current = raw
-        resync()
-        return
-      }
-      if (!rafRef.current) {
-        rafRef.current = requestAnimationFrame(() => { rafRef.current = 0; reposition() })
-      }
+      if (rafRef.current) return
+      rafRef.current = requestAnimationFrame(() => { rafRef.current = 0; reposition() })
     })
     return () => {
       unsub()
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
-  }, [editor, resync, reposition])
+  }, [editor, reposition])
+
+  /**
+   * 창을 밀어 넣을 상자를 잰다.
+   *
+   * 전엔 `window.innerWidth` 로 쟀다. 실제 부모는 좌우 패널을 뺀
+   * `.canvas-area` 이고 overflow 가 hidden 이라, 오른쪽 끝 핀의 입력칸과
+   * 버튼이 **잘려서 보이지 않았다.** 아래쪽은 아예 보지도 않았다.
+   */
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el) return
+    const measure = () => setBox({ w: el.clientWidth, h: el.clientHeight })
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  /**
+   * 글타래를 연다 — **쓰던 답글을 두고 가지 않는다.**
+   *
+   * 전엔 패널에서 다른 코멘트를 열 때 `draft` 를 안 비웠다. A 에 쓰다 만
+   * 답글이 입력칸에 남은 채 B 가 열리고, 거기서 '답글' 을 누르면 A 에 하려던
+   * 말이 B 에 달린다. 여는 길이 둘(패널·핀)이라 한쪽만 고치면 또 샌다.
+   * 그래서 여닫는 길을 여기 하나로 모은다.
+   */
+  const openThread = useCallback((id: string | null) => {
+    openIdRef.current = id
+    setOpenId(id)
+    setDraftAt(null)
+    setDraft('')
+    setErr(null)
+  }, [])
 
   // 핀 찍기 모드 on/off
   useEffect(() => {
     const handler = (e: Event) => {
       const active = (e as CustomEvent).detail.active as boolean
       setPlacing(active)
-      if (active) { setOpenId(null); setDraftAt(null); setErr(null) }
+      if (active) openThread(null)
     }
     window.addEventListener('bimova:comment-pin', handler)
     return () => window.removeEventListener('bimova:comment-pin', handler)
-  }, [])
+  }, [openThread])
 
   // 목록(패널)에서 하나를 고르면 그리로 날아가 연다
   useEffect(() => {
@@ -108,24 +140,22 @@ export function CommentOverlay() {
       const t = threadsRef.current.find(x => x.id === id)
       if (!t) return
       editor.centerOnPoint({ x: t.x, y: t.y }, { animation: { duration: 220 } })
-      setDraftAt(null)
-      setOpenId(id)
+      openThread(id)
     }
     window.addEventListener('bimova:comment-open', handler)
     return () => window.removeEventListener('bimova:comment-open', handler)
-  }, [editor])
+  }, [editor, openThread])
 
   // Esc 로 빠져나온다 — 찍기 모드든 열린 창이든
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (commentPinState.active) cancelCommentPin()
-      setDraftAt(null)
-      setOpenId(null)
+      openThread(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [openThread])
 
   useEffect(() => {
     if (draftAt || openId) setTimeout(() => inputRef.current?.focus(), 40)
@@ -136,8 +166,7 @@ export function CommentOverlay() {
     if (!editor) return
     const page = editor.screenToPage({ x: e.clientX, y: e.clientY })
     completeCommentPin(page)
-    setDraft('')
-    setErr(null)
+    openThread(null)
     setDraftAt(page)
   }
 
@@ -148,9 +177,7 @@ export function CommentOverlay() {
     try {
       const t = addThread(editor, draftAt, me, text)
       rememberAuthor(me)
-      setDraftAt(null)
-      setDraft('')
-      setOpenId(t.id)
+      openThread(t.id)
     } catch (ex) {
       setErr(ex instanceof CommentLimitError ? ex.message : '코멘트를 저장하지 못했습니다')
     }
@@ -200,10 +227,7 @@ export function CommentOverlay() {
       el.removeEventListener('pointermove', onMove)
       el.removeEventListener('pointerup', onUp)
       if (!moved) {
-        setDraftAt(null)
-        setDraft('')
-        setErr(null)
-        setOpenId(id => (id === t.id ? null : t.id))
+        openThread(openIdRef.current === t.id ? null : t.id)
         return
       }
       moveThread(editor, t.id, editor.screenToPage({ x: ev.clientX, y: ev.clientY }))
@@ -218,7 +242,7 @@ export function CommentOverlay() {
   const draftVp = draftAt ? editor.pageToViewport(draftAt) : null
 
   return (
-    <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 60 }}>
+    <div ref={rootRef} style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 60 }}>
       {/* 찍기 모드: 캔버스를 통째로 받아 한 번 찍는다 */}
       {placing && (
         <div
@@ -230,7 +254,6 @@ export function CommentOverlay() {
 
       {placed.map(t => {
         const first = t.messages[0]
-        const color = pinColor(first.author)
         return (
           <button
             key={t.id}
@@ -238,7 +261,7 @@ export function CommentOverlay() {
             style={{
               left: t.vx, top: t.vy,
               width: PIN, height: PIN,
-              background: t.resolved ? RESOLVED_COLOR : color,
+              background: t.resolved ? RESOLVED_COLOR : pinColor(first.author),
               pointerEvents: placing ? 'none' : 'auto',
             }}
             title={`${first.author}: ${first.text.slice(0, 60)}`}
@@ -261,9 +284,10 @@ export function CommentOverlay() {
           >
             {initialOf(me)}
           </div>
-          <div className="comment-popup" style={popupStyle(draftVp.x, draftVp.y)}>
+          <div className="comment-popup" style={popupStyle(draftVp.x, draftVp.y, box)}>
             <div className="comment-popup-head">
               <span className="comment-author">{me}</span>
+              <div style={{ flex: 1 }} />
               <button className="comment-icon-btn" title="취소" onClick={() => setDraftAt(null)}>
                 <X size={14} strokeWidth={2.2} />
               </button>
@@ -290,7 +314,7 @@ export function CommentOverlay() {
 
       {/* 열린 글타래 */}
       {open && (
-        <div className="comment-popup" style={popupStyle(open.vx, open.vy)}>
+        <div className="comment-popup" style={popupStyle(open.vx, open.vy, box)}>
           <div className="comment-popup-head">
             <span className="comment-author">{open.messages[0].author}</span>
             <div style={{ flex: 1 }} />
@@ -302,9 +326,9 @@ export function CommentOverlay() {
             <button
               className="comment-icon-btn"
               title="삭제"
-              onClick={() => { deleteThread(editor, open.id); setOpenId(null) }}
+              onClick={() => { deleteThread(editor, open.id); openThread(null) }}
             ><Trash2 size={13} strokeWidth={2} /></button>
-            <button className="comment-icon-btn" title="닫기" onClick={() => setOpenId(null)}>
+            <button className="comment-icon-btn" title="닫기" onClick={() => openThread(null)}>
               <X size={14} strokeWidth={2.2} />
             </button>
           </div>
@@ -333,7 +357,7 @@ export function CommentOverlay() {
           />
           {err && <div className="comment-err">{err}</div>}
           <div className="comment-popup-foot">
-            <button className="comment-btn ghost" onClick={() => { setOpenId(null); setDraft('') }}>닫기</button>
+            <button className="comment-btn ghost" onClick={() => openThread(null)}>닫기</button>
             <button className="comment-btn primary" onClick={() => submitReply(open.id)} disabled={!draft.trim()}>답글</button>
           </div>
         </div>
@@ -344,20 +368,4 @@ export function CommentOverlay() {
       )}
     </div>
   )
-}
-
-/**
- * 창을 핀 옆에 붙이되 **화면 밖으로 나가지 않게** 민다.
- *
- * 도면 오른쪽 끝에 달린 코멘트는 오른쪽으로 펴면 잘려서 입력칸이 안 보인다.
- */
-function popupStyle(vx: number, vy: number): React.CSSProperties {
-  const room = typeof window !== 'undefined' ? window.innerWidth : 1280
-  const flip = vx + PIN + 12 + POPUP_W > room - 24
-  return {
-    left: flip ? vx - PIN / 2 - 12 - POPUP_W : vx + PIN / 2 + 12,
-    top: Math.max(8, vy - PIN),
-    width: POPUP_W,
-    pointerEvents: 'auto',
-  }
 }

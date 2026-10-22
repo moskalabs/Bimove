@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState } from 'react'
 import {
   Menu, Layers, Palette, FileText, Info, ArrowLeftCircle, MessageSquare,
 } from 'lucide-react'
@@ -7,7 +7,8 @@ import { BOQPanel } from './panels/BOQPanel'
 import { MaterialsPanel } from './panels/MaterialsPanel'
 import { LayoutPanel } from './panels/LayoutPanel'
 import { CommentsPanel } from './panels/CommentsPanel'
-import { getThreads, rawThreads, unresolvedCount } from '../lib/commentStore'
+import { unresolvedCount } from '../lib/commentStore'
+import { useCommentThreads } from './useCommentThreads'
 import { EditLock } from './EditLock'
 import { useImportActions, type ImportKind } from './useImportActions'
 import { saveProject } from '../lib/project'
@@ -93,9 +94,15 @@ export function HamburgerMenu({ open, onClose, onImport }: {
                 </div>
                 {/* "저장" 이 아니라 **내보내기**다. 이 앱은 서버가 정본이고 계속
                     자동 저장되므로, "저장" 버튼이 있으면 "그럼 지금까지는 저장이
-                    안 된 건가" 로 읽힌다. 이건 계정 밖으로 들고 나가는 파일이다. */}
+                    안 된 건가" 로 읽힌다. 이건 계정 밖으로 들고 나가는 파일이다.
+
+                    **불러오기는 아직 없다** (bimoveDocStore 의 보호막을 거쳐야
+                    하고 서버 사본을 먼저 떠 둬야 한다). 그런데 확장자가 백업처럼
+                    생겨서, 말을 안 해 두면 "여기 받아 뒀으니 됐다" 고 믿고
+                    지우게 된다. 되돌릴 수 없는 오해다 — 그래서 항목에 적는다. */}
                 <div className="lbar-menu-item" onClick={() => { if (editor) void saveProject(editor, projectName.trim() || '도면'); closeAll() }}>
                   📁 .bimova 파일로 내보내기
+                  <div className="lbar-menu-note">보관용 — 다시 불러오기는 아직 안 됩니다</div>
                 </div>
               </div>
             )}
@@ -148,39 +155,11 @@ function View3DIcon() {
 
 type PanelId = 'layers' | 'materials' | 'table' | 'layout' | 'comments' | null
 
-/** 레일 아이콘에 붙일 "아직 안 본 것" 숫자 — 열려 있는 코멘트 수. */
-function useUnresolvedComments(): number {
-  const editor = useEditor()
-  const [n, setN] = useState(0)
-  const rawRef = useRef<unknown>(undefined)
-
-  const resync = useCallback(() => {
-    if (editor) setN(unresolvedCount(getThreads(editor)))
-  }, [editor])
-
-  useEffect(() => {
-    if (!editor) return
-    rawRef.current = rawThreads(editor)
-    // 초기값 — 아래 구독의 씨딩이다. 에디터에서 한 번 읽어오는 것이지 파생
-    // 상태를 다시 계산하는 게 아니라 캐스케이드가 나지 않는다 (RBar 와 같다).
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    resync()
-    // 코멘트 칸이 바뀔 때만 센다. store 는 카메라만 움직여도 울린다.
-    return editor.store.listen(() => {
-      const raw = rawThreads(editor)
-      if (raw === rawRef.current) return
-      rawRef.current = raw
-      resync()
-    })
-  }, [editor, resync])
-
-  return n
-}
-
 export function LBar({ onBack, onShow3D }: { onBack?: () => void; onShow3D?: () => void }) {
   const [activePanel, setActivePanel] = useState<PanelId>(null)
   const [menuOpen, setMenuOpen] = useState(false)
-  const openComments = useUnresolvedComments()
+  // 레일 아이콘의 배지 — **지금 장**에 아직 열려 있는 코멘트 수.
+  const openComments = unresolvedCount(useCommentThreads(useEditor()))
   // 가져오기는 패널이 아니라 동작이다 (useImportActions 주석 참고).
   const importActions = useImportActions()
 

@@ -4187,8 +4187,13 @@ html[data-dark="true"] .dash-empty-sub { color: #555; }
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 
+/* 천장(max-height)은 inline 으로 온다 — 캔버스가 좁으면 같이 낮아진다
+   (lib/commentPopup.ts). 넘치는 건 안쪽 `.comment-thread` 가 굴러서 받으므로
+   세로 flex 로 둔다. 안 그러면 입력칸과 버튼이 창 밖으로 밀려난다. */
 .comment-popup {
   position: absolute;
+  display: flex;
+  flex-direction: column;
   background: #fff;
   border: 1px solid #e0e0e0;
   border-radius: 10px;
@@ -4197,9 +4202,11 @@ html[data-dark="true"] .dash-empty-sub { color: #555; }
   z-index: 2;
   font-size: 12px;
   color: #333;
+  box-sizing: border-box;
 }
 
 .comment-popup-head {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -4227,6 +4234,8 @@ html[data-dark="true"] .dash-empty-sub { color: #555; }
 
 /* 글타래가 길어지면 창이 화면을 넘지 않게 안에서 구른다 */
 .comment-thread {
+  flex: 1 1 auto;
+  min-height: 0;
   max-height: 240px;
   overflow-y: auto;
   margin-bottom: 8px;
@@ -4240,6 +4249,7 @@ html[data-dark="true"] .dash-empty-sub { color: #555; }
 .comment-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; color: #444; }
 
 .comment-input {
+  flex: 0 0 auto;
   width: 100%;
   min-height: 54px;
   resize: vertical;
@@ -4254,7 +4264,7 @@ html[data-dark="true"] .dash-empty-sub { color: #555; }
 }
 .comment-input:focus { outline: none; border-color: #1a73e8; box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.12); }
 
-.comment-popup-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.comment-popup-foot { flex: 0 0 auto; display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
 
 .comment-btn {
   border-radius: 6px;
@@ -4391,3 +4401,13 @@ html[data-dark="true"] .comment-row:hover { background: #32323a; }
 html[data-dark="true"] .comment-row-author { color: #ddd; }
 html[data-dark="true"] .comment-row-text { color: #aaa; }
 html[data-dark="true"] .comment-toggle-resolved:hover { background: #32323a; color: #ddd; }
+
+/* 메뉴 항목 밑에 붙는 한 줄 — 눌렀을 때 무슨 일이 나는지 미리 말해 준다. */
+.lbar-menu-note {
+  margin-top: 2px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #999;
+  font-weight: 400;
+}
+html[data-dark="true"] .lbar-menu-note { color: #888; }

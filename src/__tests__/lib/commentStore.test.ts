@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   getThreads, rawThreads, addThread, addReply, setResolved, moveThread, deleteThread,
+  threadsOnPage,
   unresolvedCount, authorName, rememberAuthor, CommentLimitError,
   initialOf, pinColor, formatWhen,
   MAX_THREADS, MAX_MESSAGES_PER_THREAD, MAX_TEXT,
@@ -8,9 +9,19 @@ import {
 } from '../../lib/commentStore'
 import { getScaleConfig, setScaleConfig } from '../../lib/scaleConfig'
 
-/** scaleConfig 테스트와 같은 목 — 문서 meta 한 칸만 들고 있는 에디터. */
-function fakeEditor(doc: Record<string, unknown> = {}) {
+/**
+ * scaleConfig 테스트와 같은 목 — 문서 meta 한 칸 + 장 몇 개.
+ *
+ * `pages` 의 **첫 번째**가 첫 장이다. 장 없는 옛 글타래가 어디로 가는지를
+ * 보려면 그게 필요하다.
+ */
+function fakeEditor(
+  doc: Record<string, unknown> = {},
+  pages: string[] = ['page:main'],
+  current = pages[0],
+) {
   const settings = { gridSize: 10, name: '', meta: doc }
+  let cur = current
   return {
     editor: {
       getDocumentSettings: () => settings,
@@ -18,8 +29,11 @@ function fakeEditor(doc: Record<string, unknown> = {}) {
         if (p.meta) settings.meta = p.meta
       },
       getInstanceState: () => ({ meta: {} }),
+      getCurrentPageId: () => cur,
+      getPages: () => pages.map(id => ({ id })),
     } as never,
     settings,
+    goTo(id: string) { cur = id },
   }
 }
 
@@ -52,6 +66,49 @@ describe('commentStore — 어디에 사는가', () => {
     const { editor, settings } = fakeEditor({ 남의것: 1 })
     addThread(editor, { x: 0, y: 0 }, '한', '글')
     expect(settings.meta.남의것).toBe(1)
+  })
+})
+
+describe('commentStore — 어느 장의 것인가', () => {
+  const msg = [{ text: '글' }]
+
+  it('핀을 찍으면 지금 장이 적힌다', () => {
+    const { editor } = fakeEditor({}, ['page:a', 'page:b'], 'page:b')
+    expect(addThread(editor, { x: 0, y: 0 }, '한', '글').pageId).toBe('page:b')
+  })
+
+  it('다른 장의 핀은 안 보인다 — 1장 핀이 2장에 뜨면 안 된다', () => {
+    const { editor, goTo } = fakeEditor({
+      comments: [
+        { id: 'a', pageId: 'page:a', x: 0, y: 0, messages: msg },
+        { id: 'b', pageId: 'page:b', x: 0, y: 0, messages: msg },
+      ],
+    }, ['page:a', 'page:b'], 'page:a')
+
+    expect(threadsOnPage(editor).map(t => t.id)).toEqual(['a'])
+    goTo('page:b')
+    expect(threadsOnPage(editor).map(t => t.id)).toEqual(['b'])
+  })
+
+  it('장이 안 적힌 옛 글타래는 **첫 장**의 것이다', () => {
+    // 모든 장에 띄우면 같은 코멘트가 장마다 복제돼 보이고, 아무 데도 안
+    // 띄우면 쓴 글이 사라진 것처럼 보인다.
+    const { editor, goTo } = fakeEditor({
+      comments: [{ id: 'old', x: 0, y: 0, messages: msg }],
+    }, ['page:a', 'page:b'], 'page:a')
+
+    expect(threadsOnPage(editor).map(t => t.id)).toEqual(['old'])
+    goTo('page:b')
+    expect(threadsOnPage(editor)).toEqual([])
+  })
+
+  it('장 개념이 없는 얕은 목에서는 전부 보여준다', () => {
+    const settings = { gridSize: 10, name: '', meta: { comments: [{ id: 'a', x: 0, y: 0, messages: msg }] } }
+    const shallow = {
+      getDocumentSettings: () => settings,
+      updateDocumentSettings: () => {},
+    } as never
+    expect(threadsOnPage(shallow)).toHaveLength(1)
   })
 })
 

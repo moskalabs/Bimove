@@ -4,43 +4,21 @@
 // 오버레이가 하므로 여기서는 **알리기만** 한다 (`bimova:comment-open`).
 // 패널이 오버레이의 상태를 직접 쥐면 둘이 서로를 import 하게 된다.
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { Check, MessageSquarePlus } from 'lucide-react'
 import { useEditor } from '../../context/EditorContext'
 import { startCommentPin, cancelCommentPin, commentPinState } from '../../lib/drawingState'
 import {
-  getThreads, rawThreads, setResolved,
-  initialOf, pinColor, formatWhen, RESOLVED_COLOR,
-  type CommentThread,
+  setResolved, initialOf, pinColor, formatWhen, RESOLVED_COLOR,
 } from '../../lib/commentStore'
+import { useCommentThreads } from '../useCommentThreads'
 
 export function CommentsPanel() {
   const editor = useEditor()
-  const [threads, setThreads] = useState<CommentThread[]>([])
+  // **지금 장**의 것만. 보이는 핀과 목록이 어긋나면 안 된다.
+  const threads = useCommentThreads(editor)
   const [showResolved, setShowResolved] = useState(false)
   const [placing, setPlacing] = useState(commentPinState.active)
-  const rawRef = useRef<unknown>(undefined)
-
-  const resync = useCallback(() => {
-    if (editor) setThreads(getThreads(editor))
-  }, [editor])
-
-  useEffect(() => {
-    if (!editor) return
-    rawRef.current = rawThreads(editor)
-    // 초기값 — 아래 구독의 씨딩이다 (RBar 와 같다).
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    resync()
-    // 코멘트 칸이 **바뀌었을 때만** 다시 읽는다. 카메라를 움직일 때마다
-    // 목록을 새로 만들면 팬이 뻑뻑해진다.
-    const unsub = editor.store.listen(() => {
-      const raw = rawThreads(editor)
-      if (raw === rawRef.current) return
-      rawRef.current = raw
-      resync()
-    })
-    return unsub
-  }, [editor, resync])
 
   useEffect(() => {
     const handler = (e: Event) => setPlacing((e as CustomEvent).detail.active as boolean)

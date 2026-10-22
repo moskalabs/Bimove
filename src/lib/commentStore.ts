@@ -41,6 +41,18 @@ export type CommentMessage = {
 
 export type CommentThread = {
   id: string
+  /**
+   * **어느 장(page)에 달린 것인가.**
+   *
+   * 도면은 여러 장일 수 있다 (배치 패널에서 장을 만들고 넘긴다). 자리만
+   * 적어두면 1장에 꽂은 핀이 2장에도 같은 좌표에 뜬다 — 같은 코멘트가 장마다
+   * 복제돼 보이고, 어느 장 이야기인지 알 수가 없다.
+   *
+   * 이 칸이 생기기 전에 달린 글타래는 빈 문자열이다. 그건 **첫 장**의 것으로
+   * 친다 (`threadsOnPage`) — 모든 장에 띄우면 복제가 되고, 아무 데도 안 띄우면
+   * 쓴 글이 사라진 것처럼 보인다.
+   */
+  pageId: string
   /** 핀이 꽂힌 자리 — **page 좌표**다. 화면 좌표로 두면 확대만 해도 어긋난다. */
   x: number
   y: number
@@ -98,6 +110,7 @@ function cleanThread(raw: unknown): CommentThread | null {
   if (messages.length === 0) return null
   return {
     id: typeof raw.id === 'string' && raw.id ? raw.id : newId(),
+    pageId: typeof raw.pageId === 'string' ? raw.pageId : '',
     x,
     y,
     resolved: raw.resolved === true,
@@ -122,6 +135,25 @@ export function getThreads(editor: Editor): CommentThread[] {
     .map(cleanThread)
     .filter((t): t is CommentThread => t !== null)
     .slice(0, MAX_THREADS)
+}
+
+/**
+ * **지금 보고 있는 장**에 달린 글타래만.
+ *
+ * 화면(핀·목록·배지)은 전부 이쪽을 쓴다. 다른 장의 핀을 지금 장에 띄우면
+ * 도면과 상관없는 자리에 핀이 꽂혀 있는 꼴이 된다.
+ *
+ * 장이 없는 옛 글타래는 **첫 장**의 것으로 친다 (CommentThread.pageId 주석).
+ */
+export function threadsOnPage(editor: Editor): CommentThread[] {
+  let pageId = ''
+  let firstId = ''
+  try {
+    pageId = editor.getCurrentPageId?.() ?? ''
+    firstId = editor.getPages?.()[0]?.id ?? ''
+  } catch { /* 목이 얕은 에디터 — 그러면 전부 보여준다 */ }
+  if (!pageId) return getThreads(editor)
+  return getThreads(editor).filter(t => (t.pageId ? t.pageId === pageId : pageId === firstId))
 }
 
 /**
@@ -169,8 +201,11 @@ export function addThread(
   if (threads.length >= MAX_THREADS) {
     throw new CommentLimitError(`코멘트는 ${MAX_THREADS}개까지 달 수 있습니다`)
   }
+  let pageId = ''
+  try { pageId = editor.getCurrentPageId?.() ?? '' } catch { /* 얕은 목 */ }
   const thread: CommentThread = {
     id: newId(),
+    pageId,
     x: at.x,
     y: at.y,
     resolved: false,
