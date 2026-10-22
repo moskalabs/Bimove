@@ -8,7 +8,7 @@
     "postinstall": "node scripts/patch-dwgdxf-wasm.mjs && node scripts/build-cadcraft-wasm.mjs",
     "predev": "node scripts/patch-dwgdxf-wasm.mjs && node scripts/build-cadcraft-wasm.mjs",
     "dev": "vite",
-    "prebuild": "node scripts/patch-dwgdxf-wasm.mjs && node scripts/build-cadcraft-wasm.mjs",
+    "prebuild": "node scripts/patch-dwgdxf-wasm.mjs && node scripts/build-cadcraft-wasm.mjs && node scripts/check-cadcraft-wasm.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",

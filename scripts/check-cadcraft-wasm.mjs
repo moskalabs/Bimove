@@ -6,10 +6,30 @@
 // function`). 타입검사도 못 잡는다 — CadDoc 은 손으로 쓴 interface 다.
 //
 //   node scripts/check-cadcraft-wasm.mjs
-import { readFileSync } from 'node:fs'
-import init, { BimoveDoc } from '../public/cadcraft/bimove_wasm.js'
+//
+// 빌드(prebuild)에도 걸려 있다. 손으로만 돌리면 결국 아무도 안 돌린다.
+//
+// ── 없을 때와 깨졌을 때를 가른다 ──
+//
+// **엔진이 없는 건 빌드를 세울 일이 아니다.** build-cadcraft-wasm.mjs 가
+// 일부러 그렇게 돼 있다 — 이건 `#cadcraft` 실험 화면에서만 쓰는 것이라,
+// 받아오기가 실패했다고 앱 전체를 못 띄울 이유가 없다 (그 주석 참고).
+// 여기서 세우면 그 설계를 뒤에서 뒤집는 꼴이 된다.
+//
+// **있는데 안 도는 건 세운다.** 그게 이 파일이 잡으려는 것이다 — 글루와
+// 엔진이 어긋나 브라우저에서만 터지는 경우.
+import { readFileSync, existsSync } from 'node:fs'
 
-await init({ module_or_path: readFileSync(new URL('../public/cadcraft/bimove_wasm_bg.wasm', import.meta.url)) })
+const wasmPath = new URL('../public/cadcraft/bimove_wasm_bg.wasm', import.meta.url)
+const gluePath = new URL('../public/cadcraft/bimove_wasm.js', import.meta.url)
+if (!existsSync(wasmPath) || !existsSync(gluePath)) {
+  console.warn('[check-cadcraft] 엔진이 없어서 건너뛴다 — #cadcraft 화면만 안 된다')
+  process.exit(0)
+}
+
+const { default: init, BimoveDoc } = await import(gluePath.href)
+
+await init({ module_or_path: readFileSync(wasmPath) })
 
 // ㄷ 자로 이어진 벽 셋 + 떨어진 벽 하나 → MLINE 두 개여야 한다
 const wall = (i, x, y, x2, y2) => ({
