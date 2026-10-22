@@ -16,6 +16,7 @@ import { AreaMeasureOverlay } from './components/AreaMeasureOverlay'
 import { ZoneDrawOverlay } from './components/ZoneDrawOverlay'
 import { PolylineDrawOverlay } from './components/PolylineDrawOverlay'
 import { ZoneNamePopup } from './components/ZoneNamePopup'
+import { migrateCommentShapes } from './lib/commentMigration'
 import { ScaleRuler } from './components/ScaleRuler'
 import { CommentOverlay } from './components/CommentOverlay'
 import { ChatPanel } from './components/ChatPanel'
@@ -33,7 +34,6 @@ import { DxfGroupShapeUtil } from './shapes/DxfGroupShape'
 import { DoorShapeUtil } from './shapes/DoorShape'
 import { WindowShapeUtil } from './shapes/WindowShape'
 import { BlockShapeUtil } from './shapes/BlockShape'
-import { CommentShapeUtil } from './shapes/CommentShape'
 import { DimensionShapeUtil } from './shapes/DimensionShape'
 import { ZoneShapeUtil } from './shapes/ZoneShape'
 import { BoqTableShapeUtil } from './shapes/BoqTableShape'
@@ -41,7 +41,6 @@ import { WallTool } from './tools/WallTool'
 import { DoorTool } from './tools/DoorTool'
 import { WindowTool } from './tools/WindowTool'
 import { BlockTool } from './tools/BlockTool'
-import { CommentTool } from './tools/CommentTool'
 import { DimensionTool } from './tools/DimensionTool'
 import { EditorContext } from './context/EditorContext'
 import { ProjectContext, ProjectNameContext } from './context/ProjectContext'
@@ -89,8 +88,8 @@ async function saveVersionSynced(projectId: string, snapshot: object, label?: st
   return v
 }
 
-const SHAPE_UTILS = [WallShapeUtil, DxfGroupShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil, CommentShapeUtil, DimensionShapeUtil, ZoneShapeUtil, BoqTableShapeUtil]
-const TOOLS = [WallTool, DoorTool, WindowTool, BlockTool, CommentTool, DimensionTool]
+const SHAPE_UTILS = [WallShapeUtil, DxfGroupShapeUtil, DoorShapeUtil, WindowShapeUtil, BlockShapeUtil, DimensionShapeUtil, ZoneShapeUtil, BoqTableShapeUtil]
+const TOOLS = [WallTool, DoorTool, WindowTool, BlockTool, DimensionTool]
 
 function EmptyCanvasHint({ editor }: { editor: Editor | null }) {
   const [hasShapes, setHasShapes] = useState(false)
@@ -322,7 +321,15 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
         let lastErr: unknown
         for (let i = 0; i < candidates.length; i++) {
           try {
-            ed.loadSnapshot(candidates[i] as TLEditorSnapshot)
+            // 옛 `comment` 도형을 **tldraw 가 보기 전에** 걷어낸다.
+            // 모르는 타입이 하나라도 있으면 loadSnapshot 이 거부하고, 후보가
+            // 전부 같은 이유로 실패해 프로젝트가 영영 안 열린다
+            // (commentMigration.ts 머리말).
+            const mig = migrateCommentShapes(candidates[i])
+            if (mig.moved || mig.dropped) {
+              console.info(`[comment] 옛 코멘트 도형 ${mig.moved}개를 옮겼다 (빈 것 ${mig.dropped}개는 버림)`)
+            }
+            ed.loadSnapshot(mig.snapshot as TLEditorSnapshot)
             usedIndex = i
             break
           } catch (err) {

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { type TLShapeId, createShapeId } from 'tldraw'
 import {
-  Lock, Unlock, FlipHorizontal2, RotateCw, Check, Wand2,
+  Lock, Unlock, FlipHorizontal2, RotateCw, Wand2,
   History,
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
   AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
@@ -894,45 +894,6 @@ export function PropsPanel({ sel, scale }: { sel: NonNullable<SelInfo>; scale: S
             </span>
           </div>
           <PropField label="오프셋" value={p.offset / scale.pxPerMm} unit={scale.unit} onCommit={setOffset} />
-        </section>
-      </>
-    )
-  }
-
-  if (sel.type === 'comment') {
-    const p = sel.props as { text: string; resolved: boolean; author: string }
-    const update = (patch: Partial<typeof p>) =>
-      editor?.updateShape({ id: sel.id, type: 'comment' as never, props: patch })
-    return (
-      <>
-        {lockBtn}
-        <section className="rbar-section">
-          <h3>코멘트</h3>
-          <div style={{ padding: '4px 0 6px' }}>
-            <textarea
-              style={{ width: '100%', minHeight: 80, fontSize: 12, padding: '6px 8px',
-                border: '1px solid #e0e0e0', borderRadius: 4, resize: 'vertical', fontFamily: 'inherit' }}
-              value={p.text}
-              placeholder="코멘트 입력..."
-              onChange={e => update({ text: e.target.value })}
-            />
-          </div>
-          <div className="rbar-row">
-            <span>작성자</span>
-            <input className="prop-input" style={{ flex: 1, minWidth: 0 }}
-              value={p.author} placeholder="이름"
-              onChange={e => update({ author: e.target.value })} />
-          </div>
-          <div className="rbar-row">
-            <span>상태</span>
-            <button
-              className={`action-btn${p.resolved ? ' active' : ''}`}
-              style={{ background: p.resolved ? '#4caf50' : undefined, color: p.resolved ? '#fff' : undefined }}
-              onClick={() => update({ resolved: !p.resolved })}
-            >
-              {p.resolved ? <span className="icon-label"><Check size={14} strokeWidth={1.75} /> 해결됨</span> : '미해결'}
-            </button>
-          </div>
         </section>
       </>
     )

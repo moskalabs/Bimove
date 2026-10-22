@@ -227,7 +227,6 @@ const TOOL_MAP: Record<string, string> = {
   'opening': 'door',
   'window': 'window',
   'block': 'block',
-  'comment': 'comment',
   'text': 'text',
   'dimension': 'dimension',
   // 여기부터는 tldraw 기본 도구. 전엔 매핑이 없어서 **버튼을 눌러도 파란
