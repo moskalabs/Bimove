@@ -185,12 +185,40 @@ export function explodeDxfShapes(editor: Editor, ids: readonly TLShapeId[]): Exp
   const toCreate: unknown[] = []
   targets.forEach((shape, i) => {
     const props = shape.props as P
+    // 원본이 어디에 어떻게 놓여 있었는지를 **그대로 물려준다.**
+    //
+    // 전엔 `x: shape.x + minX` 만 하고 parentId·rotation·opacity 를 안 실었다.
+    // 셋 다 조용히 틀린다:
+    //
+    //  - **parentId** 를 안 주면 tldraw 가 현재 페이지에 붙인다. 그런데
+    //    그룹·프레임 안에 든 도형의 x,y 는 **부모 기준**이라, 페이지에 그
+    //    숫자를 그대로 놓으면 엉뚱한 자리로 간다. 그리고 원본은 지워진다.
+    //  - **rotation** 을 안 주면 돌려 둔 도면이 제자리로 돌아간다.
+    //  - **opacity** 를 안 주면 레이어 패널에서 흐려 둔 것이 다시 진해진다.
+    //
+    // 회전이 있으면 조각의 자리도 같이 돌아야 한다. tldraw 의 로컬 변환은
+    // `Translate(x,y) · Rotate(rotation)` 이라 (Editor.getShapeLocalTransform),
+    // 원본 안쪽의 (dx,dy) 는 부모 좌표로 이렇게 간다.
+    const { x: ox, y: oy, rotation } = shape
+    const cos = Math.cos(rotation)
+    const sin = Math.sin(rotation)
+    const at = (dx: number, dy: number) => ({
+      x: ox + dx * cos - dy * sin,
+      y: oy + dx * sin + dy * cos,
+    })
+
+    const inherited = {
+      parentId: shape.parentId,
+      rotation,
+      ...(typeof shape.opacity === 'number' ? { opacity: shape.opacity } : {}),
+    }
+
     for (const p of plan.paths[i]) {
       toCreate.push({
         id: createShapeId(),
         type: 'dxfgroup',
-        x: shape.x + p.minX,
-        y: shape.y + p.minY,
+        ...at(p.minX, p.minY),
+        ...inherited,
         props: {
           w: Math.max(1, p.maxX - p.minX),
           h: Math.max(1, p.maxY - p.minY),
@@ -208,8 +236,9 @@ export function explodeDxfShapes(editor: Editor, ids: readonly TLShapeId[]): Exp
       toCreate.push({
         id: createShapeId(),
         type: 'dxfgroup',
-        x: shape.x,
-        y: shape.y,
+        x: ox,
+        y: oy,
+        ...inherited,
         props: {
           w: (shape.props as { w: number }).w,
           h: (shape.props as { h: number }).h,

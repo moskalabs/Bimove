@@ -11,7 +11,10 @@
  * 그래서 끝이 맞닿은 것을 도로 이어 붙이고, **이어진 한 줄**을 하나로 본다.
  */
 import { describe, it, expect } from 'vitest'
-import { explodePathData, parseSegments, planExplode, toPathData, MAX_EXPLODE_SHAPES } from '../../lib/dxfExplode'
+import {
+  explodePathData, parseSegments, planExplode, toPathData, MAX_EXPLODE_SHAPES,
+  explodeDxfShapes,
+} from '../../lib/dxfExplode'
 
 describe('explodePathData', () => {
   it('이어진 선분은 **한 줄로 묶는다**', () => {
@@ -98,5 +101,106 @@ describe('planExplode — 먼저 세어 본다', () => {
   it('한도 안쪽이면 그대로 간다', () => {
     const ok = Array.from({ length: MAX_EXPLODE_SHAPES }, (_, i) => `M${i * 100},0L${i * 100 + 10},0`).join('')
     expect(planExplode([ok]).kind).toBe('ok')
+  })
+})
+
+// ── 에디터에 적용 ──
+
+type FakeShape = {
+  id: string
+  type: string
+  x: number
+  y: number
+  rotation: number
+  parentId: string
+  opacity?: number
+  props: Record<string, unknown>
+  meta: Record<string, unknown>
+}
+
+/** `explodeDxfShapes` 가 실제로 부르는 것만 흉내 낸다. */
+function fakeEditor(shapes: FakeShape[]) {
+  const created: FakeShape[] = []
+  const deleted: string[] = []
+  return {
+    created,
+    deleted,
+    editor: {
+      getShape: (id: string) => shapes.find(s => s.id === id),
+      run: (fn: () => void) => fn(),
+      createShapes: (xs: FakeShape[]) => created.push(...xs),
+      deleteShapes: (ids: string[]) => deleted.push(...ids),
+      setSelectedShapes: () => {},
+    } as never,
+  }
+}
+
+function dxf(over: Partial<FakeShape> = {}): FakeShape {
+  return {
+    id: 'shape:src',
+    type: 'dxfgroup',
+    x: 100,
+    y: 50,
+    rotation: 0,
+    parentId: 'page:main',
+    // 떨어진 두 줄 → 조각 둘
+    props: { pathData: 'M0,0L10,0M200,100L210,100', thickness: 0 },
+    meta: {},
+    ...over,
+  }
+}
+
+describe('explodeDxfShapes — 원본의 자리를 물려준다', () => {
+  it('그룹 안에 있던 것은 **그 그룹에 그대로 남는다**', () => {
+    // 전엔 parentId 를 안 실어서 tldraw 가 현재 페이지에 붙였다. 그런데
+    // 그룹 안 도형의 x,y 는 부모 기준이라, 페이지에 그 숫자를 그대로 놓으면
+    // 엉뚱한 자리로 간다 — 그리고 원본은 지워진다.
+    const shape = dxf({ parentId: 'shape:group1' })
+    const { editor, created, deleted } = fakeEditor([shape])
+    expect(explodeDxfShapes(editor, ['shape:src'] as never).kind).toBe('ok')
+    expect(created.length).toBeGreaterThan(1)
+    expect(created.every(c => c.parentId === 'shape:group1')).toBe(true)
+    expect(deleted).toEqual(['shape:src'])
+  })
+
+  it('돌려 둔 도면은 **돌아간 채로** 쪼개진다', () => {
+    const shape = dxf({ rotation: Math.PI / 2, x: 0, y: 0 })
+    const { editor, created } = fakeEditor([shape])
+    explodeDxfShapes(editor, ['shape:src'] as never)
+    expect(created.every(c => c.rotation === Math.PI / 2)).toBe(true)
+
+    // 90° 돌면 원본 안쪽의 (200,100) 은 부모 좌표로 (-100,200) 에 간다.
+    // rotation 만 넣고 자리를 안 돌리면 (200,100) 에 그대로 남아 어긋난다.
+    const far = created.find(c => Math.abs(c.x + 100) < 1e-6)
+    expect(far, JSON.stringify(created.map(c => [c.x, c.y]))).toBeTruthy()
+    expect(far!.y).toBeCloseTo(200, 6)
+  })
+
+  it('안 돌린 것은 전처럼 그냥 더한다', () => {
+    const { editor, created } = fakeEditor([dxf()])
+    explodeDxfShapes(editor, ['shape:src'] as never)
+    expect(created.some(c => c.x === 100 && c.y === 50)).toBe(true)
+    expect(created.some(c => c.x === 300 && c.y === 150)).toBe(true)
+  })
+
+  it('흐려 둔 레이어는 흐린 채로 남는다', () => {
+    const { editor, created } = fakeEditor([dxf({ opacity: 0.3 })])
+    explodeDxfShapes(editor, ['shape:src'] as never)
+    expect(created.every(c => c.opacity === 0.3)).toBe(true)
+  })
+
+  it('글자·해치 덩이도 같은 자리를 물려받는다', () => {
+    const shape = dxf({
+      rotation: Math.PI / 2,
+      parentId: 'shape:group1',
+      // 줄이 하나뿐이면 `planExplode` 가 "쪼갤 게 없다" 며 그만둔다
+      props: { pathData: 'M0,0L10,0M200,100L210,100', thickness: 0, w: 10, h: 10, textsJson: '[{"t":"x"}]' },
+    })
+    const { editor, created } = fakeEditor([shape])
+    explodeDxfShapes(editor, ['shape:src'] as never)
+    const texts = created.filter(c => (c.props as { textsJson?: string }).textsJson)
+    expect(texts).toHaveLength(1)
+    expect(texts[0].parentId).toBe('shape:group1')
+    expect(texts[0].rotation).toBe(Math.PI / 2)
   })
 })
