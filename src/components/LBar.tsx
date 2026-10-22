@@ -1,11 +1,13 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  Menu, Layers, Palette, FileText, Info, ArrowLeftCircle,
+  Menu, Layers, Palette, FileText, Info, ArrowLeftCircle, MessageSquare,
 } from 'lucide-react'
 import { LayersPanel } from './panels/LayersPanel'
 import { BOQPanel } from './panels/BOQPanel'
 import { MaterialsPanel } from './panels/MaterialsPanel'
 import { LayoutPanel } from './panels/LayoutPanel'
+import { CommentsPanel } from './panels/CommentsPanel'
+import { getThreads, rawThreads, unresolvedCount } from '../lib/commentStore'
 import { EditLock } from './EditLock'
 import { useImportActions, type ImportKind } from './useImportActions'
 import { saveProject } from '../lib/project'
@@ -144,11 +146,41 @@ function View3DIcon() {
   )
 }
 
-type PanelId = 'layers' | 'materials' | 'table' | 'layout' | null
+type PanelId = 'layers' | 'materials' | 'table' | 'layout' | 'comments' | null
+
+/** 레일 아이콘에 붙일 "아직 안 본 것" 숫자 — 열려 있는 코멘트 수. */
+function useUnresolvedComments(): number {
+  const editor = useEditor()
+  const [n, setN] = useState(0)
+  const rawRef = useRef<unknown>(undefined)
+
+  const resync = useCallback(() => {
+    if (editor) setN(unresolvedCount(getThreads(editor)))
+  }, [editor])
+
+  useEffect(() => {
+    if (!editor) return
+    rawRef.current = rawThreads(editor)
+    // 초기값 — 아래 구독의 씨딩이다. 에디터에서 한 번 읽어오는 것이지 파생
+    // 상태를 다시 계산하는 게 아니라 캐스케이드가 나지 않는다 (RBar 와 같다).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    resync()
+    // 코멘트 칸이 바뀔 때만 센다. store 는 카메라만 움직여도 울린다.
+    return editor.store.listen(() => {
+      const raw = rawThreads(editor)
+      if (raw === rawRef.current) return
+      rawRef.current = raw
+      resync()
+    })
+  }, [editor, resync])
+
+  return n
+}
 
 export function LBar({ onBack, onShow3D }: { onBack?: () => void; onShow3D?: () => void }) {
   const [activePanel, setActivePanel] = useState<PanelId>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const openComments = useUnresolvedComments()
   // 가져오기는 패널이 아니라 동작이다 (useImportActions 주석 참고).
   const importActions = useImportActions()
 
@@ -201,6 +233,16 @@ export function LBar({ onBack, onShow3D }: { onBack?: () => void; onShow3D?: () 
           >
             <FileText size={18} strokeWidth={1.75} />
           </button>
+          <button
+            className={`lbar-icon${activePanel === 'comments' ? ' active' : ''}`}
+            title="코멘트"
+            onClick={() => togglePanel('comments')}
+          >
+            <MessageSquare size={18} strokeWidth={1.75} />
+            {openComments > 0 && (
+              <span className="lbar-badge">{openComments > 99 ? '99+' : openComments}</span>
+            )}
+          </button>
         </div>
 
         {/* spacer */}
@@ -244,6 +286,10 @@ export function LBar({ onBack, onShow3D }: { onBack?: () => void; onShow3D?: () 
       {activePanel === 'table' && <EditLock><BOQPanel /></EditLock>}
       {activePanel === 'materials' && <EditLock><MaterialsPanel /></EditLock>}
       {activePanel === 'layout' && <EditLock><LayoutPanel /></EditLock>}
+      {/* 코멘트는 **EditLock 으로 묶지 않는다.** 읽기 전용은 권한이 아니라
+          입력기 판정이고(readonlyMode.ts), 현장에서 태블릿으로 보다가 남기는
+          게 이 기능의 본래 쓰임이다. CommentOverlay 머리말 참고. */}
+      {activePanel === 'comments' && <CommentsPanel />}
 
       {/* 가져오기 미리보기 모달 · 진행 오버레이 — 메뉴를 닫아도 떠 있어야 한다 */}
       {importActions.overlays}

@@ -4126,3 +4126,268 @@ html[data-dark="true"] .dash-empty-sub { color: #555; }
   padding-top: 8px;
   border-top: 1px solid #eee;
 }
+
+/* ── 코멘트 ──
+   핀은 도면 page 좌표에 붙어 있고(CommentOverlay), 여기서는 생김새만 맡는다.
+   핀·동그라미 색은 글쓴이 이름에서 뽑으므로 CSS 가 아니라 inline 으로 온다. */
+
+.lbar-icon { position: relative; }
+
+.lbar-badge {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #e8453c;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* 핀 — 가운데가 찍은 자리라 절반씩 당겨 올린다 */
+.comment-pin {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border: 2px solid #fff;
+  border-radius: 50% 50% 50% 4px;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.28);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  user-select: none;
+  touch-action: none;
+}
+.comment-pin.resolved { opacity: 0.62; }
+.comment-pin.open { box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.45), 0 2px 7px rgba(0, 0, 0, 0.28); }
+.comment-pin.pending { cursor: default; }
+
+.comment-pin-count {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: #fff;
+  color: #444;
+  font-size: 9px;
+  line-height: 15px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.comment-popup {
+  position: absolute;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.17);
+  padding: 10px 12px 10px;
+  z-index: 2;
+  font-size: 12px;
+  color: #333;
+}
+
+.comment-popup-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.comment-author { font-weight: 700; font-size: 12px; color: #222; }
+
+.comment-icon-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  color: #888;
+  font-size: 12px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.comment-icon-btn:hover { background: #f0f0f0; color: #333; }
+.comment-icon-btn.on { color: #1e8e3e; }
+
+/* 글타래가 길어지면 창이 화면을 넘지 않게 안에서 구른다 */
+.comment-thread {
+  max-height: 240px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.comment-msg + .comment-msg { margin-top: 10px; border-top: 1px solid #f1f1f1; padding-top: 8px; }
+.comment-msg-head { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; }
+.comment-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.comment-msg-author { font-weight: 600; font-size: 11px; color: #333; }
+.comment-when { font-size: 10px; color: #999; }
+/* 줄바꿈과 긴 단어를 **그대로** 보여준다 — URL 하나가 창을 늘리면 안 된다 */
+.comment-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; color: #444; }
+
+.comment-input {
+  width: 100%;
+  min-height: 54px;
+  resize: vertical;
+  border: 1px solid #dadce0;
+  border-radius: 7px;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 12px;
+  color: #333;
+  background: #fff;
+  box-sizing: border-box;
+}
+.comment-input:focus { outline: none; border-color: #1a73e8; box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.12); }
+
+.comment-popup-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+
+.comment-btn {
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.comment-btn.ghost { background: transparent; border-color: #dadce0; color: #555; }
+.comment-btn.ghost:hover { background: #f5f5f5; }
+.comment-btn.primary { background: #1a73e8; color: #fff; }
+.comment-btn.primary:hover { background: #1765cc; }
+.comment-btn.primary:disabled { background: #c6d8f5; cursor: default; }
+
+.comment-err { margin-top: 6px; font-size: 11px; color: #c5221f; }
+
+/* 코멘트를 못 남겼다는 말은 **읽혀야** 한다. 어두운 바탕에 #c5221f 는 거의
+   검정이라, 글이 날아갔는데 이유가 안 보인다. */
+html[data-dark="true"] .comment-err { color: #f28b82; }
+
+.comment-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  background: rgba(32, 33, 36, 0.9);
+  color: #fff;
+  font-size: 12px;
+  padding: 7px 14px;
+  border-radius: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* 어두운 캔버스에서는 어두운 알약이 **통째로 사라진다** — 글자만 떠 있고
+   무엇이 안내인지 알 수 없다. 밝은 쪽으로 뒤집는다. */
+html[data-dark="true"] .comment-hint { background: rgba(236, 238, 242, 0.93); color: #202124; }
+
+/* ── 코멘트 패널 ── */
+.comment-panel-header { display: flex; align-items: center; justify-content: space-between; }
+
+.comment-add-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid #dadce0;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #555;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.comment-add-btn:hover { background: #f5f5f5; color: #222; }
+.comment-add-btn.on { background: #e8f0fe; border-color: #1a73e8; color: #1a73e8; }
+
+.comment-empty {
+  padding: 28px 20px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: #999;
+  text-align: center;
+  white-space: pre-line;
+}
+
+.comment-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid #f3f3f3;
+}
+.comment-row:hover { background: #f8f9fa; }
+.comment-row.resolved { opacity: 0.62; }
+
+.comment-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.comment-row-body { flex: 1; min-width: 0; }
+.comment-row-head { display: flex; align-items: center; gap: 6px; }
+.comment-row-author { font-size: 11px; font-weight: 600; color: #333; }
+/* 두 줄까지 보여주고 자른다 — 목록은 훑는 곳이지 읽는 곳이 아니다 */
+.comment-row-text {
+  font-size: 12px;
+  color: #555;
+  line-height: 1.5;
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.comment-row-more { font-size: 10px; color: #1a73e8; margin-top: 3px; }
+
+.comment-toggle-resolved {
+  width: 100%;
+  padding: 10px;
+  border: none;
+  background: transparent;
+  color: #777;
+  font-size: 11px;
+  cursor: pointer;
+}
+.comment-toggle-resolved:hover { background: #f5f5f5; color: #333; }
+
+/* ── 다크 ── */
+html[data-dark="true"] .comment-pin { border-color: #2a2a30; }
+html[data-dark="true"] .comment-pin-count { background: #2a2a30; color: #ddd; }
+html[data-dark="true"] .comment-popup { background: #2a2a30; border-color: #444; color: #ddd; }
+html[data-dark="true"] .comment-author,
+html[data-dark="true"] .comment-msg-author { color: #eee; }
+html[data-dark="true"] .comment-text { color: #c9c9c9; }
+html[data-dark="true"] .comment-msg + .comment-msg { border-color: #3a3a42; }
+html[data-dark="true"] .comment-icon-btn:hover { background: #3a3a42; color: #eee; }
+html[data-dark="true"] .comment-input { background: #1f1f24; border-color: #444; color: #ddd; }
+html[data-dark="true"] .comment-btn.ghost { border-color: #4a4a52; color: #bbb; }
+html[data-dark="true"] .comment-btn.ghost:hover { background: #3a3a42; }
+html[data-dark="true"] .comment-add-btn { background: #2a2a30; border-color: #444; color: #bbb; }
+html[data-dark="true"] .comment-add-btn:hover { background: #3a3a42; color: #eee; }
+html[data-dark="true"] .comment-add-btn.on { background: #1b3350; border-color: #5aa3f0; color: #5aa3f0; }
+html[data-dark="true"] .comment-row { border-color: #33333a; }
+html[data-dark="true"] .comment-row:hover { background: #32323a; }
+html[data-dark="true"] .comment-row-author { color: #ddd; }
+html[data-dark="true"] .comment-row-text { color: #aaa; }
+html[data-dark="true"] .comment-toggle-resolved:hover { background: #32323a; color: #ddd; }

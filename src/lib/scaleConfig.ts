@@ -1,4 +1,5 @@
 import type { Editor } from 'tldraw'
+import { readDocMeta, writeDocMeta } from './docMeta'
 
 export type ScaleUnit = 'mm' | 'cm' | 'm'
 
@@ -37,17 +38,8 @@ export const DEFAULT_SCALE: ScaleConfig = { unit: 'mm', pxPerMm: 1 }
  */
 const DOC_META_KEY = 'scale'
 
-/** 문서 meta 를 읽는다. 목이 없는 에디터(테스트 목)에서도 안 터지게. */
-function docMeta(editor: Editor): Record<string, unknown> {
-  try {
-    return (editor.getDocumentSettings?.()?.meta as Record<string, unknown>) ?? {}
-  } catch {
-    return {}
-  }
-}
-
 export function getScaleConfig(editor: Editor): ScaleConfig {
-  const saved = docMeta(editor)[DOC_META_KEY] as Partial<ScaleConfig> | undefined
+  const saved = readDocMeta(editor)[DOC_META_KEY] as Partial<ScaleConfig> | undefined
   // 옛 세션은 축척을 instance meta 에만 들고 있다. 그 창을 쓰는 동안은
   // 그대로 읽어줘야 저장 전에 축척이 튀지 않는다.
   const session = (editor.getInstanceState?.()?.meta ?? {}) as Partial<ScaleConfig>
@@ -59,9 +51,9 @@ export function getScaleConfig(editor: Editor): ScaleConfig {
 
 export function setScaleConfig(editor: Editor, config: Partial<ScaleConfig>) {
   const next = { ...getScaleConfig(editor), ...config }
-  // 문서 meta 의 **다른 키를 지우지 않는다** — 통째로 덮으면 남이 넣어 둔 걸
-  // 잃는다.
-  editor.updateDocumentSettings({ meta: { ...docMeta(editor), [DOC_META_KEY]: next } })
+  // 문서 meta 의 **다른 키를 지우지 않는다** — 통째로 덮으면 코멘트가 사라진다.
+  // (그 규칙은 docMeta.ts 가 지킨다.)
+  writeDocMeta(editor, DOC_META_KEY, next)
 }
 
 export function formatLength(pxLen: number, config: ScaleConfig): string {

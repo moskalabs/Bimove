@@ -143,3 +143,42 @@ export function cancelPolylineDraw() {
   polylineDrawState.callback = null
   window.dispatchEvent(new CustomEvent('bimova:polyline-draw', { detail: { active: false } }))
 }
+
+// ── 코멘트 핀 모드 ──
+//
+// 공간지정·폴리라인과 같은 식이다 — 켜 두고 **한 번** 찍으면 끝난다.
+// tldraw 도구로 만들지 않은 이유는 코멘트가 도형이 아니기 때문이다
+// (commentStore.ts 머리말).
+//
+// 스냅은 **일부러 안 건다.** 코멘트는 "이 근처" 를 가리키는 것이지 도면의
+// 점을 집는 게 아니다. 끝점에 달라붙으면 벽 모서리마다 핀이 겹쳐 쌓인다.
+
+export const commentPinState = {
+  active: false,
+  /**
+   * **없어도 된다.** 다른 모드와 달리 찍은 결과를 받아 쓸 사람이 보통 없다 —
+   * 글타래 창을 띄우는 일은 오버레이가 제자리에서 한다. 콜백은 "핀이 찍혔다"
+   * 를 알고 싶은 쪽(패널 등)을 위해 남겨 둔 자리다.
+   */
+  callback: null as ((at: { x: number; y: number }) => void) | null,
+}
+
+export function startCommentPin(cb?: (at: { x: number; y: number }) => void) {
+  commentPinState.active = true
+  commentPinState.callback = cb ?? null
+  window.dispatchEvent(new CustomEvent('bimova:comment-pin', { detail: { active: true } }))
+}
+
+export function completeCommentPin(at: { x: number; y: number }) {
+  const cb = commentPinState.callback
+  commentPinState.active = false
+  commentPinState.callback = null
+  window.dispatchEvent(new CustomEvent('bimova:comment-pin', { detail: { active: false } }))
+  cb?.(at)
+}
+
+export function cancelCommentPin() {
+  commentPinState.active = false
+  commentPinState.callback = null
+  window.dispatchEvent(new CustomEvent('bimova:comment-pin', { detail: { active: false } }))
+}

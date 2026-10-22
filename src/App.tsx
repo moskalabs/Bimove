@@ -17,6 +17,7 @@ import { ZoneDrawOverlay } from './components/ZoneDrawOverlay'
 import { PolylineDrawOverlay } from './components/PolylineDrawOverlay'
 import { ZoneNamePopup } from './components/ZoneNamePopup'
 import { ScaleRuler } from './components/ScaleRuler'
+import { CommentOverlay } from './components/CommentOverlay'
 import { ChatPanel } from './components/ChatPanel'
 import { ImportLoadingOverlay } from './components/ImportLoadingOverlay'
 import { ProjectsPage } from './components/ProjectsPage'
@@ -977,6 +978,9 @@ function EditorView({ projectId, projectName: initialProjectName, onBack }: { pr
             <ZoneNamePopup />
             <RoomOverlay />
             <ScaleRuler />
+            {/* 코멘트 핀은 다른 오버레이 **위**에 온다 — 눌러야 하는 것이라
+                면적 라벨·방 이름에 가려지면 안 된다. */}
+            <CommentOverlay />
             <ChatPanel />
           </main>
           <RBar />
