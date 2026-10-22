@@ -39,10 +39,12 @@ const out = join(root, 'public', 'cadcraft')
  * 커밋은 그대로 남으므로 같은 Bimove 커밋은 언제 빌드해도 같은 엔진을 받는다.
  */
 const PIN = {
-  commit: '6cd7328b5dbf6b4dbee9aed3cd561b932ea268ed',
+  commit: '1ea228ac654a53efe1b9089ca24f9e396aec892f',
   sha256: {
+    // 글루(.js/.d.ts)는 그대로다 — 이번 작업은 래스터라이저 안쪽만 고쳤고
+    // 내보내는 함수는 하나도 안 바뀌었다. wasm 만 달라진다.
     'bimove_wasm.js':        '27a9a4916b4292945fa2644a5bd7e2de26b3dcfca86a965b6c22cc4b09410870',
-    'bimove_wasm_bg.wasm':   '1fc88f2536a3f4e4dc3014a75c171006a0a094d638f002ff8ce79253b40ee82c',
+    'bimove_wasm_bg.wasm':   'e9a3d2d5011cd2e84f23213e8f61086ab83f39d327521ba6bbfa76d8784511c1',
     'bimove_wasm.d.ts':      '1951ef7282d7272243a63ae9ceb38a74937ad01f782a805e4801a1cfbd9aae26',
   },
 }
