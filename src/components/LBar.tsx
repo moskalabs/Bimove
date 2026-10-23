@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import {
-  Menu, Layers, Palette, FileText, Info, ArrowLeftCircle, MessageSquare, PanelRight,
+  Menu, Layers, Palette, FileText, Info, ArrowLeftCircle, MessageSquare, PanelRight, Shapes,
 } from 'lucide-react'
 import { LayersPanel } from './panels/LayersPanel'
 import { BOQPanel } from './panels/BOQPanel'
 import { MaterialsPanel } from './panels/MaterialsPanel'
 import { LayoutPanel } from './panels/LayoutPanel'
+import { BlocksPanel } from './panels/BlocksPanel'
 import { CommentsPanel } from './panels/CommentsPanel'
 import { unresolvedCount } from '../lib/commentStore'
 import { useCommentThreads } from './useCommentThreads'
@@ -153,7 +154,7 @@ function View3DIcon() {
   )
 }
 
-type PanelId = 'layers' | 'materials' | 'table' | 'layout' | 'comments' | null
+type PanelId = 'layers' | 'materials' | 'table' | 'layout' | 'blocks' | 'comments' | null
 
 export function LBar({ onBack, onShow3D, onToggleRbar, rbarOpen }: {
   onBack?: () => void
@@ -217,6 +218,17 @@ export function LBar({ onBack, onShow3D, onToggleRbar, rbarOpen }: {
             onClick={() => togglePanel('layout')}
           >
             <FileText size={18} strokeWidth={1.75} />
+          </button>
+          {/* 블록 — 가구·설비 심볼 34종.
+              2026-07-06 의 LBar 리팩토링(450f467)에서 "불필요 패널" 로 빠졌는데,
+              그게 블록을 쓰는 **유일한 입구**였다. 도형(BlockShape)과 도구
+              (BlockTool)는 그대로 살아 있었고 저장된 도면에도 남아 있다. */}
+          <button
+            className={`lbar-icon${activePanel === 'blocks' ? ' active' : ''}`}
+            title="블록"
+            onClick={() => togglePanel('blocks')}
+          >
+            <Shapes size={18} strokeWidth={1.75} />
           </button>
           <button
             className={`lbar-icon${activePanel === 'comments' ? ' active' : ''}`}
@@ -282,6 +294,9 @@ export function LBar({ onBack, onShow3D, onToggleRbar, rbarOpen }: {
       {activePanel === 'table' && <EditLock><BOQPanel /></EditLock>}
       {activePanel === 'materials' && <EditLock><MaterialsPanel /></EditLock>}
       {activePanel === 'layout' && <EditLock><LayoutPanel /></EditLock>}
+      {/* 블록은 도면을 **바꾸는** 일이라 읽기 전용에서 잠근다 (코멘트와 반대다
+          — 그쪽은 도면에 관한 말이라 잠그지 않는다). */}
+      {activePanel === 'blocks' && <EditLock><BlocksPanel /></EditLock>}
       {/* 코멘트는 **EditLock 으로 묶지 않는다.** 읽기 전용은 권한이 아니라
           입력기 판정이고(readonlyMode.ts), 현장에서 태블릿으로 보다가 남기는
           게 이 기능의 본래 쓰임이다. CommentOverlay 머리말 참고. */}

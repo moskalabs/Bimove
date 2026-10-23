@@ -4562,3 +4562,17 @@ html[data-dark="true"] .lbar-menu-note { color: #888; }
 
 /* ── 대시보드 다크 ── */
 html[data-dark="true"] .dash-sidebar { border-bottom-color: #333; }
+
+/* 썸네일 안의 선 굵기를 **심볼 크기에 비례해** 다시 잡는다.
+   심볼의 strokeWidth 는 mm 공간 값이고 도면 위에서는 그게 맞다 — 3000mm
+   짜리 계단의 12mm 선은 제 굵기다. 그런데 썸네일은 심볼을 통째로 줄여
+   넣으므로, 큰 심볼일수록 선이 머리카락처럼 가늘어진다 (계단·엘리베이터·
+   스케일바가 거의 안 보였다).
+
+   `vector-effect: non-scaling-stroke` 는 **반대로 틀린다** — 굵기를 화면
+   픽셀로 고정해 버려서 12px 짜리 덩어리가 된다. 재 보고 되돌렸다.
+
+   그래서 `--sw` 를 심볼 크기에서 뽑아 넣는다 (BlocksPanel 의 BlockThumb).
+   표현 속성(strokeWidth=…)보다 CSS 규칙이 세므로 이쪽이 이긴다.
+   캔버스에는 영향이 없다 — 이 규칙은 `.block-thumb` 안에서만 돈다. */
+.block-thumb * { stroke-width: var(--sw); }
