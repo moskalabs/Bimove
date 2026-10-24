@@ -140,13 +140,7 @@ interface PendingCadPreview {
   isDwg: boolean
 }
 
-function EditorView({ projectId, projectName: initialProjectName, onBack, onView }: {
-  projectId: string
-  projectName?: string
-  onBack: () => void
-  /** 보기(엔진) 화면으로 돌아가기. 안 주면 단추가 안 뜬다. */
-  onView?: () => void
-}) {
+function EditorView({ projectId, projectName: initialProjectName, onBack }: { projectId: string; projectName?: string; onBack: () => void }) {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [show3D, setShow3D] = useState(false)
   /**
@@ -982,7 +976,6 @@ function EditorView({ projectId, projectName: initialProjectName, onBack, onView
         <div className="bimova-body">
           <LBar
             onBack={onBack}
-            onView={onView}
             onShow3D={() => setShow3D(true)}
             onToggleRbar={() => setRbarOpen(v => !v)}
             rbarOpen={rbarOpen}
@@ -1125,20 +1118,6 @@ function AppContent() {
    * 켜질 때만 비켜준다.
    */
   const [cadcraft, setCadcraft] = useState(() => window.location.hash === '#cadcraft')
-  /**
-   * 프로젝트를 열었을 때 **무엇으로 보여줄까.**
-   *
-   * 기본이 `view` — CADCraft 엔진이다. tldraw 를 걷어내는 중이라 엔진이 진짜
-   * 도면을 제대로 그리는지 늘 보이는 자리에서 확인해야 하고, 아직 서비스
-   * 전이라 그래도 된다.
-   *
-   * 편집(그리기·물량·발주서·블록)은 전부 tldraw 에 있다. 그래서 `edit` 가
-   * 없어지는 게 아니라 **한 번 눌러 들어가는 자리**로 간다 — 주소의 `#edit`
-   * 이거나 엔진 화면의 '편집 화면' 단추다.
-   */
-  const [mode, setMode] = useState<'view' | 'edit'>(
-    () => (window.location.hash === '#edit' ? 'edit' : 'view'),
-  )
 
   // 유저 인증 후 body 속성 동기화 (모듈 레벨 init은 userId 없어서 실패할 수 있음)
   useEffect(() => {
@@ -1305,29 +1284,12 @@ function AppContent() {
     return <ProjectsPage onOpen={(id, name) => openProject(id, name ?? '프로젝트')} />
   }
 
-  // 기본은 **엔진 화면**이다 (mode 주석). 편집은 한 번 눌러 들어간다.
-  if (mode === 'view') {
-    return (
-      <>
-        <Suspense fallback={<ImportLoadingOverlay message="CAD 엔진 불러오는 중..." />}>
-          <CadCraftViewer
-            project={{ id: currentProject.id, name: currentProject.name }}
-            onEdit={() => { setMode('edit'); history.replaceState(null, '', '#edit') }}
-            onClose={closeProject}
-          />
-        </Suspense>
-        <OfflineBanner />
-      </>
-    )
-  }
-
   return (
     <>
       <EditorView
         projectId={currentProject.id}
         projectName={currentProject.name}
         onBack={closeProject}
-        onView={() => { setMode('view'); history.replaceState(null, '', window.location.pathname + window.location.search) }}
       />
       <OfflineBanner />
     </>
