@@ -13,6 +13,10 @@ import { pickCadFile, dwgToDxfBytes } from '../lib/dxf'
 import { checkCadSize } from '../lib/importLimits'
 import { getProjects } from '../lib/projectStore'
 import { loadDocument } from '../lib/bimoveDocStore'
+import { docMetaOf } from '../lib/bimoveDoc'
+import { threadsOnPageOf, type CommentThread } from '../lib/commentStore'
+import { CadCommentPins } from './CadCommentPins'
+import { zoomAt } from '../lib/cadCamera'
 
 /** 캔버스 배경. 엔진이 이 색을 보고 묻히는 잉크를 끌어낸다. */
 const BG = 0xFFFFFF
@@ -75,6 +79,22 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
   const [pageId, setPageId] = useState('')
   /** 지금 보고 있는 저장본. 페이지를 갈아탈 때 다시 읽어야 해서 들고 있는다. */
   const [opened, setOpened] = useState<{ id: string; name: string } | null>(null)
+  /**
+   * 이 장에 달린 코멘트. 저장본에서 바로 읽는다 — **에디터가 없다.**
+   * (commentStore 의 `threadsOnPageOf` 가 그래서 meta 를 받는다.)
+   */
+  const [threads, setThreads] = useState<CommentThread[]>([])
+  /** 캔버스 크기 — 핀을 얹으려면 알아야 한다. */
+  const [box, setBox] = useState({ w: 0, h: 0 })
+  /**
+   * 그려진 **그 순간의** 카메라.
+   *
+   * 조작 중에는 `camRef` 를 고쳐 쓴다 (팬 한 번에 state 를 수십 번 바꾸면
+   * 느리다). 그런데 핀은 React 가 그리므로 값을 봐야 한다. 그래서 한 장
+   * 그릴 때마다 **그때 쓴 값을 베껴** 둔다 — 핀은 늘 그림과 같은 카메라를
+   * 본다. 렌더 중에 ref 를 들여다보면 안 되는 이유이기도 하다.
+   */
+  const [camView, setCamView] = useState({ cx: 0, cy: 0, scale: 1 })
 
   /**
    * 손을 뗀 뒤 **제대로** 한 번 더 그릴 타이머.
@@ -112,6 +132,14 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
     ctx?.putImageData(new ImageData(clamped, r.width(), r.height()), 0, 0)
     r.free()
     setPerf(`${(performance.now() - t0).toFixed(0)}ms${draft ? ' (draft)' : ''} · 줌 ${cam.scale.toExponential(2)}`)
+    // 핀이 따라오게 — 그린 뒤에 알린다. 크기도 여기서 같이 잰다 (리사이즈가
+    // 따로 render 를 부르므로 한 자리에서 챙겨진다).
+    setBox(b => (b.w === cv.clientWidth && b.h === cv.clientHeight
+      ? b
+      : { w: cv.clientWidth, h: cv.clientHeight }))
+    setCamView(v => (v.cx === cam.cx && v.cy === cam.cy && v.scale === cam.scale
+      ? v
+      : { cx: cam.cx, cy: cam.cy, scale: cam.scale }))
   }, [layout])
 
   /**
@@ -184,6 +212,9 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
       if (r.kind === 'fail') { setStatus(`못 읽었다: ${r.reason}`); return }
       const doc = await openBimoveDoc(r.doc)
       adopt(doc)
+      // 첫 장을 연다 — 장이 안 적힌 옛 글타래가 가는 자리와 같아야 한다.
+      const first = r.doc.pages[0]?.id ?? ''
+      setThreads(threadsOnPageOf(docMetaOf(r.doc), first, first))
       setOpened({ id: projectId, name })
       setStatus(`${name} · ${counts(doc)} · 페이지 ${doc.pageIds().length}개`)
     } catch (e) {
@@ -202,6 +233,7 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
       if (r.kind === 'fail') { setStatus(`못 읽었다: ${r.reason}`); return }
       const doc = await openBimoveDoc(r.doc, pageId)
       adopt(doc)
+      setThreads(threadsOnPageOf(docMetaOf(r.doc), pageId, r.doc.pages[0]?.id ?? ''))
       setStatus(`${name} · ${counts(doc)}`)
     } catch (e) {
       // 여기가 비어 있으면 실패가 **unhandled rejection** 으로만 남는다 —
@@ -233,6 +265,9 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
       const doc = await openDxf(bytes)
       const names = adopt(doc)
       setOpened(null)
+      // DXF 에는 코멘트가 없다. 안 비우면 **앞서 열었던 프로젝트의 핀**이
+      // 생판 다른 도면 위에 그대로 꽂혀 있는다.
+      setThreads([])
       setStatus(`${file.name} · 탭 ${1 + names.length}개`)
     } catch (e) {
       setStatus(`실패: ${e instanceof Error ? e.message : String(e)}`)
@@ -278,14 +313,15 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
     const cv = cvRef.current
     if (!cv || !docRef.current) return
     const r = cv.getBoundingClientRect()
-    const cam = camRef.current
-    // 커서 밑 도면 좌표가 제자리에 남아야 "그 점으로 들어간다" 는 느낌이 난다
-    const dx = (e.clientX - r.left) - r.width / 2
-    const dy = (e.clientY - r.top) - r.height / 2
-    const wx = cam.cx + dx / cam.scale, wy = cam.cy - dy / cam.scale
-    cam.scale *= Math.exp(-e.deltaY * 0.0015)
-    cam.cx = wx - dx / cam.scale
-    cam.cy = wy + dy / cam.scale
+    // 커서 밑 도면 좌표가 제자리에 남아야 "그 점으로 들어간다" 는 느낌이 난다.
+    // 식은 lib/cadCamera 로 옮겼다 — 핀도 같은 변환을 써야 해서, 두 군데에
+    // 같은 계산이 있으면 확대할수록 벌어진다.
+    zoomAt(
+      camRef.current,
+      { x: e.clientX - r.left, y: e.clientY - r.top },
+      { w: r.width, h: r.height },
+      Math.exp(-e.deltaY * 0.0015),
+    )
     renderLive()
   }
 
@@ -346,6 +382,7 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
           {notes.map((n, i) => <span key={i}>{n}</span>)}
         </div>
       )}
+      <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
       <canvas
         ref={cvRef}
         onWheel={onWheel}
@@ -362,8 +399,12 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
           renderLive()
         }}
         onPointerUp={e => { dragRef.current = null; e.currentTarget.releasePointerCapture(e.pointerId) }}
-        style={{ flex: 1, display: 'block', cursor: 'grab', touchAction: 'none' }}
+        style={{ width: '100%', height: '100%', display: 'block', cursor: 'grab', touchAction: 'none' }}
       />
+      {threads.length > 0 && box.w > 0 && (
+        <CadCommentPins threads={threads} cam={camView} box={box} />
+      )}
+      </div>
     </div>
   )
 }

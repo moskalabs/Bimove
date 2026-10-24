@@ -4576,3 +4576,16 @@ html[data-dark="true"] .dash-sidebar { border-bottom-color: #333; }
    표현 속성(strokeWidth=…)보다 CSS 규칙이 세므로 이쪽이 이긴다.
    캔버스에는 영향이 없다 — 이 규칙은 `.block-thumb` 안에서만 돈다. */
 .block-thumb * { stroke-width: var(--sw); }
+
+/* 엔진 화면의 코멘트 창은 보기 전용이다 (CadCommentPins 머리말).
+   입력칸이 없는 걸 고장으로 읽지 않도록 한 줄 적어 둔다. */
+.comment-readonly-note {
+  flex: 0 0 auto;
+  margin-top: 6px;
+  padding-top: 7px;
+  border-top: 1px solid #f1f1f1;
+  font-size: 10px;
+  color: #999;
+  text-align: right;
+}
+html[data-dark="true"] .comment-readonly-note { border-color: #3a3a42; color: #888; }
