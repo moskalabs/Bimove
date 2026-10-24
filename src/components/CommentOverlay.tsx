@@ -3,17 +3,30 @@
 // 핀은 **page 좌표**에 꽂혀 있고 화면 좌표는 매 프레임 다시 잰다 (RoomOverlay
 // 와 같은 방식). 그래서 확대·이동을 해도 도면의 그 자리에 붙어 있는다.
 //
-// **읽기 전용에서도 쓸 수 있다.** Bimove 의 읽기 전용은 권한이 아니라 입력기
-// 판정이다 (readonlyMode.ts) — 작은 화면·손가락이면 정밀한 포인팅이 안 되니
-// 그리지 못하게 하는 것이다. 코멘트를 다는 데는 정밀한 포인팅이 필요 없고,
-// 오히려 **현장에서 태블릿으로 보다가** 남기는 게 이 기능의 본래 쓰임이다.
-// 그래서 EditLock 으로 묶지 않는다.
+// ── 읽기 전용에서는 **보기만** 한다 ──
+//
+// 한동안 반대였다. "읽기 전용은 권한이 아니라 입력기 판정이고(readonlyMode.ts)
+// 코멘트 다는 데는 정밀한 포인팅이 필요 없으니 폰에서도 쓰게 하자" 고 적어
+// 뒀었다. 그 주장은 접는다.
+//
+// tldraw 를 걷어내면서 읽기 전용 경로는 엔진이 그리게 되는데, 거기서는
+// **쓸 수가 없다.** 저장된 스냅샷을 고쳐 써야 하고 `bimoveDocStore` 는 읽기
+// 전용으로 설계돼 있다 (그 파일 머리말). 쓰기 길을 따로 내는 건 저장 경로를
+// 건드리는 일이라 "읽기 전용은 정말 읽기만" 으로 정했다.
+//
+// 그러면 **지금 이쪽도 같이 닫아야 한다.** 안 그러면 같은 폰에서 오늘은
+// 코멘트가 달리고 엔진으로 바뀌는 날 조용히 안 달린다 — 쓰던 사람에게는
+// 그게 기능이 사라진 것이다. 지금 맞춰 두면 바뀌는 날 달라지는 게 없다.
+//
+// EditLock 으로 묶지는 않는다. 그건 fieldset 으로 **안쪽 버튼을 전부** 막아서
+// '닫기' 나 '해결된 것 보기' 같은 보기 쪽 버튼까지 죽는다. 쓰는 것만 고른다.
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 // 아이콘은 이모지가 아니라 선 그림으로 — OS 폰트마다 모양이 제각각이라
 // 🗑 하나만 톤이 튄다 (LayersPanel 의 `Svg` 주석과 같은 이유).
 import { Check, Trash2, X } from 'lucide-react'
 import { useEditor } from '../context/EditorContext'
+import { useReadonly } from '../context/ReadonlyContext'
 import { useAuth } from '../context/AuthContext'
 import { commentPinState, cancelCommentPin, completeCommentPin } from '../lib/drawingState'
 import {
@@ -36,6 +49,7 @@ type Placed = CommentThread & { vx: number; vy: number }
 
 export function CommentOverlay() {
   const editor = useEditor()
+  const readonly = useReadonly()
   const { user } = useAuth()
   const me = authorName((user?.user_metadata?.display_name as string) ?? user?.email?.split('@')[0])
 
@@ -125,12 +139,15 @@ export function CommentOverlay() {
   useEffect(() => {
     const handler = (e: Event) => {
       const active = (e as CustomEvent).detail.active as boolean
+      // 읽기 전용에서는 **켜지지 않는다.** 패널의 + 는 숨겨 두지만, 다른
+      // 길(단축키·남아 있는 이벤트)로 켜져도 여기서 되돌린다.
+      if (active && readonly) { cancelCommentPin(); return }
       setPlacing(active)
       if (active) openThread(null)
     }
     window.addEventListener('bimova:comment-pin', handler)
     return () => window.removeEventListener('bimova:comment-pin', handler)
-  }, [openThread])
+  }, [openThread, readonly])
 
   // 목록(패널)에서 하나를 고르면 그리로 날아가 연다
   useEffect(() => {
@@ -205,6 +222,8 @@ export function CommentOverlay() {
   const startDrag = (e: React.PointerEvent, t: Placed) => {
     if (!editor) return
     e.stopPropagation()
+    // 읽기 전용에서는 못 옮긴다 — 누르면 열리기만 한다.
+    if (readonly) { openThread(openIdRef.current === t.id ? null : t.id); return }
     const el = e.currentTarget as HTMLElement
     el.setPointerCapture(e.pointerId)
     const from = { x: e.clientX, y: e.clientY }
@@ -318,16 +337,20 @@ export function CommentOverlay() {
           <div className="comment-popup-head">
             <span className="comment-author">{open.messages[0].author}</span>
             <div style={{ flex: 1 }} />
-            <button
-              className={`comment-icon-btn${open.resolved ? ' on' : ''}`}
-              title={open.resolved ? '다시 열기' : '해결'}
-              onClick={() => setResolved(editor, open.id, !open.resolved)}
-            ><Check size={14} strokeWidth={2.2} /></button>
-            <button
-              className="comment-icon-btn"
-              title="삭제"
-              onClick={() => { deleteThread(editor, open.id); openThread(null) }}
-            ><Trash2 size={13} strokeWidth={2} /></button>
+            {!readonly && (
+              <>
+                <button
+                  className={`comment-icon-btn${open.resolved ? ' on' : ''}`}
+                  title={open.resolved ? '다시 열기' : '해결'}
+                  onClick={() => setResolved(editor, open.id, !open.resolved)}
+                ><Check size={14} strokeWidth={2.2} /></button>
+                <button
+                  className="comment-icon-btn"
+                  title="삭제"
+                  onClick={() => { deleteThread(editor, open.id); openThread(null) }}
+                ><Trash2 size={13} strokeWidth={2} /></button>
+              </>
+            )}
             <button className="comment-icon-btn" title="닫기" onClick={() => openThread(null)}>
               <X size={14} strokeWidth={2.2} />
             </button>
@@ -344,22 +367,30 @@ export function CommentOverlay() {
               </div>
             ))}
           </div>
-          <textarea
-            ref={inputRef}
-            className="comment-input"
-            maxLength={MAX_TEXT}
-            placeholder="답글"
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitReply(open.id) }
-            }}
-          />
-          {err && <div className="comment-err">{err}</div>}
-          <div className="comment-popup-foot">
-            <button className="comment-btn ghost" onClick={() => openThread(null)}>닫기</button>
-            <button className="comment-btn primary" onClick={() => submitReply(open.id)} disabled={!draft.trim()}>답글</button>
-          </div>
+          {readonly ? (
+            // 엔진 화면(CadCommentPins)과 **같은 말**을 쓴다. 보는 사람에게는
+            // 어느 쪽으로 그려졌는지가 보이지 않아야 한다.
+            <div className="comment-readonly-note">보기 전용 — 답글은 편집 화면에서</div>
+          ) : (
+            <>
+              <textarea
+                ref={inputRef}
+                className="comment-input"
+                maxLength={MAX_TEXT}
+                placeholder="답글"
+                value={draft}
+                onChange={e => setDraft(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitReply(open.id) }
+                }}
+              />
+              {err && <div className="comment-err">{err}</div>}
+              <div className="comment-popup-foot">
+                <button className="comment-btn ghost" onClick={() => openThread(null)}>닫기</button>
+                <button className="comment-btn primary" onClick={() => submitReply(open.id)} disabled={!draft.trim()}>답글</button>
+              </div>
+            </>
+          )}
         </div>
       )}
 

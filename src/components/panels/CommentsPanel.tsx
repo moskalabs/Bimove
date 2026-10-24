@@ -7,6 +7,7 @@
 import { useState, useEffect } from 'react'
 import { Check, MessageSquarePlus } from 'lucide-react'
 import { useEditor } from '../../context/EditorContext'
+import { useReadonly } from '../../context/ReadonlyContext'
 import { startCommentPin, cancelCommentPin, commentPinState } from '../../lib/drawingState'
 import {
   setResolved, initialOf, pinColor, formatWhen, RESOLVED_COLOR,
@@ -15,6 +16,9 @@ import { useCommentThreads } from '../useCommentThreads'
 
 export function CommentsPanel() {
   const editor = useEditor()
+  // 읽기 전용에서는 **보기만** 한다 (CommentOverlay 머리말). 목록과
+  // '해결된 것 보기' 는 보기 쪽이라 그대로 두고, 달기·해결만 뺀다.
+  const readonly = useReadonly()
   // **지금 장**의 것만. 보이는 핀과 목록이 어긋나면 안 된다.
   const threads = useCommentThreads(editor)
   const [showResolved, setShowResolved] = useState(false)
@@ -37,20 +41,24 @@ export function CommentsPanel() {
     <aside className="lbar-panel">
       <div className="lbar-panel-header comment-panel-header">
         <span>코멘트</span>
-        <button
-          className={`comment-add-btn${placing ? ' on' : ''}`}
-          title={placing ? '찍기 취소' : '코멘트 남기기'}
-          onClick={() => (placing ? cancelCommentPin() : startCommentPin())}
-        >
-          <MessageSquarePlus size={15} strokeWidth={1.9} />
-        </button>
+        {!readonly && (
+          <button
+            className={`comment-add-btn${placing ? ' on' : ''}`}
+            title={placing ? '찍기 취소' : '코멘트 남기기'}
+            onClick={() => (placing ? cancelCommentPin() : startCommentPin())}
+          >
+            <MessageSquarePlus size={15} strokeWidth={1.9} />
+          </button>
+        )}
       </div>
 
       <div className="lbar-panel-body">
         {shown.length === 0 && (
           <div className="comment-empty">
             {threads.length === 0
-              ? '아직 코멘트가 없습니다.\n위 + 를 누르고 도면을 클릭해 보세요.'
+              ? (readonly
+                  ? '아직 코멘트가 없습니다.\n코멘트는 편집 화면에서 남길 수 있어요.'
+                  : '아직 코멘트가 없습니다.\n위 + 를 누르고 도면을 클릭해 보세요.')
               : '열려 있는 코멘트가 없습니다.'}
           </div>
         )}
@@ -78,14 +86,16 @@ export function CommentsPanel() {
                   <div className="comment-row-more">답글 {t.messages.length - 1}</div>
                 )}
               </div>
-              <button
-                className={`comment-icon-btn${t.resolved ? ' on' : ''}`}
-                title={t.resolved ? '다시 열기' : '해결'}
-                onClick={e => {
-                  e.stopPropagation()
-                  if (editor) setResolved(editor, t.id, !t.resolved)
-                }}
-              ><Check size={14} strokeWidth={2.2} /></button>
+              {!readonly && (
+                <button
+                  className={`comment-icon-btn${t.resolved ? ' on' : ''}`}
+                  title={t.resolved ? '다시 열기' : '해결'}
+                  onClick={e => {
+                    e.stopPropagation()
+                    if (editor) setResolved(editor, t.id, !t.resolved)
+                  }}
+                ><Check size={14} strokeWidth={2.2} /></button>
+              )}
             </div>
           )
         })}

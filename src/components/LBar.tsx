@@ -297,9 +297,10 @@ export function LBar({ onBack, onShow3D, onToggleRbar, rbarOpen }: {
       {/* 블록은 도면을 **바꾸는** 일이라 읽기 전용에서 잠근다 (코멘트와 반대다
           — 그쪽은 도면에 관한 말이라 잠그지 않는다). */}
       {activePanel === 'blocks' && <EditLock><BlocksPanel /></EditLock>}
-      {/* 코멘트는 **EditLock 으로 묶지 않는다.** 읽기 전용은 권한이 아니라
-          입력기 판정이고(readonlyMode.ts), 현장에서 태블릿으로 보다가 남기는
-          게 이 기능의 본래 쓰임이다. CommentOverlay 머리말 참고. */}
+      {/* 코멘트는 EditLock 으로 묶지 **않는다.** 읽기 전용에서도 목록을
+          읽고 '해결된 것 보기' 를 눌러야 하는데, EditLock 은 fieldset 으로
+          안쪽 버튼을 전부 막아 보기 쪽까지 죽인다. 대신 패널이 스스로
+          `useReadonly()` 를 보고 **쓰는 것만** 뺀다 (CommentsPanel). */}
       {activePanel === 'comments' && <CommentsPanel />}
 
       {/* 가져오기 미리보기 모달 · 진행 오버레이 — 메뉴를 닫아도 떠 있어야 한다 */}
