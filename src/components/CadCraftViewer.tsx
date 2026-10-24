@@ -43,7 +43,18 @@ const counts = (doc: CadDoc) =>
   ` / 공간 ${doc.zoneCount().toLocaleString()}개` +
   ` / 물량표 ${doc.boqCount().toLocaleString()}개`
 
-export function CadCraftViewer({ onClose }: { onClose: () => void }) {
+export function CadCraftViewer({ onClose, project, onEdit }: {
+  onClose: () => void
+  /**
+   * 열어 둘 프로젝트. 주면 **고르는 칸을 숨기고** 바로 그 도면을 띄운다.
+   *
+   * 이 화면이 기본이 되면서 생긴 길이다. 전엔 '#cadcraft' 로 들어와 손으로
+   * 골랐는데, 이제 대시보드에서 프로젝트를 열면 곧장 여기로 온다.
+   */
+  project?: { id: string; name: string }
+  /** 편집 화면(tldraw)으로. 안 주면 버튼이 안 뜬다. */
+  onEdit?: () => void
+}) {
   const cvRef = useRef<HTMLCanvasElement | null>(null)
   const docRef = useRef<CadDoc | null>(null)
   /** 화면 가운데 도면 좌표 + 도면 단위당 CSS 픽셀 */
@@ -77,6 +88,9 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     try { setProjects(getProjects()) } catch { setProjects([]) }
   }, [user?.id])
+  /** 프로젝트를 받아서 왔나 — 받았으면 "그 도면만 보는" 화면이다. */
+  const bound = !!project
+
   /** 저장본으로 열었을 때의 페이지들. DXF 로 열면 빈 배열이라 선택기가 안 뜬다. */
   const [pages, setPages] = useState<Array<{ id: string; name: string }>>([])
   const [pageId, setPageId] = useState('')
@@ -235,6 +249,19 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
     }
   }, [adopt])
 
+  /**
+   * 프로젝트를 받았으면 **들어오자마자 연다.**
+   *
+   * 'openProject' 를 의존성에 넣으면 그게 매번 새로 만들어져 무한히 다시
+   * 연다. 프로젝트가 바뀔 때만 돌면 된다.
+   */
+  useEffect(() => {
+    // 바깥(저장소)에서 읽어 와 화면에 앉히는 일이다 — 파생 상태를 다시
+    // 계산하는 게 아니라 캐스케이드가 나지 않는다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+    if (project) void openProject(project.id, project.name)
+  }, [project?.id])
+
   /** 같은 문서의 다른 페이지로 넘어간다 (모형/배치1/…). */
   const switchPage = useCallback(async (projectId: string, name: string, pageId: string) => {
     setBusy(true)
@@ -343,9 +370,9 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
         padding: '8px 12px', borderBottom: '1px solid #ddd', display: 'flex',
         gap: 12, alignItems: 'center', flexWrap: 'wrap', fontSize: 13,
       }}>
-        <strong>CADCraft 엔진 (실험)</strong>
-        <button onClick={openFile} disabled={busy}>도면 열기</button>
-        {projects.length > 0 && (
+        <strong>{bound ? project.name : 'CADCraft 엔진 (실험)'}</strong>
+        {!bound && <button onClick={openFile} disabled={busy}>도면 열기</button>}
+        {!bound && projects.length > 0 && (
           <label>저장된 도면{' '}
             <select
               defaultValue=""
@@ -381,7 +408,13 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
         )}
         <span style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12, color: '#555' }}>{status}</span>
         <span style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12, color: '#999' }}>{perf}</span>
-        <button onClick={onClose} style={{ marginLeft: 'auto' }}>닫기</button>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          {/* 이 화면은 **보기 전용**이다. 그리기·물량·발주서는 편집 화면에
+              있으므로, 거기로 가는 길이 늘 보여야 한다 — 안 보이면 "기능이
+              사라졌다" 가 된다. */}
+          {onEdit && <button onClick={onEdit}>편집 화면</button>}
+          <button onClick={onClose}>{bound ? '프로젝트 목록' : '닫기'}</button>
+        </div>
       </div>
       {/* 안 그린 것. **숨기지 않는다** — 안 띄우면 "해치가 없는 도면" 과
           "해치를 못 그린 도면" 이 구분되지 않는다. */}

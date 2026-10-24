@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  Menu, Layers, Palette, FileText, Info, ArrowLeftCircle, MessageSquare, PanelRight, Shapes,
+  Menu, Layers, Palette, FileText, Info, ArrowLeftCircle, MessageSquare, PanelRight, Shapes, Eye,
 } from 'lucide-react'
 import { LayersPanel } from './panels/LayersPanel'
 import { BOQPanel } from './panels/BOQPanel'
@@ -156,8 +156,10 @@ function View3DIcon() {
 
 type PanelId = 'layers' | 'materials' | 'table' | 'layout' | 'blocks' | 'comments' | null
 
-export function LBar({ onBack, onShow3D, onToggleRbar, rbarOpen }: {
+export function LBar({ onBack, onView, onShow3D, onToggleRbar, rbarOpen }: {
   onBack?: () => void
+  /** 보기(엔진) 화면으로. 편집으로 들어왔을 때만 온다. */
+  onView?: () => void
   onShow3D?: () => void
   /** 좁은 화면에서 우측 속성 패널 여닫기 — 넓은 화면에서는 버튼이 안 보인다. */
   onToggleRbar?: () => void
@@ -256,6 +258,13 @@ export function LBar({ onBack, onShow3D, onToggleRbar, rbarOpen }: {
               onClick={onToggleRbar}
             >
               <PanelRight size={18} strokeWidth={1.75} />
+            </button>
+          )}
+          {/* 보기 화면으로 — 편집에 들어온 뒤 **나가는 길**이다.
+              기본이 보기 화면이라, 이게 없으면 주소를 고쳐야 돌아간다. */}
+          {onView && (
+            <button className="lbar-icon" title="보기 화면 (엔진)" onClick={onView}>
+              <Eye size={18} strokeWidth={1.75} />
             </button>
           )}
           {onBack && (
