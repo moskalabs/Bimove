@@ -4589,3 +4589,47 @@ html[data-dark="true"] .dash-sidebar { border-bottom-color: #333; }
   text-align: right;
 }
 html[data-dark="true"] .comment-readonly-note { border-color: #3a3a42; color: #888; }
+
+/* ── "어디까지 됐나" 한 줄 (DocStatusBar) ──
+   폰에서 가로로 넘치면 밀어서 본다. 줄바꿈하면 캔버스를 두 줄씩 먹는다. */
+.docstat {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #eee;
+  background: #fafbfc;
+  overflow-x: auto;
+  flex-shrink: 0;
+  scrollbar-width: none;
+}
+.docstat::-webkit-scrollbar { display: none; }
+
+.docstat-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  min-width: 56px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  flex-shrink: 0;
+}
+.docstat-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: #222;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.docstat-label { font-size: 10px; color: #888; white-space: nowrap; }
+
+/* 남은 일이 있으면 눈에 띄어야 한다 — 이 줄에서 가장 묻고 싶은 값이다. */
+.docstat-cell.open { background: #fff4ed; }
+.docstat-cell.open .docstat-value { color: #d9480f; }
+.docstat-cell.done .docstat-value { color: #2b8a3e; }
+
+html[data-dark="true"] .docstat { background: #26262c; border-color: #333; }
+html[data-dark="true"] .docstat-value { color: #eee; }
+html[data-dark="true"] .docstat-cell.open { background: #3a2a1e; }
+html[data-dark="true"] .docstat-cell.open .docstat-value { color: #ffa94d; }
+html[data-dark="true"] .docstat-cell.done .docstat-value { color: #69db7c; }

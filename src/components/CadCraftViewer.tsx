@@ -16,6 +16,9 @@ import { loadDocument } from '../lib/bimoveDocStore'
 import { docMetaOf } from '../lib/bimoveDoc'
 import { threadsOnPageOf, type CommentThread } from '../lib/commentStore'
 import { CadCommentPins } from './CadCommentPins'
+import { DocStatusBar } from './DocStatusBar'
+import { docStatus, type DocStatus } from '../lib/docStatus'
+import { loadFinishingData } from '../lib/finishingData'
 import { zoomAt } from '../lib/cadCamera'
 
 /** 캔버스 배경. 엔진이 이 색을 보고 묻히는 잉크를 끌어낸다. */
@@ -84,6 +87,12 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
    * (commentStore 의 `threadsOnPageOf` 가 그래서 meta 를 받는다.)
    */
   const [threads, setThreads] = useState<CommentThread[]>([])
+  /**
+   * "이 도면 어디까지 됐나" 한 줄 (docStatus.ts).
+   *
+   * DXF 로 열면 `null` 이다 — 저장본이 아니라 현황이랄 게 없다.
+   */
+  const [status2, setStatus2] = useState<DocStatus | null>(null)
   /** 캔버스 크기 — 핀을 얹으려면 알아야 한다. */
   const [box, setBox] = useState({ w: 0, h: 0 })
   /**
@@ -215,6 +224,7 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
       // 첫 장을 연다 — 장이 안 적힌 옛 글타래가 가는 자리와 같아야 한다.
       const first = r.doc.pages[0]?.id ?? ''
       setThreads(threadsOnPageOf(docMetaOf(r.doc), first, first))
+      setStatus2(docStatus(r.doc, first, loadFinishingData(projectId)))
       setOpened({ id: projectId, name })
       setStatus(`${name} · ${counts(doc)} · 페이지 ${doc.pageIds().length}개`)
     } catch (e) {
@@ -234,6 +244,7 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
       const doc = await openBimoveDoc(r.doc, pageId)
       adopt(doc)
       setThreads(threadsOnPageOf(docMetaOf(r.doc), pageId, r.doc.pages[0]?.id ?? ''))
+      setStatus2(docStatus(r.doc, pageId, loadFinishingData(projectId)))
       setStatus(`${name} · ${counts(doc)}`)
     } catch (e) {
       // 여기가 비어 있으면 실패가 **unhandled rejection** 으로만 남는다 —
@@ -266,8 +277,9 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
       const names = adopt(doc)
       setOpened(null)
       // DXF 에는 코멘트가 없다. 안 비우면 **앞서 열었던 프로젝트의 핀**이
-      // 생판 다른 도면 위에 그대로 꽂혀 있는다.
+      // 생판 다른 도면 위에 그대로 꽂혀 있는다. 현황도 같은 이유로 비운다.
       setThreads([])
+      setStatus2(null)
       setStatus(`${file.name} · 탭 ${1 + names.length}개`)
     } catch (e) {
       setStatus(`실패: ${e instanceof Error ? e.message : String(e)}`)
@@ -382,6 +394,7 @@ export function CadCraftViewer({ onClose }: { onClose: () => void }) {
           {notes.map((n, i) => <span key={i}>{n}</span>)}
         </div>
       )}
+      {status2 && <DocStatusBar status={status2} />}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
       <canvas
         ref={cvRef}
