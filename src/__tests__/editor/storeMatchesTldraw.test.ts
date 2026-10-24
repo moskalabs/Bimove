@@ -10,8 +10,9 @@
  * 사라지면 이 테스트도 할 일이 없다.
  */
 import { describe, it, expect, beforeAll } from 'vitest'
-import { createTLStore, createShapeId, defaultShapeUtils, Editor, defaultTools } from 'tldraw'
+import { createTLStore, createShapeId, defaultShapeUtils, Editor, defaultTools, Box } from 'tldraw'
 import { BimoveStore } from '../../editor/store'
+import { BimoveView } from '../../editor/view'
 import { fromTldrawSnapshot } from '../../lib/bimoveDoc'
 
 // tldraw 의 Editor 는 만들 때 `matchMedia` 를 본다 (사용자 환경 설정 —
@@ -131,5 +132,60 @@ describe('우리 저장소 vs tldraw', () => {
     const pageId = editor.getCurrentPageId()
     const theirs = editor.getCurrentPageShapes().filter(s => s.parentId === pageId)
     expect(ids(ours.getPageShapes(pageId))).toEqual(ids(theirs))
+  })
+})
+
+describe('우리 카메라 vs tldraw', () => {
+  // 좌표가 어긋나면 **클릭이 엉뚱한 도형을 집는다.** 화면에서는 "가끔 안
+  // 눌린다" 로만 보여서 찾기가 아주 어렵다.
+  const BOX = { w: 800, h: 600 }
+
+  /** tldraw 에디터의 카메라를 우리 것에 옮긴다. */
+  function sameCamera(editor: Editor): BimoveView {
+    const v = new BimoveView()
+    v.setBox(BOX)
+    editor.updateViewportScreenBounds(new Box(0, 0, BOX.w, BOX.h))
+    const c = editor.getCamera()
+    v.setZoom(c.z)
+    // tldraw 의 화면 한가운데가 보는 page 좌표
+    v.setCenter(editor.screenToPage({ x: BOX.w / 2, y: BOX.h / 2 }))
+    return v
+  }
+
+  it('화면 ↔ 도면 변환이 같다', () => {
+    const editor = tld()
+    const v = sameCamera(editor)
+    for (const s of [{ x: 0, y: 0 }, { x: 800, y: 600 }, { x: 137, y: 412 }]) {
+      const t = editor.screenToPage(s)
+      const o = v.screenToPage(s)
+      expect(o.x).toBeCloseTo(t.x, 6)
+      expect(o.y).toBeCloseTo(t.y, 6)
+    }
+  })
+
+  it('확대해도 같다', () => {
+    const editor = tld()
+    editor.updateViewportScreenBounds(new Box(0, 0, BOX.w, BOX.h))
+    editor.setCamera({ x: 120, y: -45, z: 3.5 })
+    const v = sameCamera(editor)
+    for (const s of [{ x: 10, y: 10 }, { x: 790, y: 590 }]) {
+      const t = editor.screenToPage(s)
+      const o = v.screenToPage(s)
+      expect(o.x).toBeCloseTo(t.x, 5)
+      expect(o.y).toBeCloseTo(t.y, 5)
+    }
+  })
+
+  it('page → 화면도 같다', () => {
+    const editor = tld()
+    editor.updateViewportScreenBounds(new Box(0, 0, BOX.w, BOX.h))
+    editor.setCamera({ x: -300, y: 200, z: 0.4 })
+    const v = sameCamera(editor)
+    for (const p of [{ x: 0, y: 0 }, { x: 1000, y: -500 }]) {
+      const t = editor.pageToViewport(p)
+      const o = v.pageToScreen(p)
+      expect(o.x).toBeCloseTo(t.x, 5)
+      expect(o.y).toBeCloseTo(t.y, 5)
+    }
   })
 })
