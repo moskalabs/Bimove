@@ -81,13 +81,21 @@ function finite(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
 
-function cleanMessage(raw: unknown): CommentMessage | null {
+/**
+ * `at` 은 **읽기를 순수하게** 만들려고 받는다.
+ *
+ * 전엔 id 가 없으면 `newId()` 를 불렀다. 그러면 같은 문서를 두 번 읽을 때
+ * 값이 달라진다 — React 키가 매번 바뀌어 줄이 통째로 다시 그려지고, 열어 둔
+ * 글타래는 재읽기 한 번에 `openId` 가 가리킬 데를 잃는다. 자리에서 뽑으면
+ * 몇 번을 읽어도 같은 값이다.
+ */
+function cleanMessage(raw: unknown, at: string): CommentMessage | null {
   if (!isRecord(raw)) return null
   const text = typeof raw.text === 'string' ? raw.text.slice(0, MAX_TEXT) : ''
   if (!text.trim()) return null
   const ts = finite(raw.ts)
   return {
-    id: typeof raw.id === 'string' && raw.id ? raw.id : newId(),
+    id: typeof raw.id === 'string' && raw.id ? raw.id : at,
     author: (typeof raw.author === 'string' ? raw.author : '').slice(0, MAX_AUTHOR) || '익명',
     text,
     // 시각이 없으면 **0** 이다. 지금 시각을 넣으면 옛 코멘트가 전부 "방금"
@@ -96,20 +104,21 @@ function cleanMessage(raw: unknown): CommentMessage | null {
   }
 }
 
-function cleanThread(raw: unknown): CommentThread | null {
+function cleanThread(raw: unknown, at: number): CommentThread | null {
   if (!isRecord(raw)) return null
   const x = finite(raw.x)
   const y = finite(raw.y)
   // 자리가 없으면 핀을 찍을 데가 없다. 화면 어딘가에 NaN 으로 떠 있는 것보다
   // 없는 편이 낫다.
   if (x === null || y === null) return null
+  const id = typeof raw.id === 'string' && raw.id ? raw.id : `c${at}`
   const messages = (Array.isArray(raw.messages) ? raw.messages : [])
-    .map(cleanMessage)
+    .map((m, i) => cleanMessage(m, `${id}:m${i}`))
     .filter((m): m is CommentMessage => m !== null)
     .slice(0, MAX_MESSAGES_PER_THREAD)
   if (messages.length === 0) return null
   return {
-    id: typeof raw.id === 'string' && raw.id ? raw.id : newId(),
+    id,
     pageId: typeof raw.pageId === 'string' ? raw.pageId : '',
     x,
     y,
@@ -127,14 +136,42 @@ function newId(): string {
   }
 }
 
-/** 문서에 실린 코멘트 — 모양이 틀린 것은 걸러서 돌려준다. */
-export function getThreads(editor: Editor): CommentThread[] {
-  const raw = readDocMeta(editor)[DOC_META_KEY]
+/**
+ * 문서 meta 한 칸에서 글타래를 꺼낸다 — **에디터가 없어도 된다.**
+ *
+ * tldraw 를 걷어내는 중이라(bimoveDoc.ts 머리말) 읽는 쪽이 둘이 된다:
+ * 지금 화면은 `Editor` 를 들고 있고, 엔진 경로는 `BimoveDocument` 만 있다.
+ * 거르는 규칙은 **하나**여야 하므로 meta 를 받는 이쪽을 바닥에 두고,
+ * 에디터 쪽은 얇게 감싸기만 한다.
+ */
+export function threadsFromMeta(meta: Record<string, unknown> | undefined | null): CommentThread[] {
+  const raw = meta?.[DOC_META_KEY]
   if (!Array.isArray(raw)) return []
   return raw
-    .map(cleanThread)
+    .map((t, i) => cleanThread(t, i))
     .filter((t): t is CommentThread => t !== null)
     .slice(0, MAX_THREADS)
+}
+
+/**
+ * 그 meta 에서 **한 장**의 것만. 장이 안 적힌 옛 글타래는 첫 장으로 간다
+ * (CommentThread.pageId 주석).
+ *
+ * `pageId` 가 비면 거르지 않는다 — 장 개념이 없는 쪽(얕은 목, DXF 로 연
+ * 도면)에서는 전부 보여주는 게 맞다.
+ */
+export function threadsOnPageOf(
+  meta: Record<string, unknown> | undefined | null,
+  pageId: string,
+  firstPageId: string,
+): CommentThread[] {
+  const all = threadsFromMeta(meta)
+  if (!pageId) return all
+  return all.filter(t => (t.pageId ? t.pageId === pageId : pageId === firstPageId))
+}
+
+export function getThreads(editor: Editor): CommentThread[] {
+  return threadsFromMeta(readDocMeta(editor))
 }
 
 /**
@@ -152,8 +189,7 @@ export function threadsOnPage(editor: Editor): CommentThread[] {
     pageId = editor.getCurrentPageId?.() ?? ''
     firstId = editor.getPages?.()[0]?.id ?? ''
   } catch { /* 목이 얕은 에디터 — 그러면 전부 보여준다 */ }
-  if (!pageId) return getThreads(editor)
-  return getThreads(editor).filter(t => (t.pageId ? t.pageId === pageId : pageId === firstId))
+  return threadsOnPageOf(readDocMeta(editor), pageId, firstId)
 }
 
 /**

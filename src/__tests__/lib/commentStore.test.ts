@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   getThreads, rawThreads, addThread, addReply, setResolved, moveThread, deleteThread,
-  threadsOnPage,
+  threadsOnPage, threadsFromMeta, threadsOnPageOf,
   unresolvedCount, authorName, rememberAuthor, CommentLimitError,
   initialOf, pinColor, formatWhen,
   MAX_THREADS, MAX_MESSAGES_PER_THREAD, MAX_TEXT,
@@ -319,5 +319,63 @@ describe('보여주는 쪽', () => {
     expect(pinColor('김반장')).not.toBe(pinColor('이기사'))
     expect(initialOf(' 한 ')).toBe('한')
     expect(initialOf('')).toBe('?')
+  })
+})
+
+describe('에디터 없이도 같은 값을 읽는다', () => {
+  // tldraw 를 걷어내면 읽는 쪽이 둘이 된다 — 지금 화면(Editor)과 엔진 경로
+  // (BimoveDocument). 거르는 규칙이 갈리면 "폰에서는 코멘트가 하나 더/덜
+  // 보인다" 가 된다. 바닥을 같이 쓰는지 여기서 못 박는다.
+  const msg = [{ text: '글' }]
+  const meta = {
+    comments: [
+      { id: 'a', pageId: 'page:a', x: 1, y: 2, messages: msg },
+      { id: 'b', pageId: 'page:b', x: 3, y: 4, messages: msg },
+      { id: 'old', x: 5, y: 6, messages: msg },
+      { id: 'broken', messages: msg },
+    ],
+    scale: { pxPerMm: 0.02, unit: 'm' },
+  }
+
+  it('meta 만으로 거른다', () => {
+    expect(threadsFromMeta(meta).map(t => t.id)).toEqual(['a', 'b', 'old'])
+    expect(threadsFromMeta(undefined)).toEqual([])
+    expect(threadsFromMeta({})).toEqual([])
+  })
+
+  it('장 거르기도 같다 — 장 없는 옛것은 첫 장으로', () => {
+    expect(threadsOnPageOf(meta, 'page:a', 'page:a').map(t => t.id)).toEqual(['a', 'old'])
+    expect(threadsOnPageOf(meta, 'page:b', 'page:a').map(t => t.id)).toEqual(['b'])
+  })
+
+  it('장 개념이 없으면 전부 보여준다 (DXF 로 연 도면)', () => {
+    expect(threadsOnPageOf(meta, '', '').map(t => t.id)).toEqual(['a', 'b', 'old'])
+  })
+
+  it('**에디터로 읽은 것과 한 글자도 다르지 않다**', () => {
+    const { editor } = fakeEditor({ ...meta }, ['page:a', 'page:b'], 'page:a')
+    expect(threadsOnPage(editor)).toEqual(threadsOnPageOf(meta, 'page:a', 'page:a'))
+    expect(getThreads(editor)).toEqual(threadsFromMeta(meta))
+  })
+})
+
+describe('docMetaOf', () => {
+  it('저장본에서 코멘트 칸을 꺼낸다', async () => {
+    const { docMetaOf } = await import('../../lib/bimoveDoc')
+    const doc = {
+      version: 1, pages: [], shapes: [], skipped: 0,
+      source: { from: 'tldraw', at: 0, shapeCount: 0 },
+      records: {
+        'document:document': { typeName: 'document', meta: { comments: [{ id: 'a', x: 0, y: 0, messages: [{ text: '글' }] }] } },
+      },
+    }
+    expect(threadsFromMeta(docMetaOf(doc as never))).toHaveLength(1)
+  })
+
+  it('meta 가 없거나 모양이 틀리면 빈 칸', async () => {
+    const { docMetaOf } = await import('../../lib/bimoveDoc')
+    const bare = { version: 1, pages: [], shapes: [], skipped: 0, records: {}, source: { from: 'x', at: 0, shapeCount: 0 } }
+    expect(docMetaOf(bare as never)).toEqual({})
+    expect(docMetaOf({ ...bare, records: { 'document:document': { meta: 'nope' } } } as never)).toEqual({})
   })
 })

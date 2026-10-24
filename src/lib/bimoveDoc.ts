@@ -239,6 +239,22 @@ export function shapesOfPage(doc: BimoveDocument, pageId: string): BimoveShape[]
   return doc.shapes.filter(s => s.parentId === pageId)
 }
 
+/**
+ * 문서 레코드의 meta — 도면 하나당 하나뿐인 값들이 사는 칸.
+ *
+ * 축척과 코멘트가 여기 산다 (docMeta.ts). 지금 화면은 `Editor` 에서 읽지만
+ * **엔진 경로에는 에디터가 없다** — 저장본을 바로 읽어 그린다. 그래서 같은
+ * 칸을 문서에서도 꺼낼 수 있어야 한다.
+ *
+ * `scale` 은 이미 위에서 풀어 놨지만(`scaleOf`) 그건 한 키만 본다. 코멘트
+ * 처럼 뒤에 붙는 것들까지 같은 길로 가려면 칸 자체를 내줘야 한다.
+ */
+export function docMetaOf(doc: BimoveDocument): Record<string, unknown> {
+  const rec = doc.records['document:document']
+  if (!isRecord(rec) || !isRecord(rec.meta)) return {}
+  return rec.meta
+}
+
 /** 이 도면이 참조하는 asset 들 (이미지·PDF 본문). */
 export function assetsOf(doc: BimoveDocument): Record<string, unknown> {
   const out: Record<string, unknown> = {}
